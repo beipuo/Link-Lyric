@@ -1,0 +1,10 @@
+# 统一行尾，避免 Gradle 脚本在跨平台协作时被改写
+* text=auto eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf
+gradlew text eol=lf
+
+*.jar binary
+*.png binary
+*.ogg binary
