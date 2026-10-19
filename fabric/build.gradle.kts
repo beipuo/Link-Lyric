@@ -10,7 +10,8 @@ group = providers.gradleProperty("maven_group").get()
 version = modVersion
 
 base {
-    archivesName = providers.gradleProperty("archives_base_name").get()
+    // 产物名携带平台与 MC 版本，便于在 CurseForge / Modrinth 上区分多目标构建
+    archivesName = "${providers.gradleProperty("archives_base_name").get()}-${providers.gradleProperty("minecraft_version").get()}-fabric"
 }
 
 dependencies {

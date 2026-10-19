@@ -49,6 +49,27 @@ Minecraft 26.1 起不再混淆，Fabric 亦停止维护 Yarn（Yarn 止步于 1.
 - JDK 21：用于 1.21.1 分支
 - 路径已在 `gradle.properties` 的 `org.gradle.java.home` 与 `org.gradle.java.installations.paths` 中配置
 
+## 网络与代理
+
+**JVM 不读取 Windows 系统代理设置。** 直连 `maven.neoforged.net` 时 Cloudflare 会直接断开 JVM 的 TLS 握手，表现为：
+
+```
+SSLHandshakeException: Remote host terminated the handshake
+```
+
+而同一个 URL 用 PowerShell（走系统代理）请求却返回 200，很容易误判成仓库地址写错。实测调整 `jdk.tls.client.protocols`、禁用 status_request 扩展均无效——这是握手指纹层面的拦截。
+
+解决办法是在**用户级** `~/.gradle/gradle.properties` 中显式配置代理，而不是写进仓库：
+
+```properties
+systemProp.http.proxyHost=127.0.0.1
+systemProp.http.proxyPort=7890
+systemProp.https.proxyHost=127.0.0.1
+systemProp.https.proxyPort=7890
+systemProp.http.nonProxyHosts=localhost|127.0.0.1
+systemProp.https.nonProxyHosts=localhost|127.0.0.1
+```
+
 ## 构建
 
 ```powershell
@@ -63,22 +84,29 @@ Minecraft 26.1 起不再混淆，Fabric 亦停止维护 Yarn（Yarn 止步于 1.
 .\gradlew.bat :neoforge:runClient
 ```
 
-产物命名携带完整版本信息：`linksaltmusic-0.1.0+26.1.2-fabric.jar`。
+产物命名携带平台与 MC 版本，便于多目标发布时区分：
+
+```
+fabric/build/libs/linksaltmusic-<mc>-fabric-<ver>.jar
+neoforge/build/libs/linksaltmusic-<mc>-neoforge-<ver>.jar
+```
 
 ## 当前进度
 
-已完成：
+已完成（两个分支均已实际构建通过）：
 
 - 三模块骨架与两加载器构建配置
 - `common` 基座：`PlaybackClock`（锚点外推）、`LyricTimeline`（行索引二分）、`LyricWord` / `LyricLine`、`ScrollModel`（三种滚动语义）、`LyricStyle`（五套样式预设）、`Protocol` 常量
 - `common` 单测 8 项全部通过
+- 26.1.2 分支：Fabric + NeoForge 构建通过
+- 1.21.1 分支：Fabric（remap）+ NeoForge 构建通过
 
 待办：
 
 - SPW 侧桥接插件仓库（`.spmod`）
 - 回环通道与命令回执（见 `docs/PROTOCOL.md`）
 - HUD 歌词层与歌单 Screen
-- 1.21.1 分支的加载器适配
+- 中文描述改用 `assets/linksaltmusic/lang/zh_cn.json`（`gradle.properties` 走 ISO-8859-1 解析，直接写中文会乱码）
 
 ## 已知待验证项
 
