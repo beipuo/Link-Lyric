@@ -1,7 +1,8 @@
 plugins {
-    // 26.1 起 Minecraft 不再混淆，Fabric 亦停止维护 Yarn。
-    // 因此本分支使用「非 remap」变体的 Loom，且无需 mappings 行。
-    id("net.fabricmc.fabric-loom") version "1.18-SNAPSHOT"
+    // 1.21.1 仍是混淆版本：Yarn 虽已停止维护，但 Mojang 官方映射可用。
+    // 因此本分支必须使用「remap」变体的 Loom，并显式声明 mappings。
+    // 与 26.1.2 分支的差异共三处：插件 id、mappings 行、modImplementation。
+    id("net.fabricmc.fabric-loom-remap") version "1.18-SNAPSHOT"
 }
 
 val modVersion = providers.gradleProperty("mod_version").get()
@@ -14,11 +15,13 @@ base {
 
 dependencies {
     minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
+    mappings(loom.officialMojangMappings())
 
-    // 无混淆版本下 Fabric 依赖走 implementation，而非 modImplementation。
-    implementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
-    implementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
+    // 需要重映射的依赖走 modImplementation。
+    modImplementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
+    modImplementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 
+    // common 是纯 Java、零 Minecraft 依赖，不能被重映射。
     implementation(project(":common"))
 }
 

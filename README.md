@@ -41,7 +41,7 @@ Minecraft 26.1 起不再混淆，Fabric 亦停止维护 Yarn（Yarn 止步于 1.
 - `26.1.2` 分支走无混淆路径：不需要 `mappings`，依赖用 `implementation`，Loom 用非 remap 变体。
 - `1.21.1` 分支仍需重映射：必须声明 `loom.officialMojangMappings()`，依赖用 `modImplementation`，Loom 用 remap 变体。
 
-切分支时 `fabric/build.gradle.kts` 需要修改的三处就是上表加粗的后三行。
+切分支时 `fabric/build.gradle.kts` 需要对齐的三处就是上表加粗的后三行。两个分支已各自完成配置，切换后无需手工改动。
 
 ## 本地环境
 
