@@ -1,4 +1,4 @@
-package com.linksaltmusic.core.sync;
+package com.linklyric.core.sync;
 
 import java.util.concurrent.atomic.AtomicReference;
 

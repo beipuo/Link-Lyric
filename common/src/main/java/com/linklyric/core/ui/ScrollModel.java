@@ -1,4 +1,4 @@
-package com.linksaltmusic.core.ui;
+package com.linklyric.core.ui;
 
 /**
  * 歌词列表的滚动状态机。

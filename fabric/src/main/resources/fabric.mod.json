@@ -11,7 +11,7 @@
   "environment": "client",
   "entrypoints": {
     "client": [
-      "com.linksaltmusic.fabric.LinkSaltMusicFabric"
+      "com.linklyric.fabric.LinkLyricFabric"
     ]
   },
   "depends": {

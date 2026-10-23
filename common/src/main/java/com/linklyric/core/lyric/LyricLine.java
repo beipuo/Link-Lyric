@@ -1,4 +1,4 @@
-package com.linksaltmusic.core.lyric;
+package com.linklyric.core.lyric;
 
 import java.util.List;
 

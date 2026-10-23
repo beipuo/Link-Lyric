@@ -18,7 +18,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "LinkSaltMusic"
+rootProject.name = "LinkLyric"
 
 include("common")
 include("fabric")

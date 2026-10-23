@@ -1,4 +1,4 @@
-package com.linksaltmusic.core.lyric;
+package com.linklyric.core.lyric;
 
 /**
  * 单个逐字单元。

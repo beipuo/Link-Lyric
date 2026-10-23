@@ -1,4 +1,4 @@
-package com.linksaltmusic.core.style;
+package com.linklyric.core.style;
 
 /**
  * 歌词样式：四个正交维度的组合，而非五套独立实现。
