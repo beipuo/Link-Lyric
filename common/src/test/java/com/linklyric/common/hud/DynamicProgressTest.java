@@ -62,6 +62,54 @@ class DynamicProgressTest {
                 "位置固定但播放在进行时，已唱宽度必须增长。first=" + first + " second=" + second);
     }
 
+    /**
+     * 上报周期为 1 秒时，整个周期内高亮都必须持续推进，不能中途停住。
+     *
+     * <p>这是「一秒一跳、中间停顿」现象的回归测试。宿主每秒才更新一次位置，
+     * 若外推余量小于该周期，高亮走完余量就会停在原地等下一条上报。
+     */
+    @Test
+    void 上报间隔一秒时高亮全程连续推进() throws Exception {
+        // 两个约束：
+        // 1) 必须多单元，单单元行走退化分支（全亮/全灭），本就无法插值；
+        // 2) 观测窗口内的像素增量要远大于 1，否则逐帧取整会把连续推进
+        //    压成平台，被误判成停顿。20 字 × 100ms = 2 秒的行，
+        //    1.2 秒可推进约六成行宽，增量足够分辨。
+        String wide = "一二三四五六七八九十一二三四五六七八九十";
+        List<LyricWord> words = new ArrayList<>();
+        for (int i = 0; i < wide.length(); i++) {
+            words.add(new LyricWord(String.valueOf(wide.charAt(i)), i * 100L, (i + 1) * 100L));
+        }
+        LyricLine line = new LyricLine(wide, "", 0, wide.length() * 100L, List.copyOf(words), "");
+        MutableFeed feed = new MutableFeed(new LyricTimeline(List.of(line)), 0L, true);
+        ScissorPainter painter = new ScissorPainter();
+        FloatingLyricRenderer renderer = new FloatingLyricRenderer(feed);
+
+        // 位置恒为 0（模拟上报未更新），只观测推进过程的前半段：
+        // 一旦已经唱完，后续帧必然“停滞”，那是正常终态，不能算作停顿。
+        int stalls = 0;
+        int previous = -1;
+        int lineWidth = painter.textWidth(wide);
+        for (int frame = 0; frame < 24; frame++) {
+            Thread.sleep(50L);
+            painter.reset();
+            renderer.render(painter);
+            int width = painter.lastScissorWidth();
+            if (previous >= 0 && width <= previous && previous < lineWidth) {
+                stalls++;
+            }
+            previous = width;
+        }
+
+        System.out.println("末次宽度=" + previous + " 行宽=" + painter.textWidth(wide)
+                + " 停滞帧数=" + stalls);
+
+        assertTrue(previous > 0, "应有推进");
+
+        // 允许少量抖动，但不允许长时间停住
+        assertTrue(stalls <= 3, "推进中途不应反复停住，实际停滞帧数=" + stalls);
+    }
+
     /** 暂停后外推必须停止，否则高亮会一直往前跑。 */
     @Test
     void 暂停后不再推进() throws Exception {

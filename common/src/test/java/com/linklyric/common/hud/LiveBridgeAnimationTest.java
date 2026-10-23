@@ -34,17 +34,20 @@ class LiveBridgeAnimationTest {
         source.start();
         try {
             // 先拿到歌词，否则没有可绘制内容
-            long deadline = System.currentTimeMillis() + 3000L;
+            long deadline = System.currentTimeMillis() + 8000L;
             boolean ready = false;
             while (System.currentTimeMillis() < deadline) {
                 Thread.sleep(150L);
+                painter.reset();
                 renderer.render(painter);
                 if (painter.lastScissor >= 0) {
                     ready = true;
                     break;
                 }
             }
-            Assumptions.assumeTrue(ready, "端点无活动歌词，跳过");
+            Assumptions.assumeTrue(ready, "端点无活动歌词，跳过"
+                    + "（时间轴行数=" + source.lyric().size()
+                    + "，播放中=" + source.pollSnapshot().playing() + "）");
             Assumptions.assumeTrue(source.pollSnapshot().playing(), "当前未在播放，跳过");
 
             for (int i = 0; i < 18; i++) {

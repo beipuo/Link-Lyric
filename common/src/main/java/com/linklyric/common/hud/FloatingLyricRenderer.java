@@ -49,8 +49,27 @@ public final class FloatingLyricRenderer {
     /** 羽化带长度，相对于字号的比例。 */
     private static final float FEATHER_RATIO = 0.45f;
 
-    /** 超过该偏差即视为需要重新锚定时钟。 */
-    private static final long DRIFT_RESNAP_MS = 400L;
+    /**
+     * 桥接端的上报周期初值（毫秒）。
+     *
+     * <p>**实测为 1000ms**，不是轮询间隔。轮询每 200ms 发一次请求，
+     * 但宿主每秒才更新一次位置，因此同一份位置会连续返回 5 次。
+     * 外推余量若小于这个周期，高亮走完余量就会停住等下一次上报，
+     * 表现为「一秒一跳、中间明显停顿」。
+     */
+    private static final long DEFAULT_UPLINK_PERIOD_MS = 1000L;
+
+    /** 上报周期估计的合理范围，用于过滤异常观测值。 */
+    private static final long MIN_UPLINK_PERIOD_MS = 150L;
+    private static final long MAX_UPLINK_PERIOD_MS = 4000L;
+
+    /**
+     * 外推余量在上报周期之外的额外裕度。
+     *
+     * <p>留出这段裕度，才能覆盖上报自身的抖动与网络延迟，
+     * 不会在下一个上报到达前就撞到上限。
+     */
+    private static final long LEAD_MARGIN_MS = 400L;
 
     /**
      * 外推允许的最大超前量（毫秒）。
@@ -120,6 +139,15 @@ public final class FloatingLyricRenderer {
 
     /** 上一帧实际使用的位置，用于保证播放中位置严格单调。 */
     private long lastRenderedPositionMs;
+
+    /** 观测到的桥接上报周期（毫秒），随实测自适应。 */
+    private long uplinkPeriodMs = DEFAULT_UPLINK_PERIOD_MS;
+
+    /** 上一次收到「位置变化」的本地时刻，用于估计上报周期。 */
+    private long lastReportChangeNanos;
+
+    /** 上一次收到的上报位置，用于识别位置是否真的更新过。 */
+    private long lastReportedPositionMs = Long.MIN_VALUE;
 
     private LyricTimeline lastTimeline = LyricTimeline.empty();
 
@@ -291,8 +319,24 @@ public final class FloatingLyricRenderer {
         int lineWidth = painter.textWidth(visible);
 
         if (words.size() <= 1) {
-            // 行级歌词：只有整行全亮或全灭
-            return positionMs >= line.endMs() ? lineWidth : 0f;
+            // 行级歌词：宿主只给了整行时间，没有逐字时间。
+            //
+            // 这类数据不能按「到点全亮」处理。多数播放器对行级歌词
+            // 一首歌每秒才更新一次位置，二值跳变会让高亮看起来是一秒一闪。
+            // 按行内时间比例做线性推进，观感接近卡拉OK，
+            // 且不会伪造出原数据并不存在的字级时间。
+            long duration = line.endMs() - line.startMs();
+            if (duration <= 0L) {
+                return positionMs >= line.endMs() ? lineWidth : 0f;
+            }
+            float ratio = (positionMs - line.startMs()) / (float) duration;
+            if (ratio <= 0f) {
+                return 0f;
+            }
+            if (ratio >= 1f) {
+                return lineWidth;
+            }
+            return lineWidth * ratio;
         }
 
         float width = 0f;
@@ -348,33 +392,35 @@ public final class FloatingLyricRenderer {
     }
 
     /**
-     * 取受限的外推位置。
+     * 取该帧使用的播放位置。
      *
-     * <p>外推值允许领先上报值一点，以抹平轮询间隔内的阶跃；
-     * 但领先量必须有上限，否则轮询一旦滞后，位置会无界前冲，
-     * 越过整首歌的歌词，导致行选择失效、染色消失。
+     * <p>三条约束缺一不可：
+     * 上报值带一秒延迟，必须用时钟外推才能帧级连续；外推要有上限，
+     * 否则轮询滞后会让位置无界前冲；播放中又不能倒退，否则高亮闪烁。
+     * 上限随实测上报周期自适应，保证整个上报周期内都有足够的推进空间。
      */
     private long boundedPosition(long reportedMs) {
         long extrapolated = clock.positionMs();
-        long ceiling = reportedMs + MAX_EXTRAPOLATION_LEAD_MS;
+        long lead = uplinkPeriodMs + LEAD_MARGIN_MS;
+        // 上限锚在「收到该上报值的时刻」上，而不是固定跟着上报值走。
+        // 若写成 reportedMs + lead，位置一旦追上上限就再无前进余地，
+        // 高亮会停住等下一次上报——这正是「一秒一跳、中间停顿」的来源。
+        // 让上限随本地时间一起推进，整个上报周期内都能连续前进。
+        long ceiling = reportedMs + lead + msSinceReport();
         long result = extrapolated;
         if (extrapolated > ceiling) {
-            // 超出上限说明轮询已明显滞后。
-            // 不能直接返回 reportedMs：那会让位置每帧被拉回旧值，
-            // 高亮永久停在原处。把时钟重锚到「上报值 + 允许超前量」，
-            // 既收住超前，又保持继续前进。
             result = ceiling;
             clock.anchor(ceiling, lastPlaying);
         } else if (extrapolated < reportedMs) {
-            // 外推落后于上报值，以上报值补齐，避免显示滞后
-            result = Math.min(reportedMs, ceiling);
+            result = reportedMs;
         }
-        // 播放中位置只允许前进，避免轮询抖动导致高亮倒退闪烁。
-        // 但上报位置若已跨过较大的距离（切行、seek、换曲），必须放行，
-        // 否则渲染会永久卡在旧行上，整行恒亮且再也跟不上。
+
+        // 播放中位置只允许前进。轮询抖动造成的上报回落不能直接采信，
+        // 否则高亮会倒退闪烁；但大跨度回落（切行、seek、换曲）必须放行，
+        // 不然会永久卡在旧行上。
         if (lastPlaying && result < lastRenderedPositionMs) {
             long regression = lastRenderedPositionMs - result;
-            if (regression <= MAX_EXTRAPOLATION_LEAD_MS) {
+            if (regression <= lead) {
                 return lastRenderedPositionMs;
             }
         }
@@ -382,18 +428,61 @@ public final class FloatingLyricRenderer {
         return lastRenderedPositionMs;
     }
 
+    /** 距最近一次收到位置变化的本地时长（毫秒）。 */
+    private long msSinceReport() {
+        if (lastReportChangeNanos == 0L) {
+            return 0L;
+        }
+        long elapsed = (System.nanoTime() - lastReportChangeNanos) / 1_000_000L;
+        return Math.max(0L, Math.min(elapsed, MAX_UPLINK_PERIOD_MS + LEAD_MARGIN_MS));
+    }
+
     /**
      * 用最新快照校准时钟。
      *
-     * <p>只在播放态变化或漂移过大时重锚，否则会抹掉外推带来的帧级连续性。
+     * <p>锚点取「上报值 + 已流逝的等待时间」，而不是把上报值锚到当前时刻。
+     * 上报值反映的是它被采集时的位置，之后还要经过轮询间隔才被读到，
+     * 直接锚到当前时刻会引入一段固定滞后，外推就永远赶不上真实进度。
      */
     private void syncClock(long positionMs, boolean playing) {
+        long now = System.nanoTime();
+
         if (!clockPrimed || playing != lastPlaying) {
             clock.anchor(positionMs, playing);
             clockPrimed = true;
-        } else if (clock.driftMs(positionMs) > DRIFT_RESNAP_MS) {
-            clock.anchor(positionMs, playing);
+            lastReportChangeNanos = now;
+            // 必须同时记录该位置，否则第二帧会把「同一次上报」误判为变化，
+            // 再次重锚并刷新计时，上报周期永远测不到，外推上限也就一直不放开。
+            lastReportedPositionMs = positionMs;
+            lastPlaying = playing;
+            return;
         }
+
+        boolean positionChanged = positionMs != lastReportedPositionMs;
+        if (positionChanged) {
+            // 观测上报周期：同一份位置会连续返回多次，只在变化的那次计入
+            if (lastReportChangeNanos != 0L) {
+                long observedMs = (now - lastReportChangeNanos) / 1_000_000L;
+                if (observedMs >= MIN_UPLINK_PERIOD_MS && observedMs <= MAX_UPLINK_PERIOD_MS) {
+                    // 平滑更新，避免单次抖动带偏上限
+                    uplinkPeriodMs = (uplinkPeriodMs * 3 + observedMs) / 4;
+                }
+            }
+            lastReportChangeNanos = now;
+            lastReportedPositionMs = positionMs;
+
+            // 补偿上报值自身的陈旧时间：它至多已过去一个轮询间隔。
+            // 只在播放中补偿——暂停时位置本就不动，加了补偿会让高亮缓慢爬行。
+            if (playing) {
+                clock.anchor(positionMs + Math.min(uplinkPeriodMs / 2, LEAD_MARGIN_MS), true);
+            } else {
+                clock.anchor(positionMs, false);
+            }
+            lastPlaying = playing;
+            return;
+        }
+
+        // 位置未变：只处理播放态切换与明显的漂移
         lastPlaying = playing;
     }
 
