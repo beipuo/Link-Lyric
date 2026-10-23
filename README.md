@@ -33,6 +33,52 @@ Link Lyric/
 
 `common` 的硬性规则：**不得出现任何 Minecraft 或加载器 API 的 import**。它是「加第二个加载器只要几百行」和「两份平行代码库」的分界。
 
+## 已实现：悬浮歌词
+
+当前可用链路是**最小闭环**，只做一件事：在屏幕底部居中显示当前歌词行。
+
+```
+Salt Player ──(spmod 插件)──► 127.0.0.1:35400 ──► BridgePlaybackSource
+                                                        │
+                                          FloatingLyricRenderer ──► HUD
+```
+
+| 模块 | 职责 |
+|---|---|
+| `common/bridge/SnapshotParser` | 手写 JSON 解析，零第三方依赖 |
+| `common/bridge/BridgePlaybackSource` | 后台线程轮询，渲染帧内零网络请求 |
+| `common/hud/FloatingLyricRenderer` | 单行居中排版，含翻译与底板 |
+| `common/hud/LyricFeed` | 渲染层依赖的最小接口，便于单测替身 |
+
+Fabric 与 NeoForge 各自只有约一百行接线代码，排版与状态计算完全共用。
+
+### 两个必须知道的坑
+
+**映射名不是 Yarn。** 1.21.1 分支用 Mojang 官方映射：`GuiGraphics`、`Minecraft`、
+`DeltaTracker`。写成 `DrawContext`、`MinecraftClient`（Yarn 名）会直接编译失败。
+26.1.2 分支的类名又不同，不能照抄。
+
+**`implementation(project(":common"))` 不进制品。** 它只影响编译期，
+jar 里不会有 common 的类，装进游戏立刻 `NoClassDefFoundError`。
+必须在 `jar` 任务里显式 `from(project(":common").sourceSets.main.get().output)`。
+另外不要同时用 `include(project(":common"))`，那会生成嵌套 jar 与展开的 class
+形成重复。
+
+### 渲染性能约定
+
+轮询在独立线程每 200ms 一次；`pollSnapshot()` 只做一次 volatile 读，绝不发网络请求。
+断连要连续失败 6 次（约 1.2 秒）才清空，避免插件重载时歌词闪烁。
+不为歌词文本构造 `Component`——中文歌词每帧重建会产生大量短命对象。
+
+### 测试
+
+```powershell
+.\gradlew.bat :common:test
+```
+
+32 项。其中 `LiveSampleTest` 使用**真实抓取的 `/lyric` 响应**（`live-sample.json`）
+做端到端验证——手写样例永远会漏掉真实数据里的格式细节，这次就靠它抓出了
+两个解析 bug：切片截断导致括号不配平、数组拆分没跳过换行导致字段名被当成元素。
 ## 内核结构
 
 ```
@@ -51,10 +97,14 @@ common/src/main/java/com/linklyric/core/
 
 | 数据源 | 元数据 | 进度 | 逐字 | 队列 | 按索引播放 | 成本 |
 |---|---|---|---|---|---|---|
-| Salt Player 插件 | ✓ | ✓ | ✓ TTML | ✓ | 待验证 | 低，纯 Java |
+| Salt Player 插件 | ✓ | ✓ | ✓ TTML | ✗ | ✗ | 低，纯 Java |
 | Windows SMTC | ✓ | ✓ 可外推 | ✗ | ✗ | ✗ | 中，需非 Java 组件 |
 | MPD / foobar | ✓ | ✓ | ✗ | ✓ | ✓ | 中，纯 Java |
 | 本地 LRC/TTML | — | ✗ | 部分 | ✗ | ✗ | 极低 |
+
+Salt Player 的「队列 ✗ / 按索引播放 ✗」不是待办，而是实测定论：插件 API 的
+`WorkshopApi.Playback` 只暴露 `play/pause/previous/next/seekTo` 与当前曲目，
+**没有任何队列访问入口**。虚报这两项会得到一个永远为空的歌单列表。
 
 UI 按能力降级：数据源没声明 `QUEUE` 时歌单列表**整体隐藏**，而不是显示空列表。
 
@@ -124,23 +174,16 @@ neoforge/build/libs/linklyric-<mc>-neoforge-<ver>.jar
 
 ## 当前进度
 
-已完成（两分支均已实际构建通过）：
+已完成：内核、能力模型、协议 v2、Salt Player 桥接插件（`Salt Music/Link MC`）、
+悬浮歌词在 Fabric 与 NeoForge 双端可用。
 
-- 三模块骨架与两加载器构建配置
-- 通用内核：能力探测（`Capability` / `CapabilitySet` / `SourceProfiles`）、数据源抽象 `PlaybackSource`、歌词源抽象 `LyricProvider`、编排层 `LyricSession`
-- 基座：`PlaybackClock` 锚点外推、`LyricTimeline` 二分行索引、`TrackIdentity` 时长感知匹配、`LyricCache` LRU、`ScrollModel` 三种滚动语义、`LyricStyle` 五套样式预设
-- 内核单测 17 项全部通过，覆盖能力降级、迟到歌词丢弃、乱序快照丢弃、无进度漂移
-- 26.1.2 分支：Fabric + NeoForge 构建通过
-- 1.21.1 分支：Fabric（remap）+ NeoForge 构建通过
+待做，按优先级：
 
-待办：
-
-- 第一个数据源适配器：Salt Player 插件（`.spmod`）
-- 第二个数据源适配器：MPD 或本地 LRC（纯 Java，用于验证协议真的通用）
-- 歌词源：LRCLIB（`/api/search` 与 `/api/get` 均支持 duration 精确匹配）
-- HUD 歌词层与歌单 Screen
-- 中文描述改用 `assets/linklyric/lang/zh_cn.json`（`gradle.properties` 走 ISO-8859-1 解析，直接写中文会乱码）
-
+1. 灵动岛 / 侧边栏 / 物品栏三种样式（`LyricStyle` 已有预设，缺渲染实现）
+2. 歌单界面——**当前做不了**，Salt Player 插件 API 无队列访问
+3. 本地 LRC / TTML 歌词源（让 SMTC 这类无歌词数据源也能显示逐字）
+4. 26.1.2 分支的渲染层适配（类名不同，需另写）
+5. 配置文件（端口、样式、位置可调）
 ## 已知待验证项
 
 - `WorkshopApi` 是否暴露**当前播放队列**，以及是否存在**按索引播放**接口；无则 `SourceProfiles.SALT_PLAYER` 需移除 `QUEUE`
