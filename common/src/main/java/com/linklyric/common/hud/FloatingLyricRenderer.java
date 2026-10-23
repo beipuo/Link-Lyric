@@ -61,16 +61,12 @@ public final class FloatingLyricRenderer {
     private static final int[] FEATHER_ALPHA = {0xF5, 0xC3, 0x5A, 0x16, 0x00};
 
     /**
-     * 唱到时单个字的抬升高度，按行高比例。
+     * 唱到时单个字的抬升高度，固定像素。
      *
-     * <p>参考 HyperLyric 的 {@code DEFAULT_CJK_LIFT_FACTOR = 0.12}，
-     * 但该比例在手机上是按数十像素的 textSize 算的。
-     * 我们行高只有 10px，0.12 得 1px 且经相位衰减后取整为 0，完全不可见。
-     *
-     * <p>取 0.6 得 6px：在 10px 行高下这是明确可辨的位移，
-     * 且不超过底板 3px 内边距的两倍余量（裁剪区已按此预留）。
+     * <p>不用比例：行高与 GUI 缩放都会影响比例换算，
+     * 5px 是直接量出来的观感值，写成固定值才可预期。
      */
-    private static final float LIFT_FACTOR = 0.6f;
+    private static final int LIFT_PX = 5;
 
     /**
      * 升起行程长度，以平均字宽为单位。
@@ -91,10 +87,9 @@ public final class FloatingLyricRenderer {
     /**
      * 抬升需要额外预留的垂直空间。
      *
-     * <p>必须不小于实际最大抬升量，否则抬起的字顶部会被裁剪掉，
-     * 表现为字的头部被削平。取值由 {@link #LIFT_FACTOR} 算出。
+     * <p>必须不小于 {@link #LIFT_PX}，否则抬起的字顶部会被裁剪削平。
      */
-    private static final int LIFT_HEADROOM = Math.max(2, Math.round(LINE_HEIGHT * LIFT_FACTOR));
+    private static final int LIFT_HEADROOM = LIFT_PX;
 
     /**
      * 逐字绘制的最多字数。
@@ -116,6 +111,22 @@ public final class FloatingLyricRenderer {
 
     /** 间奏提示色，刻意比正常歌词淡，避免抢注意力。 */
     private static final int COLOR_INTERLUDE = 0xFF8A8A8A;
+
+    /**
+     * 副行（下一句预览）颜色。
+     *
+     * <p>比未唱色更淡：它是预告信息，不该与主行争夺注意力。
+     * 取未唱色调低不透明度，保证与主行同色系、只是更弱。
+     */
+    private static final int COLOR_NEXT_LINE = 0xC8FFFFFF;
+
+    /**
+     * 行切换动画时长（纳秒）。
+     *
+     * <p>220ms 取自 HyperLyric 的 {@code NEXT_LINE_PROMOTION_DURATION}。
+     * 短于 150ms 会显得生硬，长于 300ms 会与演唱进度脱节。
+     */
+    private static final long LINE_TRANSITION_NANOS = 220_000_000L;
 
     /**
      * 桥接端的上报周期初值（毫秒）。
@@ -203,6 +214,18 @@ public final class FloatingLyricRenderer {
     /** 上一次收到的上报位置，用于识别位置是否真的更新过。 */
     private long lastReportedPositionMs = Long.MIN_VALUE;
 
+    /** 行切换动画：本次动画对应的行索引。 */
+    private int lineTransitionFromIndex = -1;
+
+    /** 行切换动画已进行的时长（纳秒）。 */
+    private long lineTransitionElapsedNanos = LINE_TRANSITION_NANOS;
+
+    /** 上一帧的主行文本，用于绘制离场淡出。 */
+    private String lastMainText;
+
+    /** 上一帧是否有副行，用于判断主行基线是否需要过渡。 */
+    private boolean lastSecondaryPresent;
+
     private LyricTimeline lastTimeline = LyricTimeline.empty();
 
     public FloatingLyricRenderer(LyricFeed source) {
@@ -254,6 +277,20 @@ public final class FloatingLyricRenderer {
         int screenWidth = painter.screenWidth();
         int screenHeight = painter.screenHeight();
         int maxWidth = Math.max(40, (int) (screenWidth * MAX_WIDTH_RATIO));
+        int centerX = screenWidth / 2;
+
+        // 双行布局：主行（当前句）+ 副行（下一句或翻译）。
+        //
+        // 主行是可逐字染色的那一行；副行只做静态预览，
+        // 因为下一句的逐字时间还没到，提前染色没有意义。
+        LyricLine nextLine = timeline.line(index + 1);
+
+        // 行切换动画进度：换行后用 220ms 把上一行推上去、把新行推到主位。
+        // 取自 RichLyricLineView.animateNextLinePromotion：
+        // 旧主行 alpha→0 且 translationY 上移 0.65 行高；
+        // 新行从副行位置移到主行位置，并放大到主行字号。
+        updateLineTransition(index, frameDelta);
+        float promote = lineTransitionProgress();
 
         String fullText = line.text();
         int fullWidth = painter.textWidth(fullText);
@@ -270,23 +307,51 @@ public final class FloatingLyricRenderer {
         // 否则 sungWidth 与实际绘制位置对不上，高亮会错位。
         String visible = scrolling ? fullText : clip(painter, fullText, maxWidth);
 
-        boolean hasTranslation = line.hasTranslation();
-        String secondary = hasTranslation ? clip(painter, line.translation(), maxWidth) : "";
+        // 副行优先取下一句，没有下一句时退回翻译。
+        //
+        // 取下一句是因为「接下来唱什么」比「当前句译文」更有阅读价值；
+        // 而翻译在双行布局里会与主行重复信息，只作为兜底。
+        String secondaryText;
+        int secondaryColor;
+        if (nextLine != null && !nextLine.text().isEmpty()) {
+            secondaryText = clip(painter, nextLine.text(), maxWidth);
+            secondaryColor = COLOR_NEXT_LINE;
+        } else if (line.hasTranslation()) {
+            secondaryText = clip(painter, line.translation(), maxWidth);
+            secondaryColor = COLOR_TRANSLATION;
+        } else {
+            secondaryText = "";
+            secondaryColor = COLOR_TRANSLATION;
+        }
 
         int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
-        int secondaryWidth = hasTranslation ? painter.textWidth(secondary) : 0;
+        int secondaryWidth = secondaryText.isEmpty() ? 0 : painter.textWidth(secondaryText);
 
-        int blockHeight = hasTranslation
-                ? LINE_HEIGHT * 2 + LINE_GAP
-                : LINE_HEIGHT;
+        int centerTextY = screenHeight - BOTTOM_MARGIN;
+        int padX = 6;
+        // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
+        // 在画面上变成「文字浮在框外」。
+        int padY = Math.max(3, LIFT_HEADROOM + 1);
 
-        int centerX = screenWidth / 2;
-        // 视口宽度即最大可用宽度；不滚动时收缩到文本实际宽度，底板才不会虚胖。
+        // 主行底部位置：副行存在时，主行上移一行加行距，给副行腾位置。
+        boolean hasSecondary = !secondaryText.isEmpty();
+        int mainBaselineY = hasSecondary
+                ? centerTextY - LINE_HEIGHT - LINE_GAP
+                : centerTextY;
+
+        // 换行动画期间，新主行从副行位置升上来。
+        // promote 从 0 到 1：0 表示还在副行位置，1 表示已就位。
+        //
+        // 偏移量固定为一行加行距，且只在确实有副行时才生效：
+        // 没有副行时主行本就该直接落位，不该有任何过渡位移。
+        int transitionOffset = hasSecondary
+                ? Math.round((1f - promote) * (LINE_HEIGHT + LINE_GAP))
+                : 0;
+        int drawMainY = mainBaselineY + transitionOffset;
+
         int viewWidth = scrolling ? maxWidth : primaryWidth;
         int viewportLeft = centerX - viewWidth / 2;
         int viewportRight = viewportLeft + viewWidth;
-
-        int textY = screenHeight - BOTTOM_MARGIN - blockHeight;
 
         // 换行或时间轴变更时重置动画，避免沿用上一行的进度
         if (index != lastLineIndex) {
@@ -305,12 +370,12 @@ public final class FloatingLyricRenderer {
                 : 0;
         int textX = viewportLeft + scroll;
 
-        int padX = 6;
-        // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
-        // 在画面上变成「文字浮在框外」。
-        int padY = Math.max(3, LIFT_HEADROOM + 1);
-        painter.fillRect(viewportLeft - padX, textY - padY,
-                viewWidth + padX * 2, blockHeight + padY * 2, COLOR_BACKDROP);
+        int blockTop = mainBaselineY - padY;
+        int blockBottom = hasSecondary
+                ? mainBaselineY + LINE_HEIGHT + LINE_GAP + LINE_HEIGHT + padY
+                : mainBaselineY + LINE_HEIGHT + padY;
+        painter.fillRect(viewportLeft - padX, blockTop,
+                viewWidth + padX * 2, blockBottom - blockTop, COLOR_BACKDROP);
 
         // 逐字偏移表：底色层与高亮层必须共用同一份。
         //
@@ -321,26 +386,88 @@ public final class FloatingLyricRenderer {
                         visible.length(), primaryWidth, clampedSung)
                 : null;
 
+        // 旧主行的淡出：换行动画前半程让它上移并消失。
+        if (promote < 1f && lastMainText != null) {
+            drawOutgoingLine(painter, maxWidth, centerX, mainBaselineY, promote);
+        }
+
         // 未唱色打底。滚动时文本会伸出视口，必须裁掉，
         // 否则会画到面板外面去。
-        drawBaseLayer(painter, visible, textX, textY, lifts, scrolling,
+        drawBaseLayer(painter, visible, textX, drawMainY, lifts, scrolling,
                 viewportLeft, viewWidth);
 
         if (clampedSung >= 0.5f) {
             if (canScroll) {
-                drawWithClipping(painter, visible, textX, textY, clampedSung,
+                drawWithClipping(painter, visible, textX, drawMainY, clampedSung,
                         primaryWidth, viewportLeft, viewportRight, lifts);
             } else {
-                drawByWholeUnit(painter, line, visible, textX, textY, clampedSung);
+                drawByWholeUnit(painter, line, visible, textX, drawMainY, clampedSung);
             }
         }
 
-        if (hasTranslation) {
+        // 副行：不做逐字染色，且带着自己的淡入。
+        if (hasSecondary) {
             int secondaryX = centerX - secondaryWidth / 2;
-            painter.drawText(secondary, secondaryX, textY + LINE_HEIGHT + LINE_GAP,
-                    COLOR_TRANSLATION);
+            int secondaryY = centerTextY;
+            // 新副行在主行升上来之后才淡入（对应 NEXT_LINE_PREVIEW_FADE_DURATION）。
+            int alpha = 255;
+            if (promote < 1f) {
+                alpha = Math.round(255f * promote);
+            }
+            painter.drawText(secondaryText, secondaryX, secondaryY,
+                    withAlpha(secondaryColor, alpha));
         }
+
+        lastSecondaryPresent = hasSecondary;
+        lastMainText = fullText;
         return true;
+    }
+
+    /**
+     * 更新行切换动画状态。
+     *
+     * <p>仅在行索引变化时重新开始计时；同一行内不动，
+     * 否则每帧都会重置，动画永远走不完。
+     */
+    private void updateLineTransition(int index, long frameDeltaNanos) {
+        if (index == lineTransitionFromIndex) {
+            if (lineTransitionElapsedNanos < LINE_TRANSITION_NANOS) {
+                lineTransitionElapsedNanos += Math.max(0L, frameDeltaNanos);
+            }
+            return;
+        }
+        lineTransitionFromIndex = index;
+        lineTransitionElapsedNanos = 0L;
+    }
+
+    /** 行切换进度 0→1；已经走完时恒为 1。 */
+    private float lineTransitionProgress() {
+        if (LINE_TRANSITION_NANOS <= 0L) {
+            return 1f;
+        }
+        float raw = lineTransitionElapsedNanos / (float) LINE_TRANSITION_NANOS;
+        if (raw >= 1f) {
+            return 1f;
+        }
+        // 减速插值，对应 LinearOutSlowInInterpolator：
+        // 起步快、收尾慢，读起来像「滑到位」而不是「弹到位」。
+        float t = Math.max(0f, raw);
+        return 1f - (1f - t) * (1f - t);
+    }
+
+    /** 画出正在离场的上一行：向上移动并淡出。 */
+    private void drawOutgoingLine(Painter painter, int maxWidth, int centerX,
+                                  int mainBaselineY, float promote) {
+        String old = clip(painter, lastMainText, maxWidth);
+        if (old.isEmpty()) {
+            return;
+        }
+        int width = painter.textWidth(old);
+        int x = centerX - width / 2;
+        // 上移 0.65 行高，与 HyperLyric 的 main.height * 0.65f 一致。
+        int rise = Math.round(LINE_HEIGHT * 0.65f * (1f - promote));
+        int alpha = Math.round(255f * (1f - promote));
+        painter.drawText(old, x, mainBaselineY - rise, withAlpha(COLOR_UNSUNG, alpha));
     }
 
     /**
@@ -556,7 +683,7 @@ public final class FloatingLyricRenderer {
         if (!PER_CHAR_LIFT || charCount <= 1 || charCount > MAX_LIFT_CHARS) {
             return null;
         }
-        int maxLift = Math.round(LINE_HEIGHT * LIFT_FACTOR);
+        int maxLift = LIFT_PX;
         if (maxLift <= 0) {
             return null;
         }

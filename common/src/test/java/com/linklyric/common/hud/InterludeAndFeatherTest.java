@@ -122,20 +122,24 @@ class InterludeAndFeatherTest {
 
         assertTrue(painter.scissors.size() >= 3,
                 "行中段应有实心 + 多级羽化，实际裁剪次数=" + painter.scissors.size());
-        assertTrue(painter.colors.size() >= 3,
-                "应使用多级 alpha，实际颜色数=" + painter.colors.size());
 
-        // alpha 单调递减，且末级明显更淡
-        List<Integer> alphas = new ArrayList<>();
-        for (int color : painter.colors) {
-            alphas.add((color >>> 24) & 0xFF);
+        // 羽化只发生在**带裁剪**的绘制里，因此直接从裁剪态颜色取序列。
+        // 双行布局引入后，非裁剪绘制还会混入副行、离场行与未唱底色，
+        // 全量检查单调性会把它们算进来。
+        List<Integer> fadeAlphas = new ArrayList<>();
+        for (int color : painter.clipColors) {
+            fadeAlphas.add((color >>> 24) & 0xFF);
         }
-        for (int i = 1; i < alphas.size(); i++) {
-            assertTrue(alphas.get(i) <= alphas.get(i - 1),
-                    "羽化 alpha 必须递减，实际=" + alphas);
+        assertTrue(fadeAlphas.size() >= 3,
+                "应有多级羽化裁剪，实际=" + fadeAlphas);
+
+        // 首段为实心（255），之后逐级变淡
+        for (int i = 2; i < fadeAlphas.size(); i++) {
+            assertTrue(fadeAlphas.get(i) <= fadeAlphas.get(i - 1),
+                    "羽化 alpha 必须递减，实际=" + fadeAlphas);
         }
-        assertTrue(alphas.get(alphas.size() - 1) < 0x40,
-                "末级应足够淡，实际=" + alphas);
+        assertTrue(fadeAlphas.get(fadeAlphas.size() - 1) < 0x40,
+                "末级应足够淡，实际=" + fadeAlphas);
     }
 
     private static LyricLine line(String text, long start, long end) {
@@ -186,10 +190,16 @@ class InterludeAndFeatherTest {
         final List<Integer> colors = new ArrayList<>();
         final List<String> texts = new ArrayList<>();
 
+        /** 仅记录处于裁剪状态下的绘制颜色，即羽化层。 */
+        final List<Integer> clipColors = new ArrayList<>();
+        private boolean clipping;
+
         void reset() {
             scissors.clear();
             colors.clear();
+            clipColors.clear();
             texts.clear();
+            clipping = false;
         }
 
         @Override
@@ -211,6 +221,9 @@ class InterludeAndFeatherTest {
         public void drawText(String text, int x, int y, int color) {
             texts.add(text);
             colors.add(color);
+            if (clipping) {
+                clipColors.add(color);
+            }
         }
 
         @Override
@@ -225,10 +238,12 @@ class InterludeAndFeatherTest {
         @Override
         public void enableScissor(int x, int y, int width, int height) {
             scissors.add(width);
+            clipping = true;
         }
 
         @Override
         public void disableScissor() {
+            clipping = false;
         }
     }
 }
