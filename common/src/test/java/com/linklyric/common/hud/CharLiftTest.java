@@ -64,11 +64,18 @@ class CharLiftTest {
                 "正在唱的字不应比早唱过的字还低，实际 近=" + liftAtCursor
                         + " 远=" + liftFarBehind);
 
-        // 尚未唱到的字落在裁剪区之外。
-        // 逐字绘制会遍历整行，能否只显示已唱部分完全依赖裁剪，
-        // 因此这里必须模拟裁剪语义，否则测不出真实行为。
-        assertFalse(ys.containsKey("十"),
-                "未唱到的字应被裁剪，实际绘制=" + ys.keySet());
+        // 未唱到的字由底色层绘制（白色原词），这是预期行为。
+        // 关键是要确认：同一个字在底色层与高亮层的纵坐标必须一致，
+        // 否则会出现「高亮字从上面落到原字上」的重影。
+        Map<String, List<Integer>> allYs = painter.allYsOf(text);
+        for (Map.Entry<String, List<Integer>> entry : allYs.entrySet()) {
+            List<Integer> list = entry.getValue();
+            for (int i = 1; i < list.size(); i++) {
+                assertEquals(list.get(0), list.get(i),
+                        "字 '" + entry.getKey() + "' 在两层中的纵坐标必须一致，实际="
+                                + list + " 全部=" + allYs);
+            }
+        }
     }
 
     /** 逐字宽度必须按真实字形累加，不能平均分摊。 */
@@ -258,6 +265,18 @@ class CharLiftTest {
         public void disableScissor() {
             clipX = NO_CLIP;
             clipW = 0;
+        }
+
+        /** 每个字符的所有绘制纵坐标；用于校验两层是否对齐。 */
+        Map<String, List<Integer>> allYsOf(String text) {
+            Map<String, List<Integer>> map = new LinkedHashMap<>();
+            for (int i = 0; i < texts.size(); i++) {
+                String t = texts.get(i);
+                if (t.length() == 1) {
+                    map.computeIfAbsent(t, k -> new ArrayList<>()).add(ys.get(i));
+                }
+            }
+            return map;
         }
 
         /** 每个字符第一次出现的 y；用于判断抬升。 */

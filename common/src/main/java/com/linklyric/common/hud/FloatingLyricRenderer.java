@@ -61,27 +61,29 @@ public final class FloatingLyricRenderer {
     private static final int[] FEATHER_ALPHA = {0xF5, 0xC3, 0x5A, 0x16, 0x00};
 
     /**
-     * 唱到时单个字的抬升高度，按字形高度比例。
+     * 唱到时单个字的抬升高度，按行高比例。
      *
-     * <p>比例 0.12 取自 HyperLyric 的 {@code DEFAULT_CJK_LIFT_FACTOR}。
-     * 但比例必须以**字形墨迹高度**为基数，不能用行高：
-     * 行高只有 10px 时 0.12 得 1px，肉眼几乎看不出；
-     * 而汉字实际墨迹高约 8px，按它算仍在 1px 量级，
-     * 说明这个比例只适合手机上的大字号。
+     * <p>参考 HyperLyric 的 {@code DEFAULT_CJK_LIFT_FACTOR = 0.12}，
+     * 但该比例在手机上是按数十像素的 textSize 算的。
+     * 我们行高只有 10px，0.12 得 1px 且经相位衰减后取整为 0，完全不可见。
      *
-     * <p>因此这里取行高的 0.35：10px 行高得到约 3px，
-     * 既明显可见，又不至于让字跑出底板（底板留了 3px 内边距）。
+     * <p>取 0.6 得 6px：在 10px 行高下这是明确可辨的位移，
+     * 且不超过底板 3px 内边距的两倍余量（裁剪区已按此预留）。
      */
-    private static final float LIFT_FACTOR = 0.35f;
+    private static final float LIFT_FACTOR = 0.6f;
 
     /**
-     * 抬升的回落后程长度，按行高比例。
+     * 抬升的回落后程长度，以平均字宽为单位。
      *
-     * <p>取 0.9 与 {@code DEFAULT_CJK_WAVE_FACTOR} 一致。
-     * 高亮离开该字后，用约一行的宽度缓慢落回基线，
-     * 而不是瞬间弹回——瞬间弹回看起来像抖动。
+     * <p>HyperLyric 用 {@code textSize * 0.9}，而汉字宽度约等于 textSize，
+     * 因此它的实际回落行程约为 **0.9 个字宽**。这里按同一相对比例取值。
+     *
+     * <p>这个参数极敏感，设错会让上浮完全看不见：
+     * 若行程取到 4 个字宽，早先唱过的字相位会长期贴着 0，
+     * 而正在唱的那个字相位也早已过半，最终每帧只有一个字偏 1px，
+     * 画面上等于没有效果。
      */
-    private static final float LIFT_WAVE_FACTOR = 0.9f;
+    private static final float LIFT_WAVE_UNITS = 0.9f;
 
     /**
      * 已唱部分的绘制粒度。
@@ -309,24 +311,28 @@ public final class FloatingLyricRenderer {
         int textX = viewportLeft + scroll;
 
         int padX = 6;
-        int padY = 3;
+        // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
+        // 在画面上变成「文字浮在框外」。
+        int padY = Math.max(3, LIFT_HEADROOM + 1);
         painter.fillRect(viewportLeft - padX, textY - padY,
                 viewWidth + padX * 2, blockHeight + padY * 2, COLOR_BACKDROP);
 
+        // 逐字偏移表：底色层与高亮层必须共用同一份。
+        //
+        // 若只让高亮层带偏移，唱到的字会从白色原字上方落下来，
+        // 看起来像两个独立的字在打架，而不是同一个字变色并上浮。
+        int[] lifts = clampedSung >= 0.5f && canScroll
+                ? computeLifts(painter, charStartsOf(painter, visible),
+                        visible.length(), primaryWidth, clampedSung)
+                : null;
+
         // 未唱色打底。滚动时文本会伸出视口，必须裁掉，
         // 否则会画到面板外面去。
-        if (scrolling) {
-            painter.enableScissor(viewportLeft, textY - 2, viewWidth, LINE_HEIGHT + 6);
-            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
-            painter.disableScissor();
-        } else {
-            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
-        }
+        drawBaseLayer(painter, visible, textX, textY, lifts, scrolling,
+                viewportLeft, viewWidth);
 
         if (clampedSung >= 0.5f) {
             if (canScroll) {
-                int[] lifts = computeLifts(painter, charStartsOf(painter, visible),
-                        visible.length(), primaryWidth, clampedSung);
                 drawWithClipping(painter, visible, textX, textY, clampedSung,
                         primaryWidth, viewportLeft, viewportRight, lifts);
             } else {
@@ -390,6 +396,38 @@ public final class FloatingLyricRenderer {
         painter.fillRect(x - 6, y - 3, width + 12, LINE_HEIGHT + 6, COLOR_BACKDROP);
         painter.drawText(INTERLUDE_TEXT, x, y, COLOR_INTERLUDE);
         return true;
+    }
+
+    /**
+     * 绘制未唱色底色层。
+     *
+     * <p>关键点：有抬升表时必须逐字绘制并套用同一份偏移，
+     * 让「同一个字」既有底色也有高亮、且位置一致。
+     *
+     * <p>若这里仍按整行一次绘制（基线不动），而高亮层带偏移，
+     * 唱到的字就会从白色原字上方落下来，看起来是两个独立的字，
+     * 这正是「高亮字落在原歌词上」的观感来源。
+     */
+    private void drawBaseLayer(Painter painter, String visible, int textX, int textY,
+                               int[] lifts, boolean scrolling,
+                               int viewportLeft, int viewWidth) {
+        if (scrolling) {
+            painter.enableScissor(viewportLeft, textY - LIFT_HEADROOM, viewWidth,
+                    LINE_HEIGHT + LIFT_HEADROOM + 4);
+        }
+        if (lifts == null) {
+            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
+        } else {
+            int cursor = 0;
+            for (int i = 0; i < visible.length(); i++) {
+                String ch = visible.substring(i, i + 1);
+                painter.drawText(ch, textX + cursor, textY - lifts[i], COLOR_UNSUNG);
+                cursor += painter.textWidth(ch);
+            }
+        }
+        if (scrolling) {
+            painter.disableScissor();
+        }
     }
 
     /**
@@ -496,6 +534,19 @@ public final class FloatingLyricRenderer {
     }
 
     /**
+     * 平均字宽。
+     *
+     * <p>中英混排时各字宽度不同，用平均值为基准计算回落行程即可：
+     * 行程只需与字的尺度同量级，不要求精确。
+     */
+    private static float charWidthAverage(int[] charStarts, int charCount, int lineWidth) {
+        if (charCount <= 0) {
+            return 0f;
+        }
+        return lineWidth / (float) charCount;
+    }
+
+    /**
      * 计算每个字的抬升像素。
      *
      * <p>规则取自 HyperLyric 的 {@code computeUnitLift}：
@@ -514,12 +565,29 @@ public final class FloatingLyricRenderer {
         if (maxLift <= 0) {
             return null;
         }
-        int waveLength = Math.round(LINE_HEIGHT * LIFT_WAVE_FACTOR);
+
+        // 回落行程以位置平均字宽为单位，而不是行高。
+        // 行高与字宽在我们的排版里几乎相等（都是 10px 量级），
+        // 若用行高算，行程会短到一个字就耗尽，抬升来不及被看到。
+        int waveLength = Math.max(1,
+                Math.round(charWidthAverage(charStarts, charCount, lineWidth) * LIFT_WAVE_UNITS));
 
         int[] lifts = new int[charCount];
         for (int i = 0; i < charCount; i++) {
             int unitStart = charStarts[i];
             int unitEnd = i + 1 < charCount ? charStarts[i + 1] : lineWidth;
+
+            // 尚未唱到这个字：停在基线。
+            //
+            // HyperLyric 原式对 sungWidth < transitionStart 的情况会把相位夹到 0，
+            // 从而返回 maxOffset，也就是整行未唱部分整体悬空。
+            // 在手机大字号下这点位移不明显，但我们行高只有 10px、
+            // 位移占 4px，整行悬空会非常显眼，且与「唱到的字上浮」直觉相反。
+            // 这里显式返回 0。
+            if (sungWidth <= unitStart) {
+                continue;
+            }
+
             int transitionStart = Math.max(0, unitStart - waveLength);
             int transitionLength = unitEnd - transitionStart;
             if (transitionLength <= 0) {
