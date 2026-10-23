@@ -25,3 +25,5 @@ logs/
 
 # Local-only
 local.properties
+
+cp-fabric.txt
