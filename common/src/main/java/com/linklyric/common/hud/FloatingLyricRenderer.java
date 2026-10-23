@@ -73,17 +73,12 @@ public final class FloatingLyricRenderer {
     private static final float LIFT_FACTOR = 0.6f;
 
     /**
-     * 抬升的回落后程长度，以平均字宽为单位。
+     * 升起行程长度，以平均字宽为单位。
      *
-     * <p>HyperLyric 用 {@code textSize * 0.9}，而汉字宽度约等于 textSize，
-     * 因此它的实际回落行程约为 **0.9 个字宽**。这里按同一相对比例取值。
-     *
-     * <p>这个参数极敏感，设错会让上浮完全看不见：
-     * 若行程取到 4 个字宽，早先唱过的字相位会长期贴着 0，
-     * 而正在唱的那个字相位也早已过半，最终每帧只有一个字偏 1px，
-     * 画面上等于没有效果。
+     * <p>0.7 表示字唱到 70% 处升满，之后永久保持在顶端。
+     * 再大就会「升到一半多还没到顶」，升起过程显得拖沓。
      */
-    private static final float LIFT_WAVE_UNITS = 0.9f;
+    private static final float LIFT_RISE_UNITS = 0.7f;
 
     /**
      * 已唱部分的绘制粒度。
@@ -566,36 +561,26 @@ public final class FloatingLyricRenderer {
             return null;
         }
 
-        // 回落行程以位置平均字宽为单位，而不是行高。
-        // 行高与字宽在我们的排版里几乎相等（都是 10px 量级），
-        // 若用行高算，行程会短到一个字就耗尽，抬升来不及被看到。
-        int waveLength = Math.max(1,
-                Math.round(charWidthAverage(charStarts, charCount, lineWidth) * LIFT_WAVE_UNITS));
+        // 升起行程：字被唱到时用约一个多字宽的行程缓慢升满。
+        int riseLength = Math.max(1,
+                Math.round(charWidthAverage(charStarts, charCount, lineWidth)
+                        * LIFT_RISE_UNITS));
 
         int[] lifts = new int[charCount];
         for (int i = 0; i < charCount; i++) {
             int unitStart = charStarts[i];
-            int unitEnd = i + 1 < charCount ? charStarts[i + 1] : lineWidth;
 
             // 尚未唱到这个字：停在基线。
-            //
-            // HyperLyric 原式对 sungWidth < transitionStart 的情况会把相位夹到 0，
-            // 从而返回 maxOffset，也就是整行未唱部分整体悬空。
-            // 在手机大字号下这点位移不明显，但我们行高只有 10px、
-            // 位移占 4px，整行悬空会非常显眼，且与「唱到的字上浮」直觉相反。
-            // 这里显式返回 0。
+            // 必须显式判断，否则相位公式会把结果夹成最大值，
+            // 导致整行未唱部分一起悬空。
             if (sungWidth <= unitStart) {
                 continue;
             }
 
-            int transitionStart = Math.max(0, unitStart - waveLength);
-            int transitionLength = unitEnd - transitionStart;
-            if (transitionLength <= 0) {
-                continue;
-            }
-            float phase = (sungWidth - transitionStart) / (float) transitionLength;
-            phase = Math.max(0f, Math.min(1f, phase));
-            lifts[i] = Math.round(maxLift * (1f - phase));
+            // 升起：从该字起点开始线性升到满值，之后永久保持。
+            float rise = (sungWidth - unitStart) / (float) riseLength;
+            rise = Math.max(0f, Math.min(1f, rise));
+            lifts[i] = Math.round(maxLift * rise);
         }
         return lifts;
     }

@@ -110,7 +110,7 @@ class LiftGeometryTest {
                 new FloatingLyricRenderer(liveFeed(timeline(), 0L));
 
         List<Integer> lifts = new ArrayList<>();
-        for (int i = 0; i < 120; i++) {
+        for (int i = 0; i < 160; i++) {
             painter.reset();
             renderer.render(painter);
             int base = painter.baseY();
@@ -127,6 +127,79 @@ class LiftGeometryTest {
                 "上浮总量应随时间变化，实际只有 " + distinct + " 种取值：" + lifts);
         assertTrue(lifts.stream().anyMatch(v -> v > 0),
                 "过程中应出现非零上浮，实际=" + lifts);
+    }
+
+    /**
+     * 升起是渐进的，不能一被唱到就顶满。
+     *
+     * <p>这是「缓慢升起」与「瞬间弹起」的判据：
+     * 字刚被唱到时抬升应处于中间值，而非直接等于最大值。
+     */
+    @Test
+    void 升起是渐进的() {
+        RecordingPainter painter = new RecordingPainter();
+        // 从行首开始播放，逐帧记录当前字抬升量
+        FloatingLyricRenderer renderer =
+                new FloatingLyricRenderer(liveFeed(timeline(), 0L));
+
+        List<Integer> series = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            painter.reset();
+            renderer.render(painter);
+            int base = painter.baseY();
+            int max = 0;
+            for (int y : painter.lastY().values()) {
+                max = Math.max(max, base - y);
+            }
+            series.add(max);
+            sleep();
+        }
+
+        // 必须出现过既非 0 也非满值的中间态
+        int peak = series.stream().mapToInt(Integer::intValue).max().orElse(0);
+        assertTrue(peak > 0, "应出现非零抬升，实际=" + series);
+        boolean hasIntermediate = series.stream()
+                .anyMatch(v -> v > 0 && v < peak);
+        assertTrue(hasIntermediate,
+                "应出现中间态（渐进升起），实际峰值=" + peak + " 序列=" + series);
+    }
+
+    /**
+     * 唱完的字永久保持高位，不回落。
+     *
+     * <p>这是明确选定的观感：升起的字停住不动。
+     * 代价是已唱部分会整体高于未唱部分，形成阶梯上移；
+     * 该后果已被接受，因此这里断言的是「保持」而非「归位」。
+     */
+    @Test
+    void 唱完的字保持高位() {
+        RecordingPainter painter = new RecordingPainter();
+        // 位置 4800ms：前 4 个字已唱完，第 5 个正在唱
+        FloatingLyricRenderer renderer =
+                new FloatingLyricRenderer(liveFeed(timeline(), 4_800L));
+
+        Map<String, Integer> best = new LinkedHashMap<>();
+        int bestBase = 0;
+        int firstLift = 0;
+        for (int i = 0; i < 40; i++) {
+            painter.reset();
+            renderer.render(painter);
+            int base = painter.baseY();
+            Integer first = painter.lastY().get(String.valueOf(TEXT.charAt(0)));
+            if (first != null) {
+                int lift = base - first;
+                if (lift > firstLift) {
+                    firstLift = lift;
+                    best = painter.lastY();
+                    bestBase = base;
+                }
+            }
+            sleep();
+        }
+
+        assertTrue(firstLift > 0,
+                "唱完的字应保持抬起，实际首个字抬升=" + firstLift
+                        + " 基线=" + bestBase + " 全部=" + best);
     }
 
     /** 同一个字在底色层与高亮层必须完全重合，否则就是重影。 */
