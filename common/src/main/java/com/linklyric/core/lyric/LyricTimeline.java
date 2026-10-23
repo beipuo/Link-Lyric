@@ -85,4 +85,29 @@ public final class LyricTimeline {
         LyricLine line = lineAt(positionMs);
         return line != null && positionMs >= line.endMs();
     }
+
+    /**
+     * 当前位置是否落在行间空隙里，且空隙长到足以显示提示。
+     *
+     * <p>判据取自 HyperLyric 的 {@code InterludeTracker}：相邻两行的间隔
+     * 超过 {@code minGapMs}，且位置确实落在「前一行结束之后、后一行开始之前」。
+     *
+     * <p>必要性：间奏往往长达十几秒，这段时间没有任何行可显示，
+     * 若照常渲染会让最后一句歌词一直停在屏幕上，看起来像卡住了。
+     */
+    public boolean isInterludeAt(long positionMs, long minGapMs) {
+        int index = indexAt(positionMs);
+        if (index < 0) {
+            return false;
+        }
+        LyricLine current = lines.get(index);
+        LyricLine next = index + 1 < lines.size() ? lines.get(index + 1) : null;
+        if (next == null) {
+            return false;
+        }
+        if (next.startMs() - current.endMs() < minGapMs) {
+            return false;
+        }
+        return positionMs > current.endMs() && positionMs < next.startMs();
+    }
 }

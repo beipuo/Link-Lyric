@@ -50,6 +50,30 @@ public final class FloatingLyricRenderer {
     private static final float FEATHER_RATIO = 0.45f;
 
     /**
+     * 羽化带的 alpha 梯度，由高到低。
+     *
+     * <p>取值来自对 HyperLyric `TextDrawer` 那组 6 停靠点渐变
+     * （alpha 255→244→184→92→24→0，stops 0/0.18/0.42/0.66/0.84/1）
+     * 的分段中点采样。原实现用两段（153、64），
+     * 过渡带里第一级偏暗约 70 个 alpha 单位，高亮一过界就明显发灰。
+     * 这里用 5 段逼近原曲线，末级接近 0 保证收尾干净。
+     */
+    private static final int[] FEATHER_ALPHA = {0xF5, 0xC3, 0x5A, 0x16, 0x00};
+
+    /**
+     * 间奏判定的最短空隙（毫秒）。
+     *
+     * <p>取 8000 与 HyperLyric 的 {@code InterludeTracker.minGapMs} 一致。
+     * 低于这个长度的空隙多半只是句间呼吸，插提示反而碍眼。
+     */
+    private static final long INTERLUDE_MIN_GAP_MS = 8000L;
+
+    private static final String INTERLUDE_TEXT = "间奏";
+
+    /** 间奏提示色，刻意比正常歌词淡，避免抢注意力。 */
+    private static final int COLOR_INTERLUDE = 0xFF8A8A8A;
+
+    /**
      * 桥接端的上报周期初值（毫秒）。
      *
      * <p>**实测为 1000ms**，不是轮询间隔。轮询每 200ms 发一次请求，
@@ -70,20 +94,6 @@ public final class FloatingLyricRenderer {
      * 不会在下一个上报到达前就撞到上限。
      */
     private static final long LEAD_MARGIN_MS = 400L;
-
-    /**
-     * 外推允许的最大超前量（毫秒）。
-     *
-     * <p>**这是染色能否正常工作的硬约束**。桥接端每秒才上报一次位置，
-     * 外推器按本地时钟持续推进；一旦轮询因传输全量歌词而变慢，
-     * 外推值就会无界地跑在真实位置前面。位置一旦越过当前行的结束时间，
-     * 行选择会停在最后一行并把整行判定为已唱完，
-     * 表现就是「整行恒亮、完全没有染色过程」。
-     *
-     * <p>因此这里给超前量设上限，超过即回落到上报位置重新锚定。
-     * 取值需小于最短歌词行时长，保证不会整行被跳过。
-     */
-    private static final long MAX_EXTRAPOLATION_LEAD_MS = 700L;
 
     /**
      * 平台绘制适配层。
@@ -191,6 +201,12 @@ public final class FloatingLyricRenderer {
             return false;
         }
 
+        // 长间奏里没有任何行可显示。若不处理，最后一句会一直停在屏幕上，
+        // 看起来像是卡住了。这里改显示一段静态提示，让状态可被理解。
+        if (timeline.isInterludeAt(positionMs, INTERLUDE_MIN_GAP_MS)) {
+            return renderInterlude(painter);
+        }
+
         int screenWidth = painter.screenWidth();
         int screenHeight = painter.screenHeight();
         int maxWidth = Math.max(40, (int) (screenWidth * MAX_WIDTH_RATIO));
@@ -232,7 +248,7 @@ public final class FloatingLyricRenderer {
         float clampedSung = Math.max(0f, Math.min(sungWidth, primaryWidth));
         if (clampedSung >= 0.5f) {
             if (painter.supportsScissor()) {
-                drawWithClipping(painter, visible, textX, textY, clampedSung);
+                drawWithClipping(painter, visible, textX, textY, clampedSung, primaryWidth);
             } else {
                 drawByWholeUnit(painter, line, visible, textX, textY, clampedSung);
             }
@@ -252,27 +268,75 @@ public final class FloatingLyricRenderer {
      * <p>硬切边在字体边缘会显得生硬；分两级透明度过渡可以显著柔化推进端，
      * 而 Minecraft 的文本绘制本身支持 alpha，不需要着色器。
      */
-    private void drawWithClipping(Painter painter, String visible, int textX, int textY,
-                                  float sungWidth) {
-        int solidWidth = (int) sungWidth;
+    /**
+     * 绘制间奏提示。
+     *
+     * <p>刻意做得比正常歌词更淡：它是状态说明，不该抢注意力。
+     * 同时重置换行状态，让间奏结束后的首帧直接对齐到新行，
+     * 而不是从上一行的进度平滑过去。
+     */
+    private boolean renderInterlude(Painter painter) {
+        lastLineIndex = -1;
+        sungWidth = 0f;
 
+        int screenWidth = painter.screenWidth();
+        int screenHeight = painter.screenHeight();
+        int width = painter.textWidth(INTERLUDE_TEXT);
+        int x = screenWidth / 2 - width / 2;
+        int y = screenHeight - BOTTOM_MARGIN - LINE_HEIGHT;
+
+        painter.fillRect(x - 6, y - 3, width + 12, LINE_HEIGHT + 6, COLOR_BACKDROP);
+        painter.drawText(INTERLUDE_TEXT, x, y, COLOR_INTERLUDE);
+        return true;
+    }
+
+    /**
+     * 绘制已唱部分。
+     *
+     * <p>分两种情形：谱面走完就整体全亮，不再羽化；
+     * 否则实心段 + 一条逐级变淡的过渡带。
+     */
+    private void drawWithClipping(Painter painter, String visible, int textX, int textY,
+                                  float sungWidth, int lineWidth) {
+        int solidWidth = (int) sungWidth;
         if (solidWidth > 0) {
-            painter.enableScissor(textX, textY - 2, solidWidth, LINE_HEIGHT + 6);
-            painter.drawText(visible, textX, textY, COLOR_SUNG);
-            painter.disableScissor();
+            drawClip(painter, visible, textX, textY, textX, solidWidth, COLOR_SUNG);
         }
 
-        int feather = Math.max(2, (int) (LINE_HEIGHT * FEATHER_RATIO));
-        int tailStart = textX + solidWidth;
+        // 整行唱完就不再羽化：否则行尾会拖一条半透明的尾巴，
+        // 看起来像永远没唱干净。
+        if (solidWidth >= lineWidth) {
+            return;
+        }
 
-        // 一级羽化：半透明
-        painter.enableScissor(tailStart, textY - 2, feather, LINE_HEIGHT + 6);
-        painter.drawText(visible, textX, textY, withAlpha(COLOR_SUNG, 0x99));
-        painter.disableScissor();
+        // 过渡带按字号比例取宽，与字形高度成比例，不会随分辨率失衡。
+        int feather = Math.max(FEATHER_ALPHA.length, (int) (LINE_HEIGHT * FEATHER_RATIO));
+        int segment = Math.max(1, feather / FEATHER_ALPHA.length);
+        int x = textX + solidWidth;
+        int remaining = feather;
+        for (int i = 0; i < FEATHER_ALPHA.length && remaining > 0; i++) {
+            int width = Math.min(segment, remaining);
+            drawClip(painter, visible, textX, textY, x, width,
+                    withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]));
+            x += width;
+            remaining -= width;
+        }
+    }
 
-        // 二级羽化：更透明，收尾
-        painter.enableScissor(tailStart + feather, textY - 2, feather, LINE_HEIGHT + 6);
-        painter.drawText(visible, textX, textY, withAlpha(COLOR_SUNG, 0x40));
+    /**
+     * 按裁剪区画一段高亮。
+     *
+     * <p>每一段的 alpha 叠加在下面已铺好的未唱色之上，结果是
+     * {@code a*已唱 + (1-a)*未唱}，也就是正确的线性插值——
+     * 这正是逐级变淡的成因，不是重复混色。
+     */
+    private void drawClip(Painter painter, String visible, int textX, int textY,
+                          int clipX, int clipWidth, int color) {
+        if (clipWidth <= 0) {
+            return;
+        }
+        painter.enableScissor(clipX, textY - 2, clipWidth, LINE_HEIGHT + 6);
+        painter.drawText(visible, textX, textY, color);
         painter.disableScissor();
     }
 
@@ -306,6 +370,29 @@ public final class FloatingLyricRenderer {
             cursor += partWidth;
             consumed += available;
         }
+    }
+
+    /**
+     * 单个演唱单元的进度曲线。
+     *
+     * <p>线性映射的问题是长音听感发滞：字刚开口时高亮几乎不动，
+     * 用户会觉得「没跟上」，而字尾又拖得过于均匀。
+     *
+     * <p>这里用 {@code p(2.5 - 2.5p + p²)}：媒体时间走到 9% 时宽度已到 20%，
+     * 走到 26% 时到 50%，末端斜率仍保留 0.5。
+     * 也就是先冲出去、再放缓收尾，与开口发音的能量包络一致。
+     *
+     * <p>**只用于真正的逐字数据**。行级数据是按时间比例合成的，
+     * 给它套曲线只会让合成痕迹更明显。
+     */
+    private static float sustainCurve(float progress) {
+        if (progress <= 0f) {
+            return 0f;
+        }
+        if (progress >= 1f) {
+            return 1f;
+        }
+        return progress * (2.5f - 2.5f * progress + progress * progress);
     }
 
     /**
@@ -357,7 +444,7 @@ public final class FloatingLyricRenderer {
             if (positionMs >= word.endMs()) {
                 width += partWidth;
             } else if (positionMs > word.startMs()) {
-                width += partWidth * word.progressAt(positionMs);
+                width += partWidth * sustainCurve(word.progressAt(positionMs));
             }
             consumed += available;
         }

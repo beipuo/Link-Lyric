@@ -54,11 +54,14 @@ class LiveBridgeAnimationTest {
                 Thread.sleep(150L);
                 painter.reset();
                 renderer.render(painter);
-                int pos = (int) source.pollSnapshot().positionMs();
-                LyricLine cur = source.lyric().lineAt(pos);
+                // 必须用渲染器实际使用的（外推后）位置反查时间轴。
+                // 用轮询值会与渲染结果错位最多一个上报周期，诊断信息失真。
+                long rendered = renderedPosition(renderer);
+                LyricLine cur = source.lyric().lineAt(rendered);
                 System.out.printf(
-                        "pos=%-7d line=%-4d sung=%-4d text=[%s] 时间轴行=[%s](%d-%d, words=%d)%n",
-                        pos, painter.lastLineWidth, painter.lastScissor, painter.lastText,
+                        "渲染位置=%-7d 上报=%-7d 行宽=%-4d 已唱=%-4d text=[%s] 行=[%s](%d-%d, words=%d)%n",
+                        rendered, (long) source.pollSnapshot().positionMs(),
+                        painter.lastLineWidth, painter.lastScissor, painter.lastText,
                         cur == null ? "null" : cur.text(),
                         cur == null ? -1 : cur.startMs(),
                         cur == null ? -1 : cur.endMs(),
@@ -73,6 +76,14 @@ class LiveBridgeAnimationTest {
         } finally {
             source.stop();
         }
+    }
+
+    /** 反射读取渲染器本帧使用的位置，用于诊断对齐。 */
+    private static long renderedPosition(FloatingLyricRenderer renderer) throws Exception {
+        java.lang.reflect.Field f =
+                FloatingLyricRenderer.class.getDeclaredField("lastRenderedPositionMs");
+        f.setAccessible(true);
+        return (long) f.get(renderer);
     }
 
     private static boolean reachable() {
