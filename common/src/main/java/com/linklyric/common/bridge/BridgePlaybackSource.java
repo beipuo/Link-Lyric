@@ -45,7 +45,7 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
 
     private volatile boolean alive;
     private volatile int consecutiveFailures;
-    private volatile long lyricSignature;
+    private volatile int lyricSignature;
     private volatile boolean started;
     private volatile boolean stopRequested;
     private Thread worker;
@@ -158,14 +158,80 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
         capabilities.set(snapshot.capabilities());
         latest.set(snapshot);
 
-        // 仅在序号变化时重解析歌词：时间轴可达数百行，没必要每次轮询都重建。
-        // 空结果也记录序号，否则无歌词时每轮都会重复解析。
-        long seq = snapshot.sequence();
-        if (seq != lyricSignature) {
+        // 歌词指纹必须只随歌词内容变化。
+        //
+        // 这里最初用的是 seq，但 seq 每次位置上报都会递增（每秒一次），
+        // 结果歌词时间轴每秒被重解析一次，渲染层的换行状态因此被反复重置。
+        // 副作用是高亮每帧都被直接赋成目标值、跳过平滑推进，
+        // 观感就是「整行瞬间变色」而不是连续染色。
+        // 改用歌词 JSON 的哈希作为指纹后，只有真正换曲或换歌词才会重建。
+        int contentSignature = lyricContentSignature(body);
+        if (contentSignature != lyricSignature) {
             LyricTimeline timeline = SnapshotParser.parseLyric(body);
             latestLyric.set(timeline);
-            lyricSignature = seq;
+            lyricSignature = contentSignature;
         }
+    }
+
+    /**
+     * 提取歌词片段的稳定指纹；歌词不变时结果恒定。
+     *
+     * <p>只对 {@code "lyric"} 的值做哈希，必须精确截到该对象的右花括号。
+     * 若截到响应末尾，会把 {@code positionMs}、{@code seq} 这些
+     * 每次都变动的字段一起算进去，指纹就退化成「每次都不同」，
+     * 时间轴会被不断重建，渲染层的平滑推进也就失效了。
+     */
+    private static int lyricContentSignature(String body) {
+        if (body == null) {
+            return 0;
+        }
+        int key = body.indexOf("\"lyric\"");
+        if (key < 0) {
+            return 0;
+        }
+        int colon = body.indexOf(':', key);
+        if (colon < 0) {
+            return 0;
+        }
+        int start = -1;
+        for (int i = colon + 1; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
+                continue;
+            }
+            start = i;
+            break;
+        }
+        if (start < 0 || body.charAt(start) != '{') {
+            return 0;
+        }
+        int depth = 0;
+        boolean inString = false;
+        boolean escaped = false;
+        for (int i = start; i < body.length(); i++) {
+            char c = body.charAt(i);
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (c == '\\') {
+                    escaped = true;
+                } else if (c == '"') {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '"') {
+                inString = true;
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return body.substring(start, i + 1).hashCode();
+                }
+            }
+        }
+        return 0;
     }
 
     private void onFailure() {
@@ -175,7 +241,7 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
             // 判定断连才清空，避免插件重载造成闪烁
             latest.set(null);
             latestLyric.set(LyricTimeline.empty());
-            lyricSignature = 0L;
+            lyricSignature = 0;
         }
     }
 

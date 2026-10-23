@@ -111,7 +111,6 @@ class LiveSampleTest {
     /** 按字符数估算宽度，足够验证排版路径不会崩。 */
     private static final class RecordingPainter implements FloatingLyricRenderer.Painter {
         final List<String> texts = new ArrayList<>();
-        int fills;
 
         @Override
         public int screenWidth() {
@@ -129,13 +128,15 @@ class LiveSampleTest {
         }
 
         @Override
+        public void fillRect(int x, int y, int width, int height, int color) {
+            // 测试替身不校验底板
+        }
+
+        @Override
         public void drawText(String text, int x, int y, int color) {
             texts.add(text);
         }
 
-        @Override
-        public void fillRect(int x, int y, int width, int height, int color) {
-            fills++;
-        }
+
     }
 }

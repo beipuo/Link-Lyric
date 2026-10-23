@@ -89,5 +89,20 @@ public final class LinkLyricFabric implements ClientModInitializer {
         public void fillRect(int x, int y, int width, int height, int color) {
             graphics.fill(x, y, x + width, y + height, color);
         }
+
+        @Override
+        public boolean supportsScissor() {
+            return true;
+        }
+
+        @Override
+        public void enableScissor(int x, int y, int width, int height) {
+            graphics.enableScissor(x, y, x + width, y + height);
+        }
+
+        @Override
+        public void disableScissor() {
+            graphics.disableScissor();
+        }
     }
 }
