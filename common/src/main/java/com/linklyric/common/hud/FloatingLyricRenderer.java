@@ -212,12 +212,24 @@ public final class FloatingLyricRenderer {
         int maxWidth = Math.max(40, (int) (screenWidth * MAX_WIDTH_RATIO));
 
         String fullText = line.text();
-        String visible = clip(painter, fullText, maxWidth);
+        int fullWidth = painter.textWidth(fullText);
+
+        // 超出可用宽度时改为滚动，而不是截断加省略号。
+        //
+        // 截断会丢掉副歌后半句，而歌词恰恰是「看下一句」的需求最强；
+        // 滚动能让整句都读到，且不需要用户操作。
+        // 只有在无法裁剪的平台上才退回截断——那种情况滚动会画到面板外。
+        boolean canScroll = painter.supportsScissor();
+        boolean scrolling = canScroll && fullWidth > maxWidth;
+
+        // 滚动时不截断文本：坐标必须和完整文本保持一致，
+        // 否则 sungWidth 与实际绘制位置对不上，高亮会错位。
+        String visible = scrolling ? fullText : clip(painter, fullText, maxWidth);
 
         boolean hasTranslation = line.hasTranslation();
         String secondary = hasTranslation ? clip(painter, line.translation(), maxWidth) : "";
 
-        int primaryWidth = painter.textWidth(visible);
+        int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
         int secondaryWidth = hasTranslation ? painter.textWidth(secondary) : 0;
 
         int blockHeight = hasTranslation
@@ -225,16 +237,12 @@ public final class FloatingLyricRenderer {
                 : LINE_HEIGHT;
 
         int centerX = screenWidth / 2;
-        int textX = centerX - primaryWidth / 2;
+        // 视口宽度即最大可用宽度；不滚动时收缩到文本实际宽度，底板才不会虚胖。
+        int viewWidth = scrolling ? maxWidth : primaryWidth;
+        int viewportLeft = centerX - viewWidth / 2;
+        int viewportRight = viewportLeft + viewWidth;
+
         int textY = screenHeight - BOTTOM_MARGIN - blockHeight;
-
-        int padX = 6;
-        int padY = 3;
-        painter.fillRect(textX - padX, textY - padY,
-                primaryWidth + padX * 2, blockHeight + padY * 2, COLOR_BACKDROP);
-
-        // 未唱色打底
-        painter.drawText(visible, textX, textY, COLOR_UNSUNG);
 
         // 换行或时间轴变更时重置动画，避免沿用上一行的进度
         if (index != lastLineIndex) {
@@ -244,11 +252,34 @@ public final class FloatingLyricRenderer {
             float target = targetWidthAt(painter, line, visible, positionMs);
             sungWidth = advance(sungWidth, target, frameDelta);
         }
-
         float clampedSung = Math.max(0f, Math.min(sungWidth, primaryWidth));
+
+        // 滚动偏移由已唱宽度直接决定，不额外维护动画状态：
+        // sungWidth 本身已经平滑过，偏移自然跟着平滑。
+        int scroll = scrolling
+                ? Math.round(scrollOffsetFor(clampedSung, viewWidth, primaryWidth))
+                : 0;
+        int textX = viewportLeft + scroll;
+
+        int padX = 6;
+        int padY = 3;
+        painter.fillRect(viewportLeft - padX, textY - padY,
+                viewWidth + padX * 2, blockHeight + padY * 2, COLOR_BACKDROP);
+
+        // 未唱色打底。滚动时文本会伸出视口，必须裁掉，
+        // 否则会画到面板外面去。
+        if (scrolling) {
+            painter.enableScissor(viewportLeft, textY - 2, viewWidth, LINE_HEIGHT + 6);
+            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
+            painter.disableScissor();
+        } else {
+            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
+        }
+
         if (clampedSung >= 0.5f) {
-            if (painter.supportsScissor()) {
-                drawWithClipping(painter, visible, textX, textY, clampedSung, primaryWidth);
+            if (canScroll) {
+                drawWithClipping(painter, visible, textX, textY, clampedSung,
+                        primaryWidth, viewportLeft, viewportRight);
             } else {
                 drawByWholeUnit(painter, line, visible, textX, textY, clampedSung);
             }
@@ -260,6 +291,28 @@ public final class FloatingLyricRenderer {
                     COLOR_TRANSLATION);
         }
         return true;
+    }
+
+    /**
+     * 滚动偏移：演唱点越过中线后才推动文本。
+     *
+     * <p>取自 HyperLyric 的 {@code ScrollStepper}。规则是
+     * 「高亮超过视口中线多少，就向左推多少」，并夹在
+     * {@code [-(行宽-视口宽), 0]} 之间，因此开头不会提前滚、结尾不会滚过头。
+     *
+     * <p>这样演唱中的字始终停在中线附近，读起来最省力；
+     * 若改成按时间匀速滚，速度会与演唱速度脱节，反而更难跟。
+     */
+    private static float scrollOffsetFor(float sungWidth, int viewWidth, int lineWidth) {
+        float minScroll = -(lineWidth - viewWidth);
+        if (minScroll >= 0f) {
+            return 0f;
+        }
+        float half = viewWidth / 2f;
+        if (sungWidth <= half) {
+            return 0f;
+        }
+        return Math.max(minScroll, Math.min(0f, half - sungWidth));
     }
 
     /**
@@ -297,10 +350,12 @@ public final class FloatingLyricRenderer {
      * 否则实心段 + 一条逐级变淡的过渡带。
      */
     private void drawWithClipping(Painter painter, String visible, int textX, int textY,
-                                  float sungWidth, int lineWidth) {
+                                  float sungWidth, int lineWidth,
+                                  int viewportLeft, int viewportRight) {
         int solidWidth = (int) sungWidth;
         if (solidWidth > 0) {
-            drawClip(painter, visible, textX, textY, textX, solidWidth, COLOR_SUNG);
+            drawClip(painter, visible, textX, textY, viewportLeft, textX,
+                    solidWidth, viewportRight, COLOR_SUNG);
         }
 
         // 整行唱完就不再羽化：否则行尾会拖一条半透明的尾巴，
@@ -316,26 +371,32 @@ public final class FloatingLyricRenderer {
         int remaining = feather;
         for (int i = 0; i < FEATHER_ALPHA.length && remaining > 0; i++) {
             int width = Math.min(segment, remaining);
-            drawClip(painter, visible, textX, textY, x, width,
-                    withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]));
+            drawClip(painter, visible, textX, textY, viewportLeft, x,
+                    width, viewportRight, withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]));
             x += width;
             remaining -= width;
         }
     }
 
     /**
-     * 按裁剪区画一段高亮。
+     * 按裁剪区画一段高亮，并夹在视口内。
+     *
+     * <p>滚动时文本会伸出屏幕两侧，若裁剪区不夹视口，
+     * 已唱段会画到面板外面，压到别的 HUD 元素上。
      *
      * <p>每一段的 alpha 叠加在下面已铺好的未唱色之上，结果是
      * {@code a*已唱 + (1-a)*未唱}，也就是正确的线性插值——
      * 这正是逐级变淡的成因，不是重复混色。
      */
     private void drawClip(Painter painter, String visible, int textX, int textY,
-                          int clipX, int clipWidth, int color) {
-        if (clipWidth <= 0) {
+                          int viewportLeft, int clipX, int clipWidth,
+                          int viewportRight, int color) {
+        int left = Math.max(clipX, viewportLeft);
+        int right = Math.min(clipX + clipWidth, viewportRight);
+        if (right - left <= 0) {
             return;
         }
-        painter.enableScissor(clipX, textY - 2, clipWidth, LINE_HEIGHT + 6);
+        painter.enableScissor(left, textY - 2, right - left, LINE_HEIGHT + 6);
         painter.drawText(visible, textX, textY, color);
         painter.disableScissor();
     }
