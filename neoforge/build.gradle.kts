@@ -24,7 +24,13 @@ neoForge {
 
     mods {
         create(modId) {
+            // common 的 class 必须一并算作本 mod 的文件。
+            // dev 环境下 FML 把 mod 文件当作独立 classloader 单元，
+            // 只写 implementation(project(":common")) 时 common 不在其中，
+            // 结果就是启动即 NoClassDefFoundError: com/linklyric/common/hud/LyricFeed。
+            // 打包进 jar（见下方 tasks.jar）只解决发布形态，救不了 dev 运行。
             sourceSet(sourceSets.main.get())
+            sourceSet(project(":common").extensions.getByType<SourceSetContainer>()["main"])
         }
     }
 }
