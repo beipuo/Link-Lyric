@@ -61,6 +61,53 @@ public final class FloatingLyricRenderer {
     private static final int[] FEATHER_ALPHA = {0xF5, 0xC3, 0x5A, 0x16, 0x00};
 
     /**
+     * 唱到时单个字的抬升高度，按字形高度比例。
+     *
+     * <p>比例 0.12 取自 HyperLyric 的 {@code DEFAULT_CJK_LIFT_FACTOR}。
+     * 但比例必须以**字形墨迹高度**为基数，不能用行高：
+     * 行高只有 10px 时 0.12 得 1px，肉眼几乎看不出；
+     * 而汉字实际墨迹高约 8px，按它算仍在 1px 量级，
+     * 说明这个比例只适合手机上的大字号。
+     *
+     * <p>因此这里取行高的 0.35：10px 行高得到约 3px，
+     * 既明显可见，又不至于让字跑出底板（底板留了 3px 内边距）。
+     */
+    private static final float LIFT_FACTOR = 0.35f;
+
+    /**
+     * 抬升的回落后程长度，按行高比例。
+     *
+     * <p>取 0.9 与 {@code DEFAULT_CJK_WAVE_FACTOR} 一致。
+     * 高亮离开该字后，用约一行的宽度缓慢落回基线，
+     * 而不是瞬间弹回——瞬间弹回看起来像抖动。
+     */
+    private static final float LIFT_WAVE_FACTOR = 0.9f;
+
+    /**
+     * 已唱部分的绘制粒度。
+     *
+     * <p>抬升是逐字计算的，若仍按整行一次绘制，只能给整行一个偏移，
+     * 起不到「唱到哪个字哪个字动」的效果。
+     */
+    private static final boolean PER_CHAR_LIFT = true;
+
+    /**
+     * 抬升需要额外预留的垂直空间。
+     *
+     * <p>必须不小于实际最大抬升量，否则抬起的字顶部会被裁剪掉，
+     * 表现为字的头部被削平。取值由 {@link #LIFT_FACTOR} 算出。
+     */
+    private static final int LIFT_HEADROOM = Math.max(2, Math.round(LINE_HEIGHT * LIFT_FACTOR));
+
+    /**
+     * 逐字绘制的最多字数。
+     *
+     * <p>每字一次绘制调用，长行会成倍放大开销。
+     * 超过这个长度就退回整段绘制——那种长度下每字偏移也看不清了。
+     */
+    private static final int MAX_LIFT_CHARS = 24;
+
+    /**
      * 间奏判定的最短空隙（毫秒）。
      *
      * <p>取 8000 与 HyperLyric 的 {@code InterludeTracker.minGapMs} 一致。
@@ -278,8 +325,10 @@ public final class FloatingLyricRenderer {
 
         if (clampedSung >= 0.5f) {
             if (canScroll) {
+                int[] lifts = computeLifts(painter, charStartsOf(painter, visible),
+                        visible.length(), primaryWidth, clampedSung);
                 drawWithClipping(painter, visible, textX, textY, clampedSung,
-                        primaryWidth, viewportLeft, viewportRight);
+                        primaryWidth, viewportLeft, viewportRight, lifts);
             } else {
                 drawByWholeUnit(painter, line, visible, textX, textY, clampedSung);
             }
@@ -351,11 +400,11 @@ public final class FloatingLyricRenderer {
      */
     private void drawWithClipping(Painter painter, String visible, int textX, int textY,
                                   float sungWidth, int lineWidth,
-                                  int viewportLeft, int viewportRight) {
+                                  int viewportLeft, int viewportRight, int[] lifts) {
         int solidWidth = (int) sungWidth;
         if (solidWidth > 0) {
             drawClip(painter, visible, textX, textY, viewportLeft, textX,
-                    solidWidth, viewportRight, COLOR_SUNG);
+                    solidWidth, viewportRight, COLOR_SUNG, lifts);
         }
 
         // 整行唱完就不再羽化：否则行尾会拖一条半透明的尾巴，
@@ -372,7 +421,7 @@ public final class FloatingLyricRenderer {
         for (int i = 0; i < FEATHER_ALPHA.length && remaining > 0; i++) {
             int width = Math.min(segment, remaining);
             drawClip(painter, visible, textX, textY, viewportLeft, x,
-                    width, viewportRight, withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]));
+                    width, viewportRight, withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]), lifts);
             x += width;
             remaining -= width;
         }
@@ -387,18 +436,100 @@ public final class FloatingLyricRenderer {
      * <p>每一段的 alpha 叠加在下面已铺好的未唱色之上，结果是
      * {@code a*已唱 + (1-a)*未唱}，也就是正确的线性插值——
      * 这正是逐级变淡的成因，不是重复混色。
+     *
+     * @param lifts 逐字竖直偏移；为 {@code null} 时整段一次绘制
      */
     private void drawClip(Painter painter, String visible, int textX, int textY,
                           int viewportLeft, int clipX, int clipWidth,
-                          int viewportRight, int color) {
+                          int viewportRight, int color, int[] lifts) {
         int left = Math.max(clipX, viewportLeft);
         int right = Math.min(clipX + clipWidth, viewportRight);
         if (right - left <= 0) {
             return;
         }
-        painter.enableScissor(left, textY - 2, right - left, LINE_HEIGHT + 6);
-        painter.drawText(visible, textX, textY, color);
+
+        if (lifts == null) {
+            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                    LINE_HEIGHT + LIFT_HEADROOM + 4);
+            painter.drawText(visible, textX, textY, color);
+            painter.disableScissor();
+            return;
+        }
+
+        // 逐字绘制：每个字带自己的竖直偏移。
+        // 裁剪仍按像素做，所以正在唱的那个字依然只显示已唱比例。
+        //
+        // 全行统一用 LIFT_HEADROOM 的裁剪高度，而不是按各自偏移收紧，
+        // 避免相邻字裁剪区相互错开而在接缝处露出底色。
+        painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                LINE_HEIGHT + LIFT_HEADROOM + 4);
+        int cursor = 0;
+        for (int i = 0; i < visible.length(); i++) {
+            String ch = visible.substring(i, i + 1);
+            int chWidth = painter.textWidth(ch);
+            int lift = Math.min(i, lifts.length - 1) >= 0 && i < lifts.length
+                    ? lifts[i] : 0;
+            painter.drawText(ch, textX + cursor, textY - lift, color);
+            cursor += chWidth;
+        }
         painter.disableScissor();
+    }
+
+    /**
+     * 逐字起始横坐标（相对文本左端）。
+     *
+     * <p>逐字累加真实宽度得到，不能用「行宽 ÷ 字数」平均分摊：
+     * 中英混排时数字与字母都窄于汉字，平均分会让偏移与字形错位，
+     * 抬起的字会看着偏移了一截。
+     */
+    private static int[] charStartsOf(Painter painter, String text) {
+        if (text == null || text.isEmpty()) {
+            return new int[0];
+        }
+        int[] starts = new int[text.length()];
+        int cursor = 0;
+        for (int i = 0; i < text.length(); i++) {
+            starts[i] = cursor;
+            cursor += painter.textWidth(text.substring(i, i + 1));
+        }
+        return starts;
+    }
+
+    /**
+     * 计算每个字的抬升像素。
+     *
+     * <p>规则取自 HyperLyric 的 {@code computeUnitLift}：
+     * 高亮经过某个字时它抬到最高，随后在一个波长的行程里线性落回基线。
+     * 也就是「唱到的字上浮，唱过的字缓缓归位」。
+     *
+     * <p>返回 {@code null} 表示不值得逐字绘制（行太长或数据退化为整行），
+     * 此时调用方应退回整段绘制，省掉几十次绘制调用。
+     */
+    private int[] computeLifts(Painter painter, int[] charStarts, int charCount,
+                               int lineWidth, float sungWidth) {
+        if (!PER_CHAR_LIFT || charCount <= 1 || charCount > MAX_LIFT_CHARS) {
+            return null;
+        }
+        int maxLift = Math.round(LINE_HEIGHT * LIFT_FACTOR);
+        if (maxLift <= 0) {
+            return null;
+        }
+        int waveLength = Math.round(LINE_HEIGHT * LIFT_WAVE_FACTOR);
+
+        int[] lifts = new int[charCount];
+        for (int i = 0; i < charCount; i++) {
+            int unitStart = charStarts[i];
+            int unitEnd = i + 1 < charCount ? charStarts[i + 1] : lineWidth;
+            int transitionStart = Math.max(0, unitStart - waveLength);
+            int transitionLength = unitEnd - transitionStart;
+            if (transitionLength <= 0) {
+                continue;
+            }
+            float phase = (sungWidth - transitionStart) / (float) transitionLength;
+            phase = Math.max(0f, Math.min(1f, phase));
+            lifts[i] = Math.round(maxLift * (1f - phase));
+        }
+        return lifts;
     }
 
     /** 不支持裁剪时的降级：按整单元覆盖，至少保证逐字推进可见。 */
