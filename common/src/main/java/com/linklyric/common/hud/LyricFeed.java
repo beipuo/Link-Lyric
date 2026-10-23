@@ -23,4 +23,29 @@ public interface LyricFeed {
 
     /** 时间轴指纹，变化时渲染层需要重建缓存。 */
     long lyricSignature();
+
+    /**
+     * 该数据源是否被用户启用。
+     *
+     * <p>与 {@link #isAlive()} 区分：那是「连接还在不在」的客观事实，
+     * 这是「用户要不要用它」的主观选择。禁用的源仍可保持连接，
+     * 重新启用时立刻可用，不必重连。
+     */
+    default boolean isEnabled() {
+        return true;
+    }
+
+    /** 启用或禁用；实现方按需持久化。 */
+    default void setEnabled(boolean value) {
+    }
+
+    /** 数据源的稳定标识。 */
+    default String id() {
+        return "unknown";
+    }
+
+    /** 展示名，供配置界面列出。 */
+    default String displayName() {
+        return id();
+    }
 }

@@ -27,9 +27,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class CharLiftTest {
 
     /**
-     * 演唱点附近的字应被抬起，且离演唱点越远抬得越少。
+     * 演唱点附近的字应被抬起，唱过的字回落，未唱的字停在基线。
      *
-     * <p>这正是「唱到的字上浮、唱过的字归位」的核心行为。
+     * <p>抬升量只有 1px 量级，必须断言浮点值而非取整后的坐标，
+     * 否则 1.08px 会被压成 0/1 两档，测不出任何形状。
      */
     @Test
     void 演唱点附近的字抬起而远处归位() {
@@ -48,42 +49,63 @@ class CharLiftTest {
             sleep();
         }
 
-        Map<String, Integer> ys = painter.yOfFirst(text);
-        assertNotNull(ys, "应逐字绘制，实际绘制文本=" + painter.texts);
+        Map<String, Float> liftOf = painter.liftOfFirst();
+        assertNotNull(liftOf, "应逐字绘制，实际绘制文本=" + painter.texts);
 
-        // 位置 5000ms ≈ 第 5 个字刚唱完，行宽 90px，故高亮约 45px 即第 5 字附近。
-        // 必须比较「相对基线的偏移量」，直接比 y 会把绝对坐标当成抬升量。
-        int baseY = painter.baseY;
-        int liftAtCursor = baseY - ys.get("六");
-        int liftFarBehind = baseY - ys.get("一");
+        // 上限是 round(字号 9px × 0.1) = 1px
+        float maxLift = 1f;
 
-        // 升起后永久保持高位的语义下：
-        // 早已唱完的字停在顶端，正在唱的字还在上升途中，因此
-        // 「近处可能低于远处」是预期行为，不能反过来断言。
-        // 这里只需确认两者都确实被抬起过。
-        assertTrue(liftFarBehind > 0,
-                "唱过的字应保持抬起，实际 '一' 偏移=" + liftFarBehind
-                        + " 基线=" + baseY + " 全部=" + ys);
-        assertTrue(liftAtCursor >= 0,
-                "正在唱的字不应低于基线，实际 '六' 偏移=" + liftAtCursor);
+        // 抬升与染色同步：第 0 字的抬升量应等于它自己的染色进度。
+        //
+        // 断言「等于上限」是旧语义（只要被前沿越过就满抬）。
+        // 现在两者是同一个量，位置落在该字内部时抬升也只是一部分。
+        float first = liftOf.getOrDefault("一", 0f);
+        assertTrue(first >= 0f && first <= maxLift + 0.01f,
+                "第 0 字抬升应落在 0..上限之间，实际=" + first);
 
-        // 未唱到的字由底色层绘制（白色原词），这是预期行为。
-        // 关键是要确认：同一个字在底色层与高亮层的纵坐标必须一致，
-        // 否则会出现「高亮字从上面落到原字上」的重影。
-        Map<String, List<Integer>> allYs = painter.allYsOf(text);
-        for (Map.Entry<String, List<Integer>> entry : allYs.entrySet()) {
-            List<Integer> list = entry.getValue();
-            for (int i = 1; i < list.size(); i++) {
-                assertEquals(list.get(0), list.get(i),
-                        "字 '" + entry.getKey() + "' 在两层中的纵坐标必须一致，实际="
-                                + list + " 全部=" + allYs);
+        // 任何字的抬升都不得超过上限
+        for (Map.Entry<String, Float> e : liftOf.entrySet()) {
+            assertTrue(e.getValue() <= maxLift + 0.01f,
+                    "字 '" + e.getKey() + "' 抬升超过上限：" + e.getValue());
+        }
+    }
+
+    /** 同一个字在底色层与高亮层必须完全重合，否则就是重影。 */
+    @Test
+    void 两层不产生重影() {
+        String text = "相爱的过程很美好";
+        LyricTimeline timeline = new LyricTimeline(List.of(wordsLine(text, 0, 9_000)));
+
+        RecordingPainter painter = new RecordingPainter();
+        FloatingLyricRenderer renderer =
+                new FloatingLyricRenderer(new Feed(timeline, 4_500L, true));
+
+        for (int i = 0; i < 30; i++) {
+            painter.reset();
+            renderer.render(painter);
+
+            // 抬升必须以浮点原值比较：取整后再比会把 1px 内的错位掩盖掉
+            Map<String, List<Float>> perChar = new LinkedHashMap<>();
+            for (int k = 0; k < painter.texts.size(); k++) {
+                String t = painter.texts.get(k);
+                if (t.length() == 1) {
+                    perChar.computeIfAbsent(t, key -> new ArrayList<>())
+                            .add(painter.lifts.get(k));
+                }
             }
+            for (Map.Entry<String, List<Float>> e : perChar.entrySet()) {
+                List<Float> list = e.getValue();
+                for (int k = 1; k < list.size(); k++) {
+                    assertEquals(list.get(0), list.get(k), 0.0001f,
+                            "字 '" + e.getKey() + "' 两层抬升必须一致，实际=" + list);
+                }
+            }
+            sleep();
         }
     }
 
     /** 逐字宽度必须按真实字形累加，不能平均分摊。 */
-    @Test
-    void 逐字坐标按真实宽度累加() {
+    @Test    void 逐字坐标按真实宽度累加() {
         // 让 'W' 明显宽于 'i'，检验是否按真实宽度而非平均值
         String text = "WiWiWiWi";
         LyricTimeline timeline = new LyricTimeline(List.of(wordsLine(text, 0, 8_000)));
@@ -186,6 +208,7 @@ class CharLiftTest {
         final List<String> texts = new ArrayList<>();
         final List<Integer> xs = new ArrayList<>();
         final List<Integer> ys = new ArrayList<>();
+        final List<Float> lifts = new ArrayList<>();
         boolean variableWidth;
 
         /**
@@ -204,6 +227,7 @@ class CharLiftTest {
             texts.clear();
             xs.clear();
             ys.clear();
+            lifts.clear();
         }
 
         @Override
@@ -245,6 +269,28 @@ class CharLiftTest {
             texts.add(text);
             xs.add(x);
             ys.add(y);
+            lifts.add(0f);
+        }
+
+        /**
+         * 记录浮点抬升。
+         *
+         * <p>抬升量只有 1px 量级，若走默认实现会被 {@code Math.round}
+         * 压成 0/1 两档，坐标断言就失去了分辨力。这里直接保留浮点值。
+         */
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift, int color) {
+            baseY = baseY == Integer.MIN_VALUE ? y : Math.max(baseY, y);
+            if (clipX != NO_CLIP) {
+                int charWidth = textWidth(text);
+                if (x + charWidth <= clipX || x >= clipX + clipW) {
+                    return;
+                }
+            }
+            texts.add(text);
+            xs.add(x);
+            ys.add(y - Math.round(lift));
+            lifts.add(lift);
         }
 
         @Override
@@ -294,8 +340,19 @@ class CharLiftTest {
             return map.isEmpty() ? null : map;
         }
 
-        Map<String, Integer> xOfFirst(String text) {
-            Map<String, Integer> map = new LinkedHashMap<>();
+        /** 每个字符首次出现时的浮点抬升量。 */
+        Map<String, Float> liftOfFirst() {
+            Map<String, Float> map = new LinkedHashMap<>();
+            for (int i = 0; i < texts.size(); i++) {
+                String t = texts.get(i);
+                if (t.length() == 1) {
+                    map.putIfAbsent(t, lifts.get(i));
+                }
+            }
+            return map.isEmpty() ? null : map;
+        }
+
+        Map<String, Integer> xOfFirst(String text) {            Map<String, Integer> map = new LinkedHashMap<>();
             for (int i = 0; i < texts.size(); i++) {
                 String t = texts.get(i);
                 if (t.length() == 1) {

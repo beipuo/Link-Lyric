@@ -1,0 +1,208 @@
+package com.linklyric.common.hud;
+
+import org.junit.jupiter.api.Test;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 逐字上浮与染色同步。
+ *
+ * <p>Salt 的行为是「字被染到多少就升起多少」，两者是同一个量：
+ * 完全染完时正好升到顶点。因此这里不引入任何时间常数——
+ * 染色进度本身已是时间的函数，再叠一层缓动会让两者错位。
+ */
+class CharLiftWaveTest {
+
+    private static final String LINE = "一二三四五六七八";
+    private static final float CHAR_PX = 9f;
+    private static final float FONT_PX = 9f;
+
+    /** 与 FloatingLyricRenderer.LIFT_FONT_RATIO 一致。 */
+    private static final float LIFT_RATIO = 0.10f;
+
+    private static final float MAX_LIFT = Math.round(FONT_PX * LIFT_RATIO);
+
+    private static int[] charStarts() {
+        int[] starts = new int[LINE.length()];
+        for (int i = 0; i < starts.length; i++) {
+            starts[i] = Math.round(i * CHAR_PX);
+        }
+        return starts;
+    }
+
+    private static int lineWidth() {
+        return Math.round(LINE.length() * CHAR_PX);
+    }
+
+    private static StubPainter painter() {
+        return new StubPainter();
+    }
+
+    /** 由「已唱到第几个字」构造每字进度数组。 */
+    private static float[] progress(float... values) {
+        float[] p = new float[LINE.length()];
+        for (int i = 0; i < values.length && i < p.length; i++) {
+            p[i] = values[i];
+        }
+        return p;
+    }
+
+    /** 幅度取整到 1px：9px 字号 × 0.1 = 0.9，roundToInt 后为 1。 */
+    @Test
+    void 幅度是字号乘零点一后取整() {
+        assertEquals(1f, MAX_LIFT, 0.001f,
+                "9px 字号应得 1px 幅度，实际=" + MAX_LIFT);
+
+        // 18px 字号应得 2px，验证确为比例而非固定像素
+        float[] large = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), lineWidth(), 18f, progress(0f));
+        assertNotNull(large);
+        assertEquals(0f, large[0], 0.001f, "进度为 0 时不应抬起");
+
+        float[] full = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), lineWidth(), 18f, progress(1f));
+        assertNotNull(full);
+        assertEquals(2f, full[0], 0.001f, "18px 字号染满应得 2px 幅度");
+    }
+
+    /** 一个字都没被染到，整行停在基线。 */
+    @Test
+    void 未染色时整行在基线() {
+        float[] lifts = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), 0f, FONT_PX, progress());
+
+        assertNotNull(lifts);
+        for (int i = 0; i < lifts.length; i++) {
+            assertEquals(0f, lifts[i], 0.001f,
+                    "第 " + i + " 字未染色，不应上浮，实际=" + lifts[i]);
+        }
+    }
+
+    /** 染满的字必须升到顶点。 */
+    @Test
+    void 染满的字升到顶点() {
+        float[] all = new float[LINE.length()];
+        java.util.Arrays.fill(all, 1f);
+        float[] lifts = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), lineWidth(), FONT_PX, all);
+
+        assertNotNull(lifts);
+        // 整行唱完时全部取满，不留半抬的尾巴。
+        for (int i = 0; i < lifts.length; i++) {
+            assertEquals(MAX_LIFT, lifts[i], 0.001f,
+                    "第 " + i + " 字应已升到顶点，实际=" + lifts[i]);
+        }
+    }
+
+    /** 上浮量必须与染色进度成比例：染一半就升一半。 */
+    @Test
+    void 上浮与染色进度成正比() {
+        float[] lifts = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), 0f, FONT_PX,
+                progress(0f, 0.25f, 0.5f, 0.75f, 1f));
+
+        assertNotNull(lifts);
+        assertEquals(0f, lifts[0], 0.001f);
+        assertEquals(MAX_LIFT * 0.25f, lifts[1], 0.01f);
+        assertEquals(MAX_LIFT * 0.5f, lifts[2], 0.01f);
+        assertEquals(MAX_LIFT * 0.75f, lifts[3], 0.01f);
+        assertEquals(MAX_LIFT, lifts[4], 0.001f);
+    }
+
+    /** 已经染满的字不得回落。 */
+    @Test
+    void 染满后保持顶点() {
+        float[] lifts = FloatingLyricRenderer.computeLifts(
+                painter(), charStarts(), LINE.length(),
+                lineWidth(), lineWidth(), FONT_PX,
+                progress(1f, 1f, 0.6f));
+
+        assertNotNull(lifts);
+        assertEquals(MAX_LIFT, lifts[0], 0.001f);
+        assertEquals(MAX_LIFT, lifts[1], 0.001f);
+        assertTrue(lifts[2] < MAX_LIFT, "未染满的字应低于顶点");
+    }
+
+    /** 单字行不参与逐字抬升。 */
+    @Test
+    void 单字行不做逐字抬升() {
+        int[] starts = {0};
+        assertNull(FloatingLyricRenderer.computeLifts(
+                painter(), starts, 1, Math.round(CHAR_PX), 0f, FONT_PX,
+                progress(0f)),
+                "单字行应返回 null 走整段绘制");
+    }
+
+    /** 行太长时不值得逐字绘制。 */
+    @Test
+    void 超长行不做逐字抬升() {
+        int count = 40;
+        int[] starts = new int[count];
+        for (int i = 0; i < count; i++) {
+            starts[i] = Math.round(i * CHAR_PX);
+        }
+        float[] p = new float[count];
+        int totalWidth = Math.round(count * CHAR_PX);
+        assertNull(FloatingLyricRenderer.computeLifts(
+                painter(), starts, count, totalWidth, 0f, FONT_PX, p),
+                "超长行应返回 null 走整段绘制");
+    }
+
+    /** 缓动曲线的单调性与端点是通用工具，仍需保证正确。 */
+    @Test
+    void 缓动曲线单调且端点正确() {
+        assertEquals(0f, FloatingLyricRenderer.liftEase(0f), 1e-6f);
+        assertEquals(1f, FloatingLyricRenderer.liftEase(1f), 1e-6f);
+
+        float prev = -1f;
+        for (float t = 0f; t <= 1f; t += 0.05f) {
+            float e = FloatingLyricRenderer.liftEase(t);
+            assertTrue(e >= prev, "缓动应单调不减，t=" + t);
+            assertTrue(e >= 0f && e <= 1f, "缓动值应夹在 0..1，t=" + t);
+            prev = e;
+        }
+    }
+
+    /** 越界输入必须夹紧，不能外插。 */
+    @Test
+    void 缓动越界夹紧() {
+        assertEquals(0f, FloatingLyricRenderer.liftEase(-5f), 1e-6f);
+        assertEquals(1f, FloatingLyricRenderer.liftEase(5f), 1e-6f);
+    }
+
+    /** 仅提供屏幕尺寸与文本宽度，抬升计算不需要真实渲染。 */
+    private static final class StubPainter
+            implements FloatingLyricRenderer.Painter {
+
+        @Override
+        public void drawText(String text, int x, int y, int color) {
+        }
+
+        @Override
+        public int screenWidth() {
+            return 480;
+        }
+
+        @Override
+        public int screenHeight() {
+            return 270;
+        }
+
+        @Override
+        public int textWidth(String text) {
+            return text == null ? 0 : text.length() * 9;
+        }
+
+        @Override
+        public void fillRect(int x, int y, int width, int height, int color) {
+        }
+    }
+}

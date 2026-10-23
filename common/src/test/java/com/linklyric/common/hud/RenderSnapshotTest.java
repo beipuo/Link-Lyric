@@ -45,14 +45,19 @@ class RenderSnapshotTest {
     private static final int HEIGHT = 270;
 
     /**
-     * 同一帧内，底色层与高亮层必须逐字对齐。
+     * 同一个字被两层绘制时，纵坐标必须一致。
      *
-     * <p>这是「高亮字从上面落到原字上」这个缺陷的直接判据。
-     * 注意判据是**同帧内**：跨帧的变化是该字被唱完后落回基线，属正常行为，
-     * 不能拿它当错位。
+     * <p>变色需要两层：未唱色铺底、已唱色覆盖。两层只要共享同一个
+     * {@code textX} 与同一份抬升表，像素就严丝合缝地重合，
+     * 观感是「同一个字从灰变蓝」。
+     *
+     * <p>早先的缺陷不是「画了两层」，而是两层各自位移：
+     * 换行时旧行下滑、新行上升，两种颜色在中途对穿。
+     * 因此判据是**同帧内同一字的两次绘制 y 相同**，
+     * 而不是「只许画一次」。
      */
     @Test
-    void 同帧内两层逐字对齐() throws Exception {
+    void 同帧内两层严格重合() throws Exception {
         AwtPainter painter = new AwtPainter();
         FloatingLyricRenderer renderer = new FloatingLyricRenderer(feed(fiveChars(), 4_800L));
 
@@ -61,24 +66,22 @@ class RenderSnapshotTest {
             painter.clearRecords();
             renderer.render(painter);
 
-            // 同一帧内，同一个字若被画了两次（底色 + 高亮），y 必须相同
             Map<String, List<Integer>> perFrame = painter.allYsThisFrame();
             for (Map.Entry<String, List<Integer>> e : perFrame.entrySet()) {
                 List<Integer> list = e.getValue();
-                if (list.size() < 2) {
-                    continue;
-                }
                 for (int i = 1; i < list.size(); i++) {
                     assertEquals(list.get(0), list.get(i),
                             "帧 " + frame + " 字 '" + e.getKey()
                                     + "' 两层纵坐标不一致，实际=" + list);
                 }
+            }
+            if (!perFrame.isEmpty()) {
                 checkedFrames++;
             }
             Thread.sleep(8L);
         }
         assertTrue(checkedFrames > 0,
-                "应存在同时被两层绘制的字，实际检查帧数=" + checkedFrames);
+                "应有关注的帧，实际检查帧数=" + checkedFrames);
     }
 
     /** 唱到的字应比远处的字更高（y 更小）。 */

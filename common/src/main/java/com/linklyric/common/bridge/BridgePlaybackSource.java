@@ -44,6 +44,8 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
     private final AtomicReference<CapabilitySet> capabilities = new AtomicReference<>(CapabilitySet.empty());
 
     private volatile boolean alive;
+    /** 用户开关；与连接状态分离。 */
+    private volatile boolean enabled = true;
     private volatile int consecutiveFailures;
     private volatile int lyricSignature;
     private volatile boolean started;
@@ -99,7 +101,25 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
 
     @Override
     public boolean isAlive() {
-        return alive;
+        // 用户禁用时对外表现为「不可用」，渲染器据此停止出画；
+        // 但后台线程仍在轮询，重新启用立刻有数据。
+        return alive && enabled;
+    }
+
+    /**
+     * 用户是否启用本数据源。
+     *
+     * <p>禁用后 {@link #isAlive()} 返回 false，渲染器随之停止出画；
+     * 但轮询线程继续运行，因此重新启用时无需等待重连。
+     */
+    @Override
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    @Override
+    public void setEnabled(boolean value) {
+        this.enabled = value;
     }
 
     /** 启动后台轮询。重复调用无副作用。 */

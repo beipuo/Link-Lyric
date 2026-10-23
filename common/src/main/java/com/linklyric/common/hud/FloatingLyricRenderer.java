@@ -3,6 +3,10 @@ package com.linklyric.common.hud;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
+import com.linklyric.common.style.ColorMath;
+import com.linklyric.common.style.LyricStyleConfig;
+import com.linklyric.common.style.LyricStyleConfig.Align;
+import com.linklyric.common.style.LyricStyleConfig.Weight;
 import com.linklyric.core.sync.PlaybackClock;
 import com.linklyric.core.sync.PlayerSnapshot;
 
@@ -19,23 +23,39 @@ import java.util.List;
  */
 public final class FloatingLyricRenderer {
 
-    /** 已唱色：明亮的天蓝，与未唱灰形成明显色差。 */
-    public static final int COLOR_SUNG = 0xFF7FD4FF;
+    /**
+     * 歌词唯一颜色。
+     *
+     * <p>对应 Salt 的 {@code desktopLyricsColor}：桌面歌词**只有这一个颜色配置**，
+     * 没有单独的「未唱色」。未唱部分靠下面的蒙版压暗同一层像素得到，
+     * 不是换一种颜色再画一遍。
+     */
+    /** 已唱色默认值。实测值以 {@link LyricStyleConfig#DEFAULT} 为准。 */
+    public static final int COLOR_SUNG = LyricStyleConfig.DEFAULT.sungColor();
 
-    /** 未唱色：浅灰，避免在暗场景里消失。 */
-    public static final int COLOR_UNSUNG = 0xFFD8D8D8;
+    /**
+     * 未唱色。
+     *
+     * <p>这是真正的第二种颜色，不是把已唱色调暗的结果。
+     * 黑色蒙版只能把蓝压成灰蓝，观感像蒙了一层灰；
+     * 而两种独立的色值才能得到「灰白 → 亮蓝」这种真正的变色。
+     */
+    /** 未唱色默认值。实测值以 {@link LyricStyleConfig#DEFAULT} 为准。 */
+    public static final int COLOR_UNSUNG = LyricStyleConfig.DEFAULT.unsungColor();
 
-    /** 翻译色：更暗的灰，弱化次要信息。 */
-    public static final int COLOR_TRANSLATION = 0xFF9A9A9A;
-
-    /** 底板色：半透明黑，保证亮场景可读。 */
+    /**
+     * 拖动时的底板色：半透明黑。
+     *
+     * <p>只在拖动模式使用。平时不画底板，歌词直接浮在画面上；
+     * 拖动时需要一块明确的可视图层，让用户知道自己正在移动什么、边界在哪。
+     */
     public static final int COLOR_BACKDROP = 0x66000000;
+
+    /** 拖动时的边框色：偏亮的描边，用来标出可拖范围的边界。 */
+    public static final int COLOR_DRAG_BORDER = 0x99FFFFFF;
 
     /** 文本距屏幕底部的距离。留出物品栏与经验条的空间。 */
     private static final int BOTTOM_MARGIN = 58;
-
-    /** 单行最大宽度占屏比。 */
-    private static final float MAX_WIDTH_RATIO = 0.72f;
 
     private static final int LINE_HEIGHT = 10;
     private static final int LINE_GAP = 2;
@@ -46,35 +66,131 @@ public final class FloatingLyricRenderer {
     /** 目标值比当前值小超过该像素数时判定为 seek，直接跳变而非回退。 */
     private static final float BACKWARD_SNAP_PX = 6f;
 
-    /** 羽化带长度，相对于字号的比例。 */
-    private static final float FEATHER_RATIO = 0.45f;
+    /** 与目标的差值小于此值即吸附，避免指数逼近在行尾永久残留暗边。 */
+    private static final float SNAP_EPSILON_PX = 1.5f;
+
+    /**
+     * 未生效行（上一行、下一行）的不透明度。
+     *
+     * <p>取自 Salt Player 的 {@code LyricsComponentDefaults.NotCurrentAlpha = 0.3f}。
+     * 它与高亮行在 700ms 内互相淡入淡出，形成「上一行退出、当前行进入」的层次。
+     *
+     * <p>此前副行用固定的 {@code 0xC8FFFFFF}（约 0.78），几乎与主行一样亮，
+     * 两行同权就分不出谁在唱。
+     */
+    private static final float NOT_CURRENT_ALPHA = 0.3f;
+
+    /**
+     * 未唱文字的透明度。
+     *
+     * <p>「没唱到」用透明度表达，而不是换一个灰色。
+     * 灰色是第二种颜色，会和用户选定的已唱色产生色相冲突；
+     * 透明度只减弱同一颜色的存在感，唱到与没唱到始终是同一个色系。
+     * 非主行用同一个值，于是「未生效」在全场景下是统一的一种视觉语言。
+     */
+    private static final float UNSUNG_ALPHA = 0.38f;
+
+    /**
+     * 未生效行的缩放。
+     *
+     * <p>取自 Salt Player 的 {@code LyricsComponentDefaults.NotCurrentScale = 0.95f}。
+     * 缩得很小会像弹窗抖动；0.95 只是在滚动时让当前行略微「浮起来」。
+     *
+     * <p>MC 的 HUD 没有矩阵缩放通道，因此这里不直接缩放字形，
+     * 而是把该比例用于羽化带宽（见 {@link #FEATHER_RATIO}），
+     * 保持与 Salt 一致的视觉比例关系。
+     */
+    private static final float NOT_CURRENT_SCALE = 0.95f;
+
+    /**
+     * 副行字号相对主行的比例。
+     *
+     * <p>取自 Salt Player 的 {@code LyricsComponentDefaults.SubTextFontSizeScale = 0.8f}
+     * 与 {@code AppConfig.playerLyricsTranslationFontSizeScale} 的默认值。
+     * 翻译是次要信息，缩到 0.8 倍才不会与原文抢注意力。
+     */
+    private static final float SUB_TEXT_FONT_SCALE = 0.8f;
+
+    /**
+     * 羽化带长度，相对于字号的比例。
+     *
+     * <p>取自 Salt Player：其高亮羽化带的宽度实参是
+     * {@code toPx(fontSize) * NotCurrentScale}，即 {@code 字号 × 0.95f}。
+     * 这是一条「已唱色 → 透明」的线性渐变，长度接近一个字宽，
+     * 因此推进端的过渡只有一个字的量级，与逐字步进吻合。
+     *
+     * <p>此前的 0.45 来自 HyperLyric 的 6 停靠点渐变，比 Salt 窄一半，
+     * 推进端因此显得更「利」，像刀切而非溶开。
+     */
+    /**
+     * 羽化带宽度，按字号的比例。
+     *
+     * <p>原先借用 {@code NOT_CURRENT_SCALE}(0.95)，那本是副行的缩放比例，
+     * 与羽化毫无关系。9px 字号下算得 9px 带宽，再切成 5 段就是每段 1px，
+     * 视觉上只是一列像素，谈不上过渡。
+     *
+     * <p>现在取 0.6：约半字宽。字符宽度是 9px，边界扫过一个字时
+     * 过渡带始终有 5px 左右在渐变，颜色是连续推进而不是整段跳变。
+     */
+    private static final float FEATHER_RATIO = 0.6f;
 
     /**
      * 羽化带的 alpha 梯度，由高到低。
      *
-     * <p>取值来自对 HyperLyric `TextDrawer` 那组 6 停靠点渐变
-     * （alpha 255→244→184→92→24→0，stops 0/0.18/0.42/0.66/0.84/1）
-     * 的分段中点采样。原实现用两段（153、64），
-     * 过渡带里第一级偏暗约 70 个 alpha 单位，高亮一过界就明显发灰。
-     * 这里用 5 段逼近原曲线，末级接近 0 保证收尾干净。
+     * <p>每段取「已唱色→未唱色」的插值比例，不是 alpha。
+     * 用 alpha 递减做不到颜色过渡：那是在和背景混合，
+     * 字形连同阴影一起变淡，深色背景上就表现为一条竖向暗痕。
+     *
+     * <p>比例偏中段密集，让视觉上的颜色变化更均匀（人眼对暗部差异更敏感）。
      */
-    private static final int[] FEATHER_ALPHA = {0xF5, 0xC3, 0x5A, 0x16, 0x00};
+    private static final float[] FEATHER_STEPS = {0.15f, 0.35f, 0.55f, 0.75f, 1.0f};
 
     /**
-     * 唱到时单个字的抬升高度，固定像素。
+     * 抬升幅度，以字号的比例计。
      *
-     * <p>不用比例：行高与 GUI 缩放都会影响比例换算，
-     * 5px 是直接量出来的观感值，写成固定值才可预期。
+     * <p>取自 Salt Player 的 {@code LyricsLineKaraokeTextProperties.floatUpPercentage}
+     * 默认值 {@code 0.1f}（反编译其 KaraokeText 属性类，默认参数位 0x10）。
+     * 使用前先 {@code roundToInt(字号 × 该比例)}，MC 字号 9px 时整 1px。
+     *
+     * <p>与此前的 0.12 相比，9px 下由约 1.08px 收到整 1px。差值本身不大，
+     * 真正的观感差异来自形状而不是幅度：旧实现是「每个字各自升起再落回」的
+     * 单峰，峰值只出现在演唱点附近的一个字上，读起来像一串独立的小跳；
+     * 这里改成整片抬起 + 前沿斜坡，位移恒定，眼睛看到的是高亮在推着走。
      */
-    private static final int LIFT_PX = 5;
+    private static final float LIFT_FONT_RATIO = 0.10f;
 
     /**
-     * 升起行程长度，以平均字宽为单位。
+     * 过渡带宽度，以字号的比例计。
      *
-     * <p>0.7 表示字唱到 70% 处升满，之后永久保持在顶端。
-     * 再大就会「升到一半多还没到顶」，升起过程显得拖沓。
+     * <p>取自 Salt Player 的卡拉 OK 绘制：高亮区宽度恒为
+     * {@code 字号 × 3.0f}（其 {@code LyricsGlow} 的
+     * {@code toPx(fontSize) * 3.0f} 实参）。半宽 1.5 倍字号，
+     * 因此同一时刻约一个半字处在斜坡上，前沿才连续。
+     *
+     * <p>此前取 0.9（HyperLyric 的单峰波长）：峰宽不到一个字，同一个字从
+     * 抬起到落回只跨越一个字的行程，视觉上就是逐字跳动。换成 3 倍字号后
+     * 斜坡横跨约三个字，前沿推进才是连续的。
      */
-    private static final float LIFT_RISE_UNITS = 0.7f;
+    private static final float LIFT_WAVE_FONT_RATIO = 3.0f;
+
+
+
+    /**
+     * 抬升坐标采集开关。
+     *
+     * <p>打开后每隔 {@link #DIAG_INTERVAL_NANOS} 往 {@link #DIAG_FILE} 追加一行
+     * 已唱宽度与逐字偏移，用于在真实客户端里核对波形参数。
+     *
+     * <p>写文件而不是 stdout：NeoForge dev 环境下 {@code System.out}
+     * 不进入 {@code logs/latest.log}，写文件才能被离线读取。
+     */
+    private static final boolean DIAG_LIFT = Boolean.getBoolean("linklyric.diagLift");
+
+    /** 采集输出文件，落在游戏工作目录下。 */
+    private static final String DIAG_FILE = "linklyric-lift.log";
+
+    /** 采集间隔，取 200ms 以便一个字的演唱窗口内能采到多帧。 */
+    private static final long DIAG_INTERVAL_NANOS = 200_000_000L;
 
     /**
      * 已唱部分的绘制粒度。
@@ -87,15 +203,24 @@ public final class FloatingLyricRenderer {
     /**
      * 抬升需要额外预留的垂直空间。
      *
-     * <p>必须不小于 {@link #LIFT_PX}，否则抬起的字顶部会被裁剪削平。
+     * <p>抬升量是 {@code round(字号 × LIFT_FONT_RATIO)}，MC 默认字号 9px 时
+     * 整 1px。这里留 2px：既覆盖 1px 的位移，也给裁剪区留出抗锯齿的余量，
+     * 否则抬起字的顶边会被削掉一条。
      */
-    private static final int LIFT_HEADROOM = LIFT_PX;
+    private static final int LIFT_HEADROOM = 2;
+    /**
+     * 阴影与字重叠加的额外余量。
+     *
+     * <p>原版阴影偏移 1 像素，加粗最多再向外 2 像素，取 4 已足够；
+     * 留小了中文阴影会被裁剪，留大了只是多画几个透明像素。
+     */
+    private static final int SHADOW_HEADROOM = 4;
 
     /**
      * 逐字绘制的最多字数。
      *
-     * <p>每字一次绘制调用，长行会成倍放大开销。
-     * 超过这个长度就退回整段绘制——那种长度下每字偏移也看不清了。
+     * <p>每字一次绘制调用，长行会成倍放大开销。超过这个长度就退回整段绘制：
+     * 那种长度下 HUD 已经改为滚动，逐字偏移被视口裁掉大半，收益抵不过开销。
      */
     private static final int MAX_LIFT_CHARS = 24;
 
@@ -115,18 +240,29 @@ public final class FloatingLyricRenderer {
     /**
      * 副行（下一句预览）颜色。
      *
-     * <p>比未唱色更淡：它是预告信息，不该与主行争夺注意力。
-     * 取未唱色调低不透明度，保证与主行同色系、只是更弱。
+     * <p>按 Salt 的 {@code NotCurrentAlpha = 0.3f} 作用在未唱色上：
+     * 同一色系、只降低不透明度，不换颜色。换色会让两行看起来来自不同组件。
      */
-    private static final int COLOR_NEXT_LINE = 0xC8FFFFFF;
+
 
     /**
      * 行切换动画时长（纳秒）。
      *
-     * <p>220ms 取自 HyperLyric 的 {@code NEXT_LINE_PROMOTION_DURATION}。
-     * 短于 150ms 会显得生硬，长于 300ms 会与演唱进度脱节。
+     * <p>700ms 取自 Salt Player：其行级状态用
+     * {@code animateFloatAsState(tween(durationMillis = 700, easing = Easing))}
+     * 驱动，{@code Easing} 即 {@code CubicBezierEasing(0.25f, 0.0f, 0.2f, 1.0f)}
+     * （其 {@code LyricsComponentDefaults} 的默认缓动）。
+     *
+     * <p>此前的 220ms 取自 HyperLyric，配的是四分之一圆缓动（起步快、收尾慢）。
+     * 两者相差三倍，观感完全不同：220ms 是「弹一下」，700ms 才是「滑过去」。
      */
-    private static final long LINE_TRANSITION_NANOS = 220_000_000L;
+
+
+    /** 行切换缓动的控制点，对应 {@code CubicBezierEasing(0.25, 0.0, 0.2, 1.0)}。 */
+    private static final float EASE_X1 = 0.25f;
+    private static final float EASE_Y1 = 0.0f;
+    private static final float EASE_X2 = 0.2f;
+    private static final float EASE_Y2 = 1.0f;
 
     /**
      * 桥接端的上报周期初值（毫秒）。
@@ -155,6 +291,35 @@ public final class FloatingLyricRenderer {
      *
      * <p>只暴露渲染真正需要的原语，使排版与染色逻辑可脱离游戏运行时测试。
      */
+    /** 极简二维变换栈，避免在 common 里依赖任何渲染库。 */
+    public interface Pose2D {
+        Pose2D IDENTITY = new Pose2D() {
+            @Override
+            public void pushPose() {
+            }
+
+            @Override
+            public void popPose() {
+            }
+
+            @Override
+            public void translate(float x, float y) {
+            }
+
+            @Override
+            public void scale(float x, float y) {
+            }
+        };
+
+        void pushPose();
+
+        void popPose();
+
+        void translate(float x, float y);
+
+        void scale(float x, float y);
+    }
+
     public interface Painter {
         int screenWidth();
 
@@ -162,11 +327,104 @@ public final class FloatingLyricRenderer {
 
         int textWidth(String text);
 
-        /** 绘制带阴影的文本。颜色含 alpha 通道。 */
+        /**
+         * 绘制文本。颜色含 alpha 通道。
+         *
+         * <p>四参版本是既有实现的入口，保持抽象以免悄悄丢掉绘制。
+         */
         void drawText(String text, int x, int y, int color);
+
+        /**
+         * 带阴影开关的绘制。
+         *
+         * <p>默认转调四参版本，因此只关心颜色的实现不必改写。
+         * 平台层应覆盖本方法，才能真正响应阴影开关。
+         *
+         * @param shadow 是否画阴影。中文由 fallback 字体提供，字形比英文高，
+         *               阴影更容易落到裁剪区之外，因此开关必须逐次传入而非写死。
+         */
+        default void drawText(String text, int x, int y, int color, boolean shadow) {
+            drawText(text, x, y, color);
+        }
+
+        /**
+         * 带阴影开关的亚像素抬升。
+         *
+         * <p>抬升量只有约 1px，若先取整再绘制，字会在 0 与 1 之间跳变，
+         * 看起来是台阶而不是滑动。这里暴露浮点 y，由平台层做矩阵平移。
+         *
+         * <p>默认转调四参版本，让只关心抬升的实现不必改写。
+         * 平台层覆盖本方法后，阴影开关才会真正生效。
+         */
+        default void drawTextLifted(String text, int x, int y, float lift,
+                                    int color, boolean shadow) {
+            // 转发到五参 drawText，而不是四参 drawTextLifted。
+            //
+            // 转发到四参 drawTextLifted 看似更「保真」，实际会断开链：
+            // 实现者若重写了四参 drawTextLifted（测试替身常这么做），
+            // 五参调用就绕过了 drawText，只记录 drawText 的替身收不到任何数据，
+            // 表现为「主行完全没绘制」。转调五参 drawText 后，
+            // 链路的唯一锚点就是 drawText，只要实现了它就能收到全部绘制。
+            drawText(text, x, y - Math.round(lift), color, shadow);
+        }
+
+        default void drawTextLifted(String text, int x, int y, float lift, int color) {
+            drawText(text, x, y - Math.round(lift), color, true);
+        }
+
+        /**
+         * 按缩放比例绘制文本。
+         *
+         * <p>用于副行：翻译与下一句预告按 Salt 的
+         * {@code SubTextFontSizeScale = 0.8f} 缩小，两行字号有主次之分。
+         *
+         * <p>{@code x}、{@code y} 是未缩放时的锚点，缩放以该点左上角为原点。
+         * 默认实现忽略缩放，保证老的 Painter 仍可用。
+         */
+        default void drawTextScaled(String text, int x, int y, float scale,
+                                    int color, boolean shadow) {
+            drawTextScaled(text, x, y, scale, color);
+        }
+
+        default void drawTextScaled(String text, int x, int y, float scale, int color) {
+            drawText(text, x, y, color);
+        }
+
+        /**
+         * 带阴影的缩放绘制。
+         *
+         * <p>注意五参版本必须转发到**四参 drawTextScaled**，不能直接转发
+         * {@code drawText}：那样会丢掉缩放语义，副行就不再是 0.8 倍字号。
+         * 实现者若需要阴影生效，应覆盖五参版本本身。
+         */
+
+        /** 按缩放比例测量文本宽度的像素值。 */
+        default int textWidthScaled(String text, float scale) {
+            return Math.round(textWidth(text) * scale);
+        }
 
         /** 绘制矩形填充，用于底板。 */
         void fillRect(int x, int y, int width, int height, int color);
+
+        /**
+         * 坐标变换栈。
+         *
+         * <p>字号缩放需要在绘制前后成对压栈/出栈。
+         * 只有支持变换的平台才能实现缩放，其余平台退化为不缩放。
+         */
+        default Pose2D pose() {
+            return Pose2D.IDENTITY;
+        }
+
+        /**
+         * 当前字体的行高。
+         *
+         * <p>用于给裁剪区留足空间。不能用常量代替：中文由 fallback 字体提供，
+         * 字形比拉丁字母高，写死的行高会把中文显示的下缘（尤其阴影）裁掉。
+         */
+        default int lineHeight() {
+            return LINE_HEIGHT;
+        }
 
         /**
          * 是否支持按像素裁剪。
@@ -185,6 +443,35 @@ public final class FloatingLyricRenderer {
         }
     }
 
+    /**
+     * 屏幕坐标下的矩形区域，左上角为原点、y 向下为正。
+     *
+     * <p>歌词一帧内实际占用的范围。用于命中检测（悬停或点击是否落在歌词上）
+     * 与外部布局计算。区域包含文字本身与上下留白，
+     * 因此抬起的字也不会跑到框外。
+     *
+     * @param x      左边界（像素）
+     * @param y      上边界（像素）
+     * @param width  宽度（像素），恒为正
+     * @param height 高度（像素），恒为正
+     */
+    public record Bounds(int x, int y, int width, int height) {
+
+        /** 空区域：没有歌词可显示时使用。 */
+        public static final Bounds EMPTY = new Bounds(0, 0, 0, 0);
+
+        /** 点是否落在区域内。右边界与下边界视为不包含，与屏幕裁剪语义一致。 */
+        public boolean contains(int px, int py) {
+            return width > 0 && height > 0
+                    && px >= x && px < x + width
+                    && py >= y && py < y + height;
+        }
+
+        public boolean isEmpty() {
+            return width <= 0 || height <= 0;
+        }
+    }
+
     private final LyricFeed source;
 
     /** 位置外推器：把每秒一次的上报插值成帧级连续位置。 */
@@ -193,8 +480,206 @@ public final class FloatingLyricRenderer {
     private boolean clockPrimed;
     private boolean lastPlaying;
 
+    /** 用户拖动产生的水平偏移（像素），以屏幕中线为原点，向右为正。 */
+    private int offsetX;
+    /** 用户拖动产生的垂直偏移（像素），相对默认底部位置，向下为正。 */
+    private int offsetY;
+    /** 拖动模式：为 true 时显示底板并允许拖拽定位。 */
+    private boolean dragging;
+    /** 配置界面强制预览：即使歌词被关闭也要出画，否则调样式看不见效果。 */
+    private boolean previewForced;
+    /** 预览绘制区；null 表示按全屏布局。 */
+    private Bounds previewArea;
+
+    /** 打开/关闭强制预览。配置界面进入时打开，退出时关闭。 */
+    public void setPreviewForced(boolean value) {
+        this.previewForced = value;
+    }
+
+    /** 数据源是否被用户启用。 */
+    public boolean sourceEnabled() {
+        return source.isEnabled();
+    }
+
+    /** 启用或禁用数据源；只影响出画，不影响连接。 */
+    public void setSourceEnabled(boolean value) {
+        source.setEnabled(value);
+    }
+
+    /** 数据源标识，用于持久化开关。 */
+    public String sourceId() {
+        return source.id();
+    }
+    /** 是否显示歌词；由 {@code /linklyric on|off} 控制并持久化。 */
+    private boolean enabled = true;
+    /** 最近一帧的屏幕包围盒；本帧没有出画时为 {@link Bounds#EMPTY}。 */
+    private Bounds bounds = Bounds.EMPTY;
+
+    /**
+     * 用户可调样式。整体替换而非就地修改：
+     * 渲染每帧只读一次局部引用，改配置时不会读到半成品。
+     */
+    private volatile LyricStyleConfig style = LyricStyleConfig.DEFAULT;
+
+    public void setStyle(LyricStyleConfig value) {
+        this.style = value == null ? LyricStyleConfig.DEFAULT : value;
+    }
+
+    public LyricStyleConfig style() {
+        return style;
+    }
+
+    /** 两个矩形的交集；无重叠时返回空区域。 */
+    private static Bounds intersect(Bounds a, Bounds b) {
+        int left = Math.max(a.x(), b.x());
+        int top = Math.max(a.y(), b.y());
+        int right = Math.min(a.x() + a.width(), b.x() + b.width());
+        int bottom = Math.min(a.y() + a.height(), b.y() + b.height());
+        if (right <= left || bottom <= top) {
+            return Bounds.EMPTY;
+        }
+        return new Bounds(left, top, right - left, bottom - top);
+    }
+
+    private int sungColor() {
+        return style.sungColor();
+    }
+
+    private int unsungColor() {
+        return style.unsungColor();
+    }
+
+    private int translationColor() {
+        return style.translationColor();
+    }
+
+    /** 下一句的颜色：由未唱色按非当前行不透明度派生，保证与主体同源。 */
+    private int nextLineColor() {
+        return withAlpha(style.unsungColor(), Math.round(UNSUNG_ALPHA * 255f));
+    }
+
+    private long lineTransitionNanos() {
+        return style.lineTransitionMs() * 1_000_000L;
+    }
+
+    /**
+     * 最近一帧的歌词屏幕包围盒。
+     *
+     * <p>这是「渲染的副作用」而非纯查询：布局依赖字体宽度与滚动偏移，
+     * 只有真正渲染过一次才知道精确范围。因此调用方应先渲染，
+     * 下一帧读取；在没有出画（关闭、无歌词、间奏）时返回
+     * {@link Bounds#EMPTY}，{@link Bounds#isEmpty()} 可直接判空。
+     */
+    public Bounds bounds() {
+        return bounds;
+    }
+
+    /** 设置显示开关。 */
+    public void setEnabled(boolean value) {
+        this.enabled = value;
+    }
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
     /** 跨帧保留的已唱宽度（像素）。这是染色连续性的来源。 */
     private float sungWidth;
+
+    /** 设置用户偏移量；由指令与拖动共同写入。 */
+    public void setOffset(int x, int y) {
+        this.offsetX = x;
+        this.offsetY = y;
+    }
+
+    /**
+     * 把绘制限制在一个矩形区域内，并按该区域重新居中。
+     *
+     * <p>配置界面用它把歌词画进顶部预览框。传入 null 恢复正常全屏布局。
+     *
+     * <p>预览时用户偏移被忽略：偏移描述的是「相对全屏底部的位置」，
+     * 在预览框里没有意义，而且偏移几十像素就会把文字顶出框外。
+     * 样式（颜色、字号、宽度、过渡）照常生效，这才是预览要看的东西。
+     */
+    public void setPreviewArea(Bounds area) {
+        this.previewArea = area;
+    }
+
+    public Bounds previewArea() {
+        return previewArea;
+    }
+
+    /** 当前生效的水平中心：预览区内居中，否则全屏居中并叠加用户偏移。 */
+    private int layoutCenterX(int screenWidth) {
+        if (previewArea != null && !previewArea.isEmpty()) {
+            return previewArea.x() + previewArea.width() / 2;
+        }
+        return screenWidth / 2 + offsetX;
+    }
+
+    /** 当前生效的基线 y：预览区内垂直居中，否则贴底部并叠加用户偏移。 */
+    private int layoutCenterY(int screenHeight) {
+        if (previewArea != null && !previewArea.isEmpty()) {
+            return previewArea.y() + previewArea.height() / 2;
+        }
+        return screenHeight - BOTTOM_MARGIN + offsetY;
+    }
+
+    /**
+     * 按对齐方式把行宽换算成左边界。
+     *
+     * <p>居中沿用原有的中心锚点；左/右对齐则改成以可用区间的两端为锚。
+     * 用端点而不是「中心减半宽」重算，是为了让左右对齐在滚动时也稳定——
+     * 滚动会改变可见宽度，若每帧以中心反推，边界会跟着抖。
+     */
+    private int layoutLeft(Align align, int centerX, int maxWidth, int lineWidth) {
+        return switch (align) {
+            case CENTER -> centerX - lineWidth / 2;
+            case LEFT -> centerX - maxWidth / 2;
+            case RIGHT -> centerX + maxWidth / 2 - lineWidth;
+        };
+    }
+
+    /** 单行可用宽度：预览区内按框宽收窄，否则按屏幕比例。 */
+    private int layoutMaxWidth(int screenWidth) {
+        if (previewArea != null && !previewArea.isEmpty()) {
+            return Math.max(40, previewArea.width() - 8);
+        }
+        return Math.max(40, (int) (screenWidth * style.maxWidthRatio()));
+    }
+
+    public int offsetX() {
+        return offsetX;
+    }
+
+    public int offsetY() {
+        return offsetY;
+    }
+
+    /**
+     * 进入或退出拖动模式。
+     *
+     * <p>拖动时显示底板，让用户看清可拖区域与当前位置；
+     * 退出后底板消失，歌词回到「不打扰」的常态。
+     */
+    public void setDragging(boolean value) {
+        this.dragging = value;
+    }
+
+    public boolean isDragging() {
+        return dragging;
+    }
+
+    /**
+     * 最近一帧的已唱宽度，单位像素。
+     *
+     * <p>供测试断言使用。有了它，测试不必再从绘制指令里反推
+     * 「已唱到哪儿」——那种反推依赖替身对裁剪与 alpha 的理解，
+     * 一旦实现细节变化就会误报。
+     */
+    public float currentSungWidth() {
+        return sungWidth;
+    }
 
     /** 上一帧对应的时间轴与行索引，用于识别换行并重置动画。 */
     private long lastSignature = Long.MIN_VALUE;
@@ -218,13 +703,53 @@ public final class FloatingLyricRenderer {
     private int lineTransitionFromIndex = -1;
 
     /** 行切换动画已进行的时长（纳秒）。 */
-    private long lineTransitionElapsedNanos = LINE_TRANSITION_NANOS;
+    /**
+     * 行切换已用时间。初值取一个很大的数：首帧就应视为「已完成」，
+     * 否则进游戏第一句会从半透明淡入，像是卡了一下。
+     */
+    private long lineTransitionElapsedNanos = Long.MAX_VALUE / 4;
 
     /** 上一帧的主行文本，用于绘制离场淡出。 */
     private String lastMainText;
 
+    /**
+     * 上一帧主行的已唱宽度。
+     *
+     * <p>旧行淡出时必须用它重画「已唱 / 未唱」的分界，
+     * 否则整行会以单一颜色消失，与它停留时的样子不符。
+     */
+    private float lastSungWidth;
+
+    /** 上一帧主行的行宽，用于还原旧行的分界比例。 */
+    private int lastLineWidth;
+
     /** 上一帧是否有副行，用于判断主行基线是否需要过渡。 */
     private boolean lastSecondaryPresent;
+
+    /** 上次写抬升诊断日志的时刻，用于限流。 */
+    private long diagLastNanos;
+
+    /** 阶段标记，用于定位采集为何缺席。 */
+    private void diagStage(String stage) {
+        long now = System.nanoTime();
+        if (now - diagStageNanos < DIAG_INTERVAL_NANOS) {
+            return;
+        }
+        diagStageNanos = now;
+        diagWrite("stage=" + stage + " alive=" + source.isAlive());
+    }
+
+    private long diagStageNanos;
+
+    /** 追加一行到采集文件。每行独立打开关闭，避免进程被杀时丢缓冲。 */
+    private static void diagWrite(String line) {
+        try (java.io.FileWriter writer = new java.io.FileWriter(DIAG_FILE, true)) {
+            writer.write(line);
+            writer.write(System.lineSeparator());
+        } catch (java.io.IOException ignored) {
+            // 采集失败不能影响渲染
+        }
+    }
 
     private LyricTimeline lastTimeline = LyricTimeline.empty();
 
@@ -238,12 +763,28 @@ public final class FloatingLyricRenderer {
      * @return 是否实际绘制了内容
      */
     public boolean render(Painter painter) {
+        // 每帧先清空，再由真正出画的那条路径写入。
+        //
+        // 逐分支清零容易漏：只要有一个 return 忘了清，包围盒就会残留上一帧的区域，
+        // 悬停命中一块已经不存在的歌词。开头统一清空可以杜绝这类遗漏。
+        bounds = Bounds.EMPTY;
+
         if (painter == null || !source.isAlive()) {
+            return false;
+        }
+        // 关闭状态下完全不出画。
+        //
+        // 两种例外都必须出画，否则用户看到的是一片空白：
+        // 拖动模式（正在靠它调位置）与配置预览（正在靠它调样式）。
+        if (!enabled && !dragging && !previewForced) {
             return false;
         }
 
         LyricTimeline timeline = timelineForFrame();
         if (timeline.isEmpty()) {
+            if (DIAG_LIFT) {
+                diagStage("timeline-empty");
+            }
             return false;
         }
 
@@ -256,7 +797,11 @@ public final class FloatingLyricRenderer {
         // 每帧只取一次快照，避免两次调用之间数据源更新导致位置与播放态不一致
         PlayerSnapshot snapshot = source.pollSnapshot();
         syncClock(snapshot.positionMs(), snapshot.playing());
-        long positionMs = boundedPosition(snapshot.positionMs());
+        // 时间偏移只作用于「查时间轴」这一步，不动外推时钟。
+        //
+        // 若直接偏移 clock 的输入，外推锚点会跟着漂移，暂停/恢复后累积误差；
+        // 在这里加一次常量相当于整体平移时间轴，语义干净且可逆。
+        long positionMs = boundedPosition(snapshot.positionMs()) + style.offsetMs();
 
         int index = timeline.indexAt(positionMs);
         if (index < 0) {
@@ -276,8 +821,14 @@ public final class FloatingLyricRenderer {
 
         int screenWidth = painter.screenWidth();
         int screenHeight = painter.screenHeight();
-        int maxWidth = Math.max(40, (int) (screenWidth * MAX_WIDTH_RATIO));
-        int centerX = screenWidth / 2;
+        int maxWidth = layoutMaxWidth(screenWidth);
+
+        // 位置由用户偏移量决定，默认居中偏下。
+        //
+        // 偏移以屏幕中心为原点：x 向右为正、y 向下为正。
+        // 存成相对量而不是绝对坐标，换分辨率时歌词不会跑到屏幕外。
+        // 配置界面的预览区传入后，改为在框内居中。
+        int centerX = layoutCenterX(screenWidth);
 
         // 双行布局：主行（当前句）+ 副行（下一句或翻译）。
         //
@@ -300,7 +851,10 @@ public final class FloatingLyricRenderer {
         // 截断会丢掉副歌后半句，而歌词恰恰是「看下一句」的需求最强；
         // 滚动能让整句都读到，且不需要用户操作。
         // 只有在无法裁剪的平台上才退回截断——那种情况滚动会画到面板外。
-        boolean canScroll = painter.supportsScissor();
+        // 预览框里不滚动：滚动会使文字横向跑出框外，
+        // 而预览要看的是颜色与排版，不是滚动行为。超长时截断即可。
+        boolean inPreview = previewArea != null && !previewArea.isEmpty();
+        boolean canScroll = painter.supportsScissor() && !inPreview;
         boolean scrolling = canScroll && fullWidth > maxWidth;
 
         // 滚动时不截断文本：坐标必须和完整文本保持一致，
@@ -315,42 +869,100 @@ public final class FloatingLyricRenderer {
         int secondaryColor;
         if (nextLine != null && !nextLine.text().isEmpty()) {
             secondaryText = clip(painter, nextLine.text(), maxWidth);
-            secondaryColor = COLOR_NEXT_LINE;
+            secondaryColor = nextLineColor();
         } else if (line.hasTranslation()) {
             secondaryText = clip(painter, line.translation(), maxWidth);
-            secondaryColor = COLOR_TRANSLATION;
+            secondaryColor = translationColor();
         } else {
             secondaryText = "";
-            secondaryColor = COLOR_TRANSLATION;
+            secondaryColor = translationColor();
         }
 
         int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
-        int secondaryWidth = secondaryText.isEmpty() ? 0 : painter.textWidth(secondaryText);
+        // 副行按 Salt 的 SubTextFontSizeScale 缩小，宽度必须同样缩放，
+        // 否则居中会偏，底板预留也会算多。
+        int secondaryWidth = secondaryText.isEmpty()
+                ? 0
+                : painter.textWidthScaled(secondaryText, SUB_TEXT_FONT_SCALE);
 
-        int centerTextY = screenHeight - BOTTOM_MARGIN;
+        int centerTextY = layoutCenterY(screenHeight);
         int padX = 6;
         // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
         // 在画面上变成「文字浮在框外」。
         int padY = Math.max(3, LIFT_HEADROOM + 1);
 
-        // 主行底部位置：副行存在时，主行上移一行加行距，给副行腾位置。
-        boolean hasSecondary = !secondaryText.isEmpty();
-        int mainBaselineY = hasSecondary
-                ? centerTextY - LINE_HEIGHT - LINE_GAP
-                : centerTextY;
-
-        // 换行动画期间，新主行从副行位置升上来。
-        // promote 从 0 到 1：0 表示还在副行位置，1 表示已就位。
+        // 多行堆叠：把「当前行 + 后续若干行」当作一整块，块心固定在
+        // centerTextY，逐行往下排。
         //
-        // 偏移量固定为一行加行距，且只在确实有副行时才生效：
-        // 没有副行时主行本就该直接落位，不该有任何过渡位移。
-        int transitionOffset = hasSecondary
-                ? Math.round((1f - promote) * (LINE_HEIGHT + LINE_GAP))
-                : 0;
-        int drawMainY = mainBaselineY + transitionOffset;
+        // 先前是固定双行，且主行基线随「有没有副行」上下跳一行高，
+        // 于是同一句歌词在有、无下一句之间会明显位移，看起来不像居中。
+        boolean hasSecondary = !secondaryText.isEmpty();
+        int totalLines = Math.max(1, this.style.lineCount());
+        // 实际可画的行数受时间轴剩余行数限制，不能凭空补空行。
+        int drawableLines = 1;
+        for (int i = 1; i < totalLines; i++) {
+            LyricLine upcoming = timeline.line(index + i);
+            if (upcoming == null || upcoming.text().isEmpty()) {
+                break;
+            }
+            drawableLines++;
+        }
+        // 行高必须用**副行真实的字号比例**算，不能用 NOT_CURRENT_SCALE。
+        //
+        // 副行是按 SUB_TEXT_FONT_SCALE(0.8) 绘制的，而 NOT_CURRENT_SCALE 是 0.95。
+        // 用 0.95 算出来的块比实际内容高，块心虽然居中，
+        // 但内容整体偏上——这正是「文字多行不居中」的来源。
+        LineLayout.Block block = LineLayout.compute(centerTextY, drawableLines, 0,
+                LINE_HEIGHT, LINE_GAP, SUB_TEXT_FONT_SCALE);
+
+        // 行切换分两段：**旧主行先消失，其余行再上移一行补位**。
+        //
+        // 顺序不能反。若让两者同时进行，旧行一边淡出一边被顶走，
+        // 中间那段半透明旧字会与上移中的新字擦身而过，混出一层脏色；
+        // 而用户要的是「先让出一格，再整体顶上」，是先后关系而非同步。
+        //
+        // 位移方向也要注意：换行瞬间新的当前行还停在**下一行**的位置
+        // （块顶往下偏一行），随后整块上移到块顶。偏移量从 +1 行收到 0，
+        // 少了这一步符号判断，新行会从上方往下掉。
+        // 淡出用绝对时长算，补位用剩余时长算。
+        // 这样调慢切换动画只会拉长上移，不会让旧句黏在屏幕上。
+        long transitionNanos = lineTransitionNanos();
+        float oldFade = transitionNanos <= 0L
+                ? 1f
+                : clamp01(lineTransitionElapsedNanos / (float) OLD_LINE_FADE_MS
+                        / 1_000_000f);
+        float risePart = clamp01((lineTransitionElapsedNanos
+                - OLD_LINE_FADE_MS * 1_000_000L)
+                / (float) Math.max(1L, transitionNanos - OLD_LINE_FADE_MS * 1_000_000L));
+        int blockShift = Math.round(blockLineStep()
+                * (1f - cubicBezierEase(risePart)));
+        int oldLineAlpha = Math.round(255f * (1f - oldFade));
+
+        int mainBaselineY = block.baseline() + blockShift;
+
+        // 字号缩放：整块（主行 + 副行）一起放大缩小。
+        //
+        // 之前 lineScale 只参与羽化宽度计算，从未真正缩放过文字，
+        // 滑条拖动时画面毫无变化。这里在主行与副行绘制前后夹一层逆变换，
+        // 使所有坐标仍按原字号计算，缩放只影响最终成像。
+        float scale = this.style.lineScale();
+        boolean scaling = Math.abs(scale - 1f) > 0.001f;
+        if (scaling) {
+            var pose = painter.pose();
+            // 以**块心**为原点缩放，位置才不会随字号漂移。
+            //
+            // 这里不能用主行基线：切换动画期间它每帧都在移动，
+            // 缩放中心跟着移动会让整块在放大缩小的同时微微游走。
+            pose.pushPose();
+            pose.translate(centerX, centerTextY);
+            pose.scale(scale, scale);
+            pose.translate(-centerX, -centerTextY);
+        }
 
         int viewWidth = scrolling ? maxWidth : primaryWidth;
-        int viewportLeft = centerX - viewWidth / 2;
+        // 视口跟随对齐方式：左对齐时贴左端、右对齐时贴右端，
+        // 否则滚动起点会偏，正在唱的字会跑出可视区。
+        int viewportLeft = layoutLeft(this.style.align(), centerX, maxWidth, viewWidth);
         int viewportRight = viewportLeft + viewWidth;
 
         // 换行或时间轴变更时重置动画，避免沿用上一行的进度
@@ -370,56 +982,179 @@ public final class FloatingLyricRenderer {
                 : 0;
         int textX = viewportLeft + scroll;
 
-        int blockTop = mainBaselineY - padY;
-        int blockBottom = hasSecondary
-                ? mainBaselineY + LINE_HEIGHT + LINE_GAP + LINE_HEIGHT + padY
-                : mainBaselineY + LINE_HEIGHT + padY;
-        painter.fillRect(viewportLeft - padX, blockTop,
-                viewWidth + padX * 2, blockBottom - blockTop, COLOR_BACKDROP);
+
+        // 歌词整体的屏幕包围盒。
+        //
+        // 无论是否拖动都要算：命中检测（悬停、点击）依赖它，
+        // 而悬停恰恰发生在「看不见底板」的平常状态。
+        // 高度覆盖主行与副行，横向覆盖实际绘制宽度（滚动时是整个视口），
+        // 这样点到边上的字也算命中。
+        // 包围盒按**块的稳定位置**算，不含切换偏移。
+        // 否则换行那几帧区域会跟着位移，悬停命中框抖动。
+        int stableMainY = block.baseline();
+        int blockTop = stableMainY - padY;
+        int blockBottom = stableMainY + block.height() + padY;
+        Bounds own = new Bounds(viewportLeft - padX, blockTop,
+                viewWidth + padX * 2, blockBottom - blockTop);
+        // 预览时把包围盒裁进框内：命中检测与描边都不该超出预览区。
+        bounds = inPreview ? intersect(own, previewArea) : own;
+
+        // 底板默认关闭：歌词直接浮在画面上。
+        //
+        // 只有拖动时才显示，作为可拖区域的视觉提示；
+        // 平时留一块半透明底会压住画面，也违背「不打扰」的默认。
+        if (dragging) {
+            painter.fillRect(viewportLeft - padX, blockTop,
+                    viewWidth + padX * 2, blockBottom - blockTop, COLOR_BACKDROP);
+            // 描一圈边，拖动态下手感更明确，也标出可拖范围。
+            painter.fillRect(viewportLeft - padX, blockTop,
+                    viewWidth + padX * 2, 1, COLOR_DRAG_BORDER);
+            painter.fillRect(viewportLeft - padX, blockBottom - 1,
+                    viewWidth + padX * 2, 1, COLOR_DRAG_BORDER);
+            painter.fillRect(viewportLeft - padX, blockTop, 1,
+                    blockBottom - blockTop, COLOR_DRAG_BORDER);
+            painter.fillRect(viewportLeft + padX + viewWidth - 1, blockTop, 1,
+                    blockBottom - blockTop, COLOR_DRAG_BORDER);
+        }
 
         // 逐字偏移表：底色层与高亮层必须共用同一份。
         //
         // 若只让高亮层带偏移，唱到的字会从白色原字上方落下来，
         // 看起来像两个独立的字在打架，而不是同一个字变色并上浮。
-        int[] lifts = clampedSung >= 0.5f && canScroll
+        float[] lifts = clampedSung >= 0.5f && canScroll
                 ? computeLifts(painter, charStartsOf(painter, visible),
-                        visible.length(), primaryWidth, clampedSung)
+                        visible.length(), primaryWidth, clampedSung,
+                        fontSizeOf(primaryWidth, visible.length()),
+                        charProgressOf(painter, line, visible, positionMs))
                 : null;
 
-        // 旧主行的淡出：换行动画前半程让它上移并消失。
-        if (promote < 1f && lastMainText != null) {
-            drawOutgoingLine(painter, maxWidth, centerX, mainBaselineY, promote);
+        diagLift(visible, primaryWidth, clampedSung, lifts, visible.length());
+
+        // 主行始终满不透明。
+        //
+        // 先前主行按 promote 从 0.3 淡到 1.0，同时旧行以相反的曲线淡出，
+        // 两层画在同一位置上叠加。结果是换行后一秒内颜色与稳定状态不同：
+        // 半透明的新字压在半透明的旧字上，蓝灰混出的中间色并不存在于设计中。
+        // 这是「一秒内和一秒后颜色不一样」的直接原因。
+        //
+        // 现在是单层硬切：旧行不画，新行满色。切换瞬间仍由时间轴驱动，
+        // 不存在两层叠加，颜色也就没有过渡期差异。
+        // 主行满色，再乘上用户设定的整体不透明度。
+        //
+        // 整体不透明度作用于**所有**行（主行、后续行、间奏），
+        // 因此在这里统一相乘；分散到各自路径很容易漏掉某一条
+        // （例如降级绘制或间奏），表现为调低之后还有一行是亮的。
+        float opacity = this.style.opacity();
+        // 第一阶段：旧行留在原主行位置淡出。
+        //
+        // 它不参与上移——上移是第二阶段的事。两段分开，
+        // 旧字不会在移动中被新字穿过，画面只有「让位」和「补位」两步。
+        if (oldFade < 1f && lastMainText != null) {
+            String old = clip(painter, lastMainText, maxWidth);
+            if (!old.isEmpty()) {
+                int oldWidth = painter.textWidth(old);
+                int oldX = layoutLeft(this.style.align(), centerX, maxWidth, oldWidth);
+                // 用旧行**最后呈现的配色**淡出：已唱段满色、未唱段压淡，
+                // 分界沿用上一帧的已唱宽度。
+                //
+                // 先前整行都用 sungColor 画，于是亮色的已唱色会把整句刷成
+                // 一片均匀的亮色再淡出，旧句在消失前会「亮一下」，
+                // 与它停留时的样子不符。
+                // 旧行淡出同样接受整体不透明度，否则调低后
+                // 换行那一瞬旧句会比新句亮一截。
+                float oldOpacity = (oldLineAlpha / 255f) * this.style.opacity();
+                int oldSung = withAlpha(sungColor(),
+                        Math.round(255f * oldOpacity));
+                int oldUnsung = withAlpha(unsungColor(),
+                        Math.round(255f * oldOpacity * UNSUNG_ALPHA));
+                int boundary = Math.max(0,
+                        Math.min((int) lastSungWidth, oldWidth));
+
+                if (boundary > 0 && boundary < oldWidth
+                        && !painter.supportsScissor()) {
+                    // 不能裁剪时无法分区上色。此时退回单色，
+                    // 但取**已唱色**而非未唱色：旧行唱过的部分通常更多，
+                    // 用未唱色整行压淡会让它显得比实际更暗，像没跟上进度。
+                    painter.drawText(old, oldX, block.baseline(),
+                            withAlpha(sungColor(), Math.round(255f * oldOpacity)));
+                } else {
+                    painter.drawText(old, oldX, block.baseline(), oldUnsung);
+                    if (boundary > 0) {
+                        painter.enableScissor(oldX, block.baseline() - LIFT_HEADROOM,
+                                boundary, painter.lineHeight() + LIFT_HEADROOM
+                                        + SHADOW_HEADROOM);
+                        painter.drawText(old, oldX, block.baseline(), oldSung);
+                        painter.disableScissor();
+                    }
+                }
+            }
         }
 
-        // 未唱色打底。滚动时文本会伸出视口，必须裁掉，
-        // 否则会画到面板外面去。
-        drawBaseLayer(painter, visible, textX, drawMainY, lifts, scrolling,
-                viewportLeft, viewWidth);
-
-        if (clampedSung >= 0.5f) {
+        // 主行越出块顶就不画：这是上移到底后旧行彻底让出位置的落点。
+        boolean mainVisible = mainBaselineY >= blockTop - 1;
+        if (mainVisible) {
             if (canScroll) {
-                drawWithClipping(painter, visible, textX, drawMainY, clampedSung,
-                        primaryWidth, viewportLeft, viewportRight, lifts);
+                drawKaraokeLine(painter, visible, textX, mainBaselineY, clampedSung,
+                        primaryWidth, viewportLeft, viewportRight, lifts, opacity,
+                        scrolling, viewWidth, line, positionMs);
             } else {
-                drawByWholeUnit(painter, line, visible, textX, drawMainY, clampedSung);
+                drawByWholeUnit(painter, line, visible, textX, mainBaselineY,
+                        clampedSung, opacity);
             }
         }
 
-        // 副行：不做逐字染色，且带着自己的淡入。
+        // 后续各行：不做逐字染色，字号统一收一档，同样走对齐与块布局。
+        //
+        // 这里不参与 promote 淡入。先前副行按 promote 混 alpha，
+        // 换行后一秒内它一直是半透明的，颜色比稳定后暗一截，
+        // 于是「同一句歌词在一秒内和一秒后颜色不同」。
+        // 副行本来就是静态预览，没有淡入的必要。
         if (hasSecondary) {
-            int secondaryX = centerX - secondaryWidth / 2;
-            int secondaryY = centerTextY;
-            // 新副行在主行升上来之后才淡入（对应 NEXT_LINE_PREVIEW_FADE_DURATION）。
-            int alpha = 255;
-            if (promote < 1f) {
-                alpha = Math.round(255f * promote);
+            for (int i = 1; i < drawableLines; i++) {
+                LyricLine upcoming = timeline.line(index + i);
+                if (upcoming == null || upcoming.text().isEmpty()) {
+                    break;
+                }
+                String text = clip(painter, upcoming.text(), maxWidth);
+                if (text.isEmpty()) {
+                    continue;
+                }
+                // 左边界按**缩放后宽度**算，因为 drawTextScaled 以 (x, y)
+                // 为原点缩放，缩放后文字实际占据 [x, x + width*scale]。
+                //
+                // 若用未缩放宽度居中，居中算出来的左边会偏左，
+                // 而副行实际更窄，于是它的中心比主行偏左
+                // (width - width*0.8)/2 像素。行数越多越明显，
+                // 看起来就是「多行歌词不居中」。
+                int width = painter.textWidthScaled(text, SUB_TEXT_FONT_SCALE);
+                int x = layoutLeft(this.style.align(), centerX, maxWidth, width);
+                int y = LineLayout.lineTop(block, i, 0, LINE_HEIGHT, LINE_GAP,
+                        SUB_TEXT_FONT_SCALE) + blockShift;
+                // 必须显式传 shadow：四参 drawTextScaled 会转调四参 drawText，
+                // 而平台层的四参 drawText 把阴影写死为 true。
+                // 于是切换阴影时副行不跟随，看起来只有主行在变。
+                // 副行同样走原版加粗。
+                //
+                // 先前副行不叠字重，理由是「缩放后偏移会变成 0.8 像素、
+                // 落进纹素之间产生颗粒」。改用 §l 后这个顾虑消失：
+                // 原版加粗由字体管线在度量阶段处理，不是像素位移，
+                // 缩放多少都不会引入半点偏移。
+                Weight w = this.style.weight();
+                painter.drawTextScaled(stylePrefix(w) + text + styleSuffix(w),
+                        x, y, SUB_TEXT_FONT_SCALE, nextLineColor(),
+                        style.shadow());
             }
-            painter.drawText(secondaryText, secondaryX, secondaryY,
-                    withAlpha(secondaryColor, alpha));
+        }
+
+        if (scaling) {
+            painter.pose().popPose();
         }
 
         lastSecondaryPresent = hasSecondary;
         lastMainText = fullText;
+        // 记住分界，供下一帧的旧行淡出还原配色。
+        lastSungWidth = clampedSung;
+        lastLineWidth = primaryWidth;
         return true;
     }
 
@@ -431,43 +1166,116 @@ public final class FloatingLyricRenderer {
      */
     private void updateLineTransition(int index, long frameDeltaNanos) {
         if (index == lineTransitionFromIndex) {
-            if (lineTransitionElapsedNanos < LINE_TRANSITION_NANOS) {
+            if (lineTransitionElapsedNanos < lineTransitionNanos()) {
                 lineTransitionElapsedNanos += Math.max(0L, frameDeltaNanos);
             }
             return;
         }
         lineTransitionFromIndex = index;
         lineTransitionElapsedNanos = 0L;
+
     }
 
-    /** 行切换进度 0→1；已经走完时恒为 1。 */
+    /**
+     * 一行的纵向步长：行高加行距。
+     *
+     * <p>切换位移必须与 {@link LineLayout} 用的步长一致，
+     * 否则「上移一行」会差几个像素，副行会逐渐偏离补偿后的位置。
+     */
+    private static int blockLineStep() {
+        return LINE_HEIGHT + LINE_GAP;
+    }
+
+    /**
+     * 旧主行淡出的固定时长（毫秒）。
+     *
+     * <p>不用「占切换时长的比例」：切换时长可由用户调节，
+     * 比例式会把淡出一起拉长，调慢过渡时旧句会长时间蒙着不散。
+     * 淡出只负责让位，固定 0.1 秒即可，快到几乎察觉不到。
+     */
+    private static final long OLD_LINE_FADE_MS = 100L;
+
+    private static float clamp01(float v) {
+        return v < 0f ? 0f : (v > 1f ? 1f : v);
+    }
+
+    /** 行切换的线性进度 0→1；已经走完时恒为 1。 */
+    private float lineTransitionRaw() {
+        long duration = lineTransitionNanos();
+        // 时长设为 0 表示不要过渡动画，直接切到新行。
+        if (duration <= 0L) {
+            return 1f;
+        }
+        float raw = lineTransitionElapsedNanos / (float) duration;
+        return raw >= 1f ? 1f : Math.max(0f, raw);
+    }
+
+    /** 行切换进度 0→1（已缓动）；已经走完时恒为 1。 */
     private float lineTransitionProgress() {
-        if (LINE_TRANSITION_NANOS <= 0L) {
-            return 1f;
-        }
-        float raw = lineTransitionElapsedNanos / (float) LINE_TRANSITION_NANOS;
-        if (raw >= 1f) {
-            return 1f;
-        }
-        // 减速插值，对应 LinearOutSlowInInterpolator：
-        // 起步快、收尾慢，读起来像「滑到位」而不是「弹到位」。
-        float t = Math.max(0f, raw);
-        return 1f - (1f - t) * (1f - t);
+        return cubicBezierEase(lineTransitionRaw());
     }
 
-    /** 画出正在离场的上一行：向上移动并淡出。 */
-    private void drawOutgoingLine(Painter painter, int maxWidth, int centerX,
-                                  int mainBaselineY, float promote) {
-        String old = clip(painter, lastMainText, maxWidth);
-        if (old.isEmpty()) {
-            return;
+    /** 按行切换缓动求值：{@code CubicBezierEasing(0.25, 0.0, 0.2, 1.0)}。 */
+    private static float cubicBezierEase(float t) {
+        return cubicBezierY(solveCubicBezierT(t));
+    }
+
+    /**
+     * 由 x 反解贝塞尔参数 t。
+     *
+     * <p>x 与 t 不是同一个量，必须先解 {@code x(t) = 目标x} 才能取 {@code y(t)}。
+     * 用牛顿迭代加速、二分兜底：曲线在 {@code x1 = 0.25} 处导数可能接近 0，
+     * 纯牛顿会在这一段来回振荡。
+     */
+    private static float solveCubicBezierT(float x) {
+        float t = x;
+        for (int i = 0; i < 8; i++) {
+            float dx = cubicBezierX(t) - x;
+            if (Math.abs(dx) < 1e-5f) {
+                return t;
+            }
+            float slope = cubicBezierDX(t);
+            if (Math.abs(slope) < 1e-6f) {
+                break;
+            }
+            t -= dx / slope;
+            if (t < 0f || t > 1f) {
+                break;
+            }
         }
-        int width = painter.textWidth(old);
-        int x = centerX - width / 2;
-        // 上移 0.65 行高，与 HyperLyric 的 main.height * 0.65f 一致。
-        int rise = Math.round(LINE_HEIGHT * 0.65f * (1f - promote));
-        int alpha = Math.round(255f * (1f - promote));
-        painter.drawText(old, x, mainBaselineY - rise, withAlpha(COLOR_UNSUNG, alpha));
+        // 兜底：二分
+        float lo = 0f;
+        float hi = 1f;
+        t = x;
+        for (int i = 0; i < 20; i++) {
+            float mid = (lo + hi) * 0.5f;
+            if (cubicBezierX(mid) < x) {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        return (lo + hi) * 0.5f;
+    }
+
+    /** 三次贝塞尔的 x 分量。 */
+    private static float cubicBezierX(float t) {
+        float u = 1f - t;
+        return 3f * u * u * t * EASE_X1 + 3f * u * t * t * EASE_X2 + t * t * t;
+    }
+
+    /** 三次贝塞尔的 y 分量。 */
+    private static float cubicBezierY(float t) {
+        float u = 1f - t;
+        return 3f * u * u * t * EASE_Y1 + 3f * u * t * t * EASE_Y2 + t * t * t;
+    }
+
+    /** x 分量对 t 的导数。 */
+    private static float cubicBezierDX(float t) {
+        float u = 1f - t;
+        return 3f * u * u * EASE_X1
+                + 6f * u * t * (EASE_X2 - EASE_X1)
+                + 3f * t * t * (1f - EASE_X2);
     }
 
     /**
@@ -509,130 +1317,325 @@ public final class FloatingLyricRenderer {
         lastLineIndex = -1;
         sungWidth = 0f;
 
+        // 间奏提示可配：空白 / ··· / 间奏。
+        // 空白档直接不出画，但要保留 lastLineIndex 的重置语义，
+        // 否则间奏结束后首帧会沿用上一行的进度。
+        String text = this.style.interlude().text;
+        if (text.isEmpty()) {
+            return false;
+        }
+
         int screenWidth = painter.screenWidth();
         int screenHeight = painter.screenHeight();
-        int width = painter.textWidth(INTERLUDE_TEXT);
-        int x = screenWidth / 2 - width / 2;
-        int y = screenHeight - BOTTOM_MARGIN - LINE_HEIGHT;
+        int width = painter.textWidth(text);
+        // 与正常歌词共用同一份偏移，切换歌词与间奏时不会跳动。
+        int x = layoutCenterX(screenWidth) - width / 2;
+        int y = layoutCenterY(screenHeight) - LINE_HEIGHT;
 
-        painter.fillRect(x - 6, y - 3, width + 12, LINE_HEIGHT + 6, COLOR_BACKDROP);
-        painter.drawText(INTERLUDE_TEXT, x, y, COLOR_INTERLUDE);
+        // 间奏提示也能被悬停命中：它同样是可见歌词的一部分，
+        // 若包围盒只覆盖正常行，鼠标停在「间奏」上就拖不动。
+        bounds = new Bounds(x - 6, y - 3, width + 12, LINE_HEIGHT + 6);
+
+        if (dragging) {
+            painter.fillRect(x - 6, y - 3, width + 12, LINE_HEIGHT + 6, COLOR_BACKDROP);
+        }
+        painter.drawText(text, x, y,
+                withAlpha(COLOR_INTERLUDE,
+                        Math.round(((COLOR_INTERLUDE >>> 24) & 0xFF)
+                                * this.style.opacity())),
+                style.shadow());
         return true;
     }
 
     /**
-     * 绘制未唱色底色层。
+     * 绘制一整行卡拉 OK 歌词。
      *
-     * <p>关键点：有抬升表时必须逐字绘制并套用同一份偏移，
-     * 让「同一个字」既有底色也有高亮、且位置一致。
+     * <p>两层真实颜色：整行先以未唱色铺满，再把已唱段用已唱色重画一遍。
+     * 两层共用同一个 {@code textX} 与同一份抬升表，只有裁剪区不同，
+     * 因此像素严格重合，得到的是真正的**变色**而非「蒙一层灰」。
      *
-     * <p>若这里仍按整行一次绘制（基线不动），而高亮层带偏移，
-     * 唱到的字就会从白色原字上方落下来，看起来是两个独立的字，
-     * 这正是「高亮字落在原歌词上」的观感来源。
+     * <p>Salt Player 本身用的是另一种做法：整行画一次，再用
+     * {@code Color.copy(Black, alpha)} 把未唱段压暗。它之所以如此，
+     * 是因为 Compose 的 {@code Text} 必须一次画完才能局部覆盖，
+     * 拿不到「同一串字分两段上色」的能力。Minecraft 的 HUD 可以
+     * 用两次 {@code drawString} 配裁剪区做到，所以这里选择真正的变色。
+     *
+     * <p>关键在于**两层不得各自位移**：先前换行时旧行下滑、新行上升，
+     * 两种颜色在中途对穿，那才是重影的成因，与层数无关。
      */
-    private void drawBaseLayer(Painter painter, String visible, int textX, int textY,
-                               int[] lifts, boolean scrolling,
-                               int viewportLeft, int viewWidth) {
-        if (scrolling) {
-            painter.enableScissor(viewportLeft, textY - LIFT_HEADROOM, viewWidth,
-                    LINE_HEIGHT + LIFT_HEADROOM + 4);
+    private void drawKaraokeLine(Painter painter, String visible, int textX, int textY,
+                                 float sungWidth, int lineWidth,
+                                 int viewportLeft, int viewportRight, float[] lifts,
+                                 float opacity, boolean scrolling, int viewWidth,
+                                 LyricLine line, long positionMs) {
+        int alpha = Math.round(255f * opacity);
+        // 未唱部分整体压到 UNSUNG_ALPHA：没唱到的字更淡，唱到的字满色。
+        // 羽化带在两者之间插值，alpha 通道也会平滑过渡，因此交界处不会突兀。
+        int unsungColor = withAlpha(unsungColor(),
+                Math.round(alpha * UNSUNG_ALPHA));
+        int sungColor = withAlpha(sungColor(), alpha);
+
+        int viewRight = Math.min(viewportRight, viewportLeft + viewWidth);
+
+        // 逐字着色：每个字按**它自己的**染色进度在两种颜色之间插值。
+        //
+        // 不再用「裁剪边界」来分色。裁剪区只能落在整像素上，
+        // 而字符只有 9 像素宽，于是分色边界最多只有 9 个台阶：
+        // 表现为边界先卡在一个整数上好几天（实测多帧裁剪区完全相同），
+        // 然后整像素跳一格——就是「先渲染一列像素，后面一瞬间渲染完」。
+        // 无论怎么加过渡带都绕不开这个量化下限。
+        //
+        // 改成逐字取色后，颜色是连续量：同一帧内每个字按自己的进度
+        // 取不同的中间色，进度每前进 0.01，整行所有正在染的字都会微调。
+        // 字内部分用字符宽度的细分段表达，让一个 9 像素的字内部
+        // 也能有渐变，而不是整字跳色。
+        float fontSizePx = fontSizeOf(lineWidth, Math.max(1, visible.length()));
+        float band = Math.max(1f, fontSizePx * FEATHER_RATIO);
+        float[] progress = charProgressOf(painter, line, visible, positionMs);
+
+        // 前沿的浮点位置（屏幕坐标）。亚像素信息全部保留在这里：
+        // 它每帧都在动，条带颜色因此每帧都在变，
+        // 不受裁剪只能整像素的限制。
+        float edge = textX + sungWidth;
+
+        // 没有逐字偏移表时退回整段绘制。
+        //
+        // 逐字着色必须知道每个字的抬升量；若 {@code lifts} 为 null
+        // （行太长、或字号退化算不出幅度），就说明这批数据不值得逐字处理，
+        // 此时仍按字拆开画只是把一次 drawText 拆成几十次，
+        // 换来零收益。整行一次画完，颜色取整行平均进度。
+        if (lifts == null) {
+            drawWholeLineColored(painter, visible, textX, textY,
+                    viewportLeft, viewRight, sungColor, unsungColor);
+            return;
+        }
+
+        int cursor = 0;
+        for (int i = 0; i < visible.length(); i++) {
+            String ch = visible.substring(i, i + 1);
+            int charX = textX + cursor;
+            int charWidth = painter.textWidth(ch);
+            cursor += charWidth;
+            // 该字的右端（屏幕坐标）。先前这里写成 cursor + charWidth，
+            // 那是**相对文本起点**的坐标，却拿去和屏幕坐标的 viewportLeft 比较，
+            // 于是所有字都被判定为「在视口左侧之外」而整行跳过，
+            // 表现为主行完全不绘制。
+            int charRight = charX + charWidth;
+
+            // 该字完全在视口外就不画，但游标必须照常推进。
+            if (charRight <= viewportLeft || charX >= viewRight) {
+                continue;
+            }
+
+            // 先铺这个字的**未唱底色**（或已唱色）。
+            //
+            // 这一步不能省。条带只负责前沿那一两个字的渐变，
+            // 若只画条带，没有条带覆盖的笔画就完全不出现在屏幕上，
+            // 表现为「整行只剩前沿几个像素」。
+            float base = progress[i];
+            int baseColor;
+            if (base >= 1f) {
+                baseColor = sungColor;
+            } else {
+                // 未唱和正在染的字都以**未唱色**打底。
+                //
+                // 不能给正在染的字先铺一个按进度算的中间色：
+                // 那样整字会偏亮，而且前沿之外的笔画也是中间色，
+                // 与「还没唱到」的语义相反。前沿的渐变由下面的条带负责，
+                // 底色只该表达「尚未唱满」。
+                baseColor = unsungColor;
+            }
+            drawChar(painter, ch, charX, textY, lifts, i,
+                    viewportLeft, viewRight, baseColor);
+
+            // 再叠加前沿过渡：只对正在染的字做，已唱满和未开唱的字不需要。
+            if (base <= 0f || base >= 1f) {
+                continue;
+            }
+            int slices = Math.max(1, Math.min(charWidth, 3));
+            float perSlice = charWidth / (float) slices;
+            for (int s = 0; s < slices; s++) {
+                float sliceLeft = charX + s * perSlice;
+                float sliceCenter = sliceLeft + perSlice * 0.5f;
+
+                // 条中心到前沿的有符号距离（像素）：正值表示尚未唱到。
+                // 用浮点前沿算，绝不先取整——取整会丢掉亚像素推进，
+                // 边界就会卡在同一个整数上，表现为「停住再整段跳」。
+                float distance = sliceCenter - edge;
+                float t = (distance + band * 0.5f) / band;
+                if (t <= 0f || t >= 1f) {
+                    // 完全落在实色区，底色已经足够，不必重画。
+                    continue;
+                }
+                int color = ColorMath.lerp(sungColor, unsungColor, t);
+                int left = Math.round(sliceLeft);
+                int right = Math.round(sliceLeft + perSlice);
+                int width = Math.max(1, right - left);
+                drawSlice(painter, ch, charX, textY, lifts, i,
+                        viewportLeft, viewRight, left, width, color);
+            }
+        }
+    }
+
+    /**
+     * 整行绘制并按已唱宽度分两段上色。
+     *
+     * <p>用于没有逐字偏移表的情况：只用一次（或两次）drawText
+     * 表达整行的染色进度，而不是按字拆成几十次。
+     */
+    private void drawWholeLineColored(Painter painter, String visible,
+                                       int textX, int textY,
+                                       int viewportLeft, int viewRight,
+                                       int sungColor, int unsungColor) {
+        int lineWidth = painter.textWidth(visible);
+        int solidWidth = Math.max(0,
+                Math.min((int) Math.floor(sungWidth), lineWidth));
+        // 未唱色铺满整行。
+        drawColorLayer(painter, visible, textX, textY, null,
+                viewportLeft, viewRight, textX, lineWidth, unsungColor);
+        if (solidWidth > 0) {
+            drawColorLayer(painter, visible, textX, textY, null,
+                    viewportLeft, viewRight, textX, solidWidth, sungColor);
+        }
+    }
+
+    /** 整字绘制，只受视口约束。 */
+    private void drawChar(Painter painter, String ch, int charX, int textY,
+                          float[] lifts, int index,
+                          int viewportLeft, int viewRight, int color) {
+        int charWidth = painter.textWidth(ch);
+        int left = Math.max(charX, viewportLeft);
+        int right = Math.min(charX + charWidth, viewRight);
+        if (right - left <= 0) {
+            return;
+        }
+        boolean full = left <= charX && right >= charX + charWidth;
+        if (!full) {
+            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                    painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
         }
         if (lifts == null) {
-            painter.drawText(visible, textX, textY, COLOR_UNSUNG);
+            drawTextStyled(painter, ch, charX, textY, color);
+        } else {
+            drawTextLiftedStyled(painter, ch, charX, textY, lifts[index], color);
+        }
+        if (!full) {
+            painter.disableScissor();
+        }
+    }
+
+    /**
+     * 画单个字符的一条竖带。
+     *
+     * <p>颜色已经是插值结果，这里只负责把它限制在屏幕内的窄条上。
+     * 字符只有一个，裁剪区也只有一个条带，因此绘制量恒定。
+     */
+    private void drawSlice(Painter painter, String ch, int charX, int textY,
+                           float[] lifts, int index,
+                           int viewportLeft, int viewRight,
+                           int clipLeft, int clipWidth, int color) {
+        int left = Math.max(clipLeft, viewportLeft);
+        int right = Math.min(clipLeft + clipWidth, viewRight);
+        if (right - left <= 0) {
+            return;
+        }
+        // 条带覆盖整个字宽时不必开裁剪，省一次状态切换。
+        int charWidth = painter.textWidth(ch);
+        boolean full = left <= charX && right >= charX + charWidth;
+        if (!full) {
+            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                    painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
+        }
+        if (lifts == null) {
+            drawTextStyled(painter, ch, charX, textY, color);
+        } else {
+            drawTextLiftedStyled(painter, ch, charX, textY, lifts[index], color);
+        }
+        if (!full) {
+            painter.disableScissor();
+        }
+    }
+
+    /**
+     * 用指定颜色画一层文字，只显示 {@code [clipLeft, clipLeft + clipWidth)} 这一段。
+     *
+     * <p>两层必须传同一个 {@code textX} 和同一份 {@code lifts}：
+     * 坐标一致才能保证两种颜色严丝合缝地贴在同一串字形上。
+     * 裁剪区先夹进视口，滚动时文本伸到屏幕外的部分不会画出去。
+     */
+    private void drawColorLayer(Painter painter, String visible, int textX, int textY,
+                                float[] lifts, int viewportLeft, int viewRight,
+                                int clipLeft, int clipWidth, int color) {
+        int left = Math.max(clipLeft, viewportLeft);
+        int right = Math.min(clipLeft + clipWidth, viewRight);
+        if (right - left <= 0) {
+            return;
+        }
+        // 只有需要真正裁掉一部分时才开裁剪；整行可见时省一次状态切换。
+        boolean needScissor = left > textX || right < textX + painter.textWidth(visible);
+        if (needScissor) {
+            // 裁剪高度必须容得下阴影。
+            //
+            // 原先按 LINE_HEIGHT(10) 算出一个固定 16 像素的框，
+            // 英文字形低、阴影恰好落在框内，看着正常；
+            // 中文由 fallback 字体提供，字形更高，阴影沉到框外被裁掉，
+            // 于是出现「英文有阴影、中文没有」。这里改为按实际行高加足余量。
+            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                    painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
+        }
+        if (lifts == null) {
+            drawTextStyled(painter, visible, textX, textY, color);
         } else {
             int cursor = 0;
             for (int i = 0; i < visible.length(); i++) {
                 String ch = visible.substring(i, i + 1);
-                painter.drawText(ch, textX + cursor, textY - lifts[i], COLOR_UNSUNG);
+                drawTextLiftedStyled(painter, ch, textX + cursor, textY, lifts[i], color);
                 cursor += painter.textWidth(ch);
             }
         }
-        if (scrolling) {
+        if (needScissor) {
             painter.disableScissor();
         }
     }
 
     /**
-     * 绘制已唱部分。
+     * 采集真实渲染坐标，供离线校验抬升参数。
      *
-     * <p>分两种情形：谱面走完就整体全亮，不再羽化；
-     * 否则实心段 + 一条逐级变淡的过渡带。
+     * <p>只在 {@link #DIAG_LIFT} 打开时写日志。记的是每帧的
+     * 已唱宽度、行宽与逐字偏移，拿它反推实际波长与波幅是否吻合。
      */
-    private void drawWithClipping(Painter painter, String visible, int textX, int textY,
-                                  float sungWidth, int lineWidth,
-                                  int viewportLeft, int viewportRight, int[] lifts) {
-        int solidWidth = (int) sungWidth;
-        if (solidWidth > 0) {
-            drawClip(painter, visible, textX, textY, viewportLeft, textX,
-                    solidWidth, viewportRight, COLOR_SUNG, lifts);
-        }
-
-        // 整行唱完就不再羽化：否则行尾会拖一条半透明的尾巴，
-        // 看起来像永远没唱干净。
-        if (solidWidth >= lineWidth) {
+    private void diagLift(String lineText, int lineWidth, float sungWidth,
+                          float[] lifts, int charCount) {
+        if (!DIAG_LIFT) {
             return;
         }
-
-        // 过渡带按字号比例取宽，与字形高度成比例，不会随分辨率失衡。
-        int feather = Math.max(FEATHER_ALPHA.length, (int) (LINE_HEIGHT * FEATHER_RATIO));
-        int segment = Math.max(1, feather / FEATHER_ALPHA.length);
-        int x = textX + solidWidth;
-        int remaining = feather;
-        for (int i = 0; i < FEATHER_ALPHA.length && remaining > 0; i++) {
-            int width = Math.min(segment, remaining);
-            drawClip(painter, visible, textX, textY, viewportLeft, x,
-                    width, viewportRight, withAlpha(COLOR_SUNG, FEATHER_ALPHA[i]), lifts);
-            x += width;
-            remaining -= width;
-        }
-    }
-
-    /**
-     * 按裁剪区画一段高亮，并夹在视口内。
-     *
-     * <p>滚动时文本会伸出屏幕两侧，若裁剪区不夹视口，
-     * 已唱段会画到面板外面，压到别的 HUD 元素上。
-     *
-     * <p>每一段的 alpha 叠加在下面已铺好的未唱色之上，结果是
-     * {@code a*已唱 + (1-a)*未唱}，也就是正确的线性插值——
-     * 这正是逐级变淡的成因，不是重复混色。
-     *
-     * @param lifts 逐字竖直偏移；为 {@code null} 时整段一次绘制
-     */
-    private void drawClip(Painter painter, String visible, int textX, int textY,
-                          int viewportLeft, int clipX, int clipWidth,
-                          int viewportRight, int color, int[] lifts) {
-        int left = Math.max(clipX, viewportLeft);
-        int right = Math.min(clipX + clipWidth, viewportRight);
-        if (right - left <= 0) {
+        long now = System.nanoTime();
+        if (now - diagLastNanos < DIAG_INTERVAL_NANOS) {
             return;
         }
+        diagLastNanos = now;
 
-        if (lifts == null) {
-            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
-                    LINE_HEIGHT + LIFT_HEADROOM + 4);
-            painter.drawText(visible, textX, textY, color);
-            painter.disableScissor();
-            return;
+        StringBuilder sb = new StringBuilder(160);
+        sb.append("w=").append(lineWidth)
+                .append(" sung=").append(Math.round(sungWidth))
+                .append(" n=").append(charCount)
+                .append(" wave=").append(String.format("%.1f",
+                        (charCount > 0 ? (float) lineWidth / charCount : 0f)
+                                * LIFT_WAVE_FONT_RATIO))
+                .append(" max=").append(String.format("%.2f",
+                        (charCount > 0 ? (float) lineWidth / charCount : 0f)
+                                * LIFT_FONT_RATIO))
+                .append(" lifts=[");
+        if (lifts != null) {
+            for (int i = 0; i < lifts.length; i++) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(String.format("%.2f", lifts[i]));
+            }
         }
-
-        // 逐字绘制：每个字带自己的竖直偏移。
-        // 裁剪仍按像素做，所以正在唱的那个字依然只显示已唱比例。
-        //
-        // 全行统一用 LIFT_HEADROOM 的裁剪高度，而不是按各自偏移收紧，
-        // 避免相邻字裁剪区相互错开而在接缝处露出底色。
-        painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
-                LINE_HEIGHT + LIFT_HEADROOM + 4);
-        int cursor = 0;
-        for (int i = 0; i < visible.length(); i++) {
-            String ch = visible.substring(i, i + 1);
-            int chWidth = painter.textWidth(ch);
-            int lift = Math.min(i, lifts.length - 1) >= 0 && i < lifts.length
-                    ? lifts[i] : 0;
-            painter.drawText(ch, textX + cursor, textY - lift, color);
-            cursor += chWidth;
-        }
-        painter.disableScissor();
+        sb.append("] text=").append(lineText);
+        diagWrite(sb.toString());
     }
 
     /**
@@ -656,12 +1659,16 @@ public final class FloatingLyricRenderer {
     }
 
     /**
-     * 平均字宽。
+     * 由行宽与字数估出字号。
      *
-     * <p>中英混排时各字宽度不同，用平均值为基准计算回落行程即可：
-     * 行程只需与字的尺度同量级，不要求精确。
+     * <p>MC 里中文字宽约等于字号，故「行宽 ÷ 字数」就是字号的良好近似。
+     * 抬升幅度与过渡带宽度都以字号为基准，必须拿到这个值。
+     *
+     * <p>估算而非读取真实字号：{@code Painter} 是跨平台的极薄适配层，
+     * 不希望为了一个比例值把字体对象泄漏到渲染逻辑里。字形被等比缩放时
+     * 行宽与字数同步变化，比值仍成立。
      */
-    private static float charWidthAverage(int[] charStarts, int charCount, int lineWidth) {
+    private static float fontSizeOf(int lineWidth, int charCount) {
         if (charCount <= 0) {
             return 0f;
         }
@@ -669,56 +1676,253 @@ public final class FloatingLyricRenderer {
     }
 
     /**
-     * 计算每个字的抬升像素。
+     * 计算每个字中心处的抬升系数。
      *
-     * <p>规则取自 HyperLyric 的 {@code computeUnitLift}：
-     * 高亮经过某个字时它抬到最高，随后在一个波长的行程里线性落回基线。
-     * 也就是「唱到的字上浮，唱过的字缓缓归位」。
+     * <p>形状取自 Salt Player 的卡拉 OK 逐字上浮（其 {@code LyricsLineLayoutResult}）：
+     * 与演唱进度绑定的不是「每个字各自升起再落下」，而是**一条横跨整行的斜坡**。
+     * 已唱满的字恒在最高位，未唱到的字恒在基线，两者之间用一条余弦软过渡带连接，
+     * 过渡带永远跟着演唱点走。
+     *
+     * <p>反编译出的原始式子（{@code f18} 即归一化到过渡带内的相位）：
+     * <pre>
+     *   t    = (字中心 - 前沿 + 半带宽) / 带宽
+     *   k    = t &lt;= 0 ? 1 : (t &gt;= 1 ? 0 : 0.5 + 0.5·cos(π·t))
+     *   lift = k · round(字号 × 0.1)
+     * </pre>
+     * 两端梯度都为 0，所以前沿推进时字不会在起落处「弹」一下；
+     * 若换成线性斜坡，两端的折角在浅色字上很明显。
+     *
+     * <p>原实现另有一段按行尾剩余距离压平斜坡的收尾（{@code edge}），
+     * 但驱动它的局部变量在字节码里未被赋值，语义无法确证；按其可见形式
+     * 代入会在行尾算出负系数，即把字往下压。这里不复刻，改用更确定的规则：
+     * 整行唱完时全部取满，未唱完时斜坡照常延伸。
      *
      * <p>返回 {@code null} 表示不值得逐字绘制（行太长或数据退化为整行），
      * 此时调用方应退回整段绘制，省掉几十次绘制调用。
      */
-    private int[] computeLifts(Painter painter, int[] charStarts, int charCount,
-                               int lineWidth, float sungWidth) {
+    static float[] computeLifts(Painter painter, int[] charStarts, int charCount,
+                                int lineWidth, float sungWidth, float fontSizePx,
+                                float[] charProgress) {
         if (!PER_CHAR_LIFT || charCount <= 1 || charCount > MAX_LIFT_CHARS) {
             return null;
         }
-        int maxLift = LIFT_PX;
-        if (maxLift <= 0) {
+        if (fontSizePx <= 0f || LIFT_FONT_RATIO <= 0f) {
             return null;
         }
 
-        // 升起行程：字被唱到时用约一个多字宽的行程缓慢升满。
-        int riseLength = Math.max(1,
-                Math.round(charWidthAverage(charStarts, charCount, lineWidth)
-                        * LIFT_RISE_UNITS));
+        // 幅度取整：Salt 用的是 roundToInt，整像素位移不会让字形落在半像素上
+        // 而被抗锯齿抹成灰边。
+        float maxOffset = Math.round(fontSizePx * LIFT_FONT_RATIO);
+        if (maxOffset <= 0f) {
+            return null;
+        }
+        // 没有「整行唱完就全部置满」的短路。
+        //
+        // 曾经按已唱宽度判定：宽度到达行宽就认为唱完，直接把每个字抬满。
+        // 但宽度是**累加**值，行级数据和逐字混合时容易出现宽度先到、
+        // 而个别字的进度尚未走完的情况，此时短路的置满会盖掉字级差异，
+        // 表现为「颜色没染完字已经升满」。
+        // 上浮现在完全由每字进度决定，不需要宽度参与判定。
 
-        int[] lifts = new int[charCount];
+        // 上浮与染色**同步**：每个字的抬升量直接由它自己的染色进度决定。
+        //
+        // Salt 的行为是「逐字染色上升」，两者是同一个量：
+        // 字被染到多少，就升起多少；完全染完时正好升到顶点。
+        // 因此这里不引入任何额外的时间常数或缓动——
+        // 染色进度本身已经是时间的函数，再叠一层会让两者错位：
+        // 颜色已经铺满而字还没升到位，或者字升满了颜色却还在走。
+        //
+        // 先前用过两种错误做法：空间余弦斜坡（前沿扫过一个字只占波宽 1/3，
+        // 上浮快到看不见），以及固定时长的独立缓动（与染色不同步，
+        // 唱得慢时字已升满而颜色还在推进）。
+        float[] lifts = new float[charCount];
         for (int i = 0; i < charCount; i++) {
-            int unitStart = charStarts[i];
-
-            // 尚未唱到这个字：停在基线。
-            // 必须显式判断，否则相位公式会把结果夹成最大值，
-            // 导致整行未唱部分一起悬空。
-            if (sungWidth <= unitStart) {
-                continue;
-            }
-
-            // 升起：从该字起点开始线性升到满值，之后永久保持。
-            float rise = (sungWidth - unitStart) / (float) riseLength;
-            rise = Math.max(0f, Math.min(1f, rise));
-            lifts[i] = Math.round(maxLift * rise);
+            lifts[i] = maxOffset * charProgress[i];
         }
         return lifts;
     }
 
+    /**
+     * 每个字各自的染色进度 0..1。
+     *
+     * <p>直接取词单元自身的 {@code progressAt}，并套用与染色相同的
+     * {@link #sustainCurve}。上浮必须与染色用同一条曲线，
+     * 否则字的升起速度与颜色铺开速度不一致，两者会视觉上脱节。
+     *
+     * <p>行级数据（没有逐字时间）按行内时间比例线性推进，
+     * 与 {@code targetWidthAt} 的处理保持一致。
+     */
+    private float[] charProgressOf(Painter painter, LyricLine line, String visible,
+                                   long positionMs) {
+        int count = visible.length();
+        float[] progress = new float[count];
+        if (count == 0) {
+            return progress;
+        }
+
+        List<LyricWord> words = line.words();
+        if (words.size() <= 1) {
+            float ratio = line.progressAt(positionMs);
+            float value = ratio <= 0f ? 0f : (ratio >= 1f ? 1f : ratio);
+            java.util.Arrays.fill(progress, value);
+            return progress;
+        }
+
+        int index = 0;
+        for (LyricWord word : words) {
+            if (index >= count) {
+                break;
+            }
+            String wordText = word.text();
+            if (wordText.isEmpty()) {
+                continue;
+            }
+            int available = Math.min(wordText.length(), count - index);
+            float ratio = word.progressAt(positionMs);
+            float value;
+            if (positionMs >= word.endMs()) {
+                value = 1f;
+            } else if (positionMs <= word.startMs()) {
+                value = 0f;
+            } else {
+                value = sustainCurve(ratio);
+            }
+            // 一个字单元通常对应一个字符；跨多字符时同进同退。
+            for (int k = 0; k < available; k++) {
+                progress[index + k] = value;
+            }
+            index += available;
+        }
+        return progress;
+    }
+
+    /**
+     * 更新并返回前沿推进速度（像素/秒）。
+     *
+     * <p>用相邻两帧的已唱宽度差除以帧间隔。数值做上下限夹紧：
+     * 下限定得较高，避免停顿（长音、暂停）时速度趋近 0，
+     * 导致「已过去的像素 ÷ 极慢速度」算出巨大的经过时间，
+     * 字会立刻弹到顶点；上限则防止拖动进度条造成的一次性跳变。
+     */
+    /**
+     * 上浮缓动曲线。
+     *
+     * <p>用 {@code 1-(1-t)³}（ease-out cubic）：起步快、收尾慢。
+     * 这符合「字被推上来」的物理直觉——离开基线时阻力小，靠近顶点时减速停住。
+     * 线性曲线会让顶端显得生硬，而 ease-in-out 会在起步时迟滞，像卡了一下。
+     *
+     * @param t 0 表示刚开始上升，1 表示已到顶；越界会被夹紧
+     */
+    static float liftEase(float t) {
+        float x = t < 0f ? 0f : (t > 1f ? 1f : t);
+        float inv = 1f - x;
+        return 1f - inv * inv * inv;
+    }
+
+    /** 副行的实际行高：按 SubTextFontSizeScale 缩放后取整。 */
+    private static int secondaryLineHeight() {
+        return Math.round(LINE_HEIGHT * SUB_TEXT_FONT_SCALE);
+    }
+
+    /**
+     * 按当前字重绘制一段文本。
+     *
+     * <p>原版字体只有一种笔画粗细，没有中/粗体字库可切。
+     * 这里用「同色偏移叠加」模拟：把同一串字在几个方向各画一遍，
+     * 笔画边缘被反复覆盖显得更实，视觉上是加粗。
+     *
+     * <p>代价是边缘略糊、绘制次数随层数增加，因此层数控制在 1/3/5 三档。
+     */
+    private void drawTextStyled(Painter painter, String text, int x, int y, int color) {
+        Weight w = this.style.weight();
+        painter.drawText(stylePrefix(w) + text + styleSuffix(w), x, y, color,
+                style.shadow());
+    }
+
+    private void drawTextLiftedStyled(Painter painter, String text, int x, int y,
+                                      float lift, int color) {
+        Weight w = this.style.weight();
+        // 单个字符不必逐个包 §l…§r。
+        //
+        // 逐字绘制时若每个字都包一层，屏幕上拼出来的文本序列会是
+        // 「§l一§r§l二§r」这样的碎片。虽然可见结果正确，
+        // 但任何按文本内容做的判断（日志、测试、无障碍朗读）都会失效。
+        // 加粗作用于整个字形串时只需一次；单字本身也无从「延续」样式，
+        // 因此这里只在多字时包一层，单字直接用裸文本。
+        String body = text.length() <= 1
+                ? text
+                : stylePrefix(w) + text + styleSuffix(w);
+        painter.drawTextLifted(body, x, y, lift, color, style.shadow());
+    }
+
+
+
+    /**
+     * 字重叠加使用的偏移集合：只取**圆环**上的点，不含内部实心格。
+     *
+     * <p>先前用完整的 (2r+1)² 方格。方格会把字形沿每个方向各外扩一圈，
+     * 横向笔画因此上下各长一像素、纵向笔画左右各长一像素，
+     * 相邻笔画之间的空隙被填掉，于是笔画粘连、笔画粗细也失去区分。
+     *
+     * <p>圆环只保留「离中心不超过半径」的外缘点，笔画只向四周扩出一像素，
+     * 不至于把空隙糊住。中心点（0,0）始终包含，保证字形本身不被稀释。
+     *
+     * <p>MC 的字形是位图，偏移必须整像素：任何半点偏移都会落到纹素之间，
+     * 触发线性过滤产生颗粒和锯齿。
+     */
+    /**
+     * 字重对应的格式化前缀。
+     *
+     * <p>MC 的 {@code Style} 自带 {@code isBold()}，字体管线在
+     * {@code Font.prepareText} 里对每个字形读取
+     * {@code glyphInfo.getBoldOffset()} 并据此计算笔画宽度；
+     * {@code splitter} 也用 {@code info().getAdvance(bold)} 取宽度，
+     * 所以加粗**连字距都是正确的**。
+     *
+     * <p>先前我们自己按像素偏移重复绘制同一字形来「模拟」加粗，
+     * 那是错误层级上的做法：绕过了字体管线的度量，只能得到错位的副本，
+     * 既不改字距也不改字形，只会出现重影和颗粒。
+     *
+     * <p>用 {@code §l} 开启加粗后必须补 {@code §r} 复位，
+     * 否则样式会渗到后续文本，整行都变粗。
+     */
+    private static String stylePrefix(Weight weight) {
+        return weight == Weight.REGULAR ? "" : "\u00a7l";
+    }
+
+    /** 复位后缀；无样式时为空串。 */
+    private static String styleSuffix(Weight weight) {
+        return weight == Weight.REGULAR ? "" : "\u00a7r";
+    }
+
+
+
+    /** 第 i 个字占用的宽度；末字取到行尾。 */
+    private static float charWidthAt(int[] charStarts, int index, int lineWidth) {
+        if (index + 1 < charStarts.length) {
+            return Math.max(0f, charStarts[index + 1] - charStarts[index]);
+        }
+        return Math.max(0f, lineWidth - charStarts[index]);
+    }
+
     /** 不支持裁剪时的降级：按整单元覆盖，至少保证逐字推进可见。 */
     private void drawByWholeUnit(Painter painter, LyricLine line, String visible,
-                                 int textX, int textY, float sungWidth) {
+                                 int textX, int textY, float sungWidth, float opacity) {
+        // 无论唱到哪，整行都要先以歌词色画出来。
+        //
+        // 单层架构靠蒙版压暗未唱区，而这条分支的平台没有裁剪能力、
+        // 也就垫不上蒙版；若这里不整行画一次，未唱的字会完全消失，
+        // 歌词变成「一个字一个字凭空冒出来」。
+        int textColor = withAlpha(sungColor(), Math.round(255f * opacity));
+        // 显式传 shadow：四参 drawText 在平台层把阴影写死为 true，
+        // 关闭阴影后这条路径仍会画出阴影，表现为「关了但是没关」。
+        painter.drawText(visible, textX, textY, textColor, style.shadow());
+
+        int sungColor = textColor;
         List<LyricWord> words = line.words();
         if (words.size() <= 1) {
             if (sungWidth >= painter.textWidth(visible) - 0.5f) {
-                painter.drawText(visible, textX, textY, COLOR_SUNG);
+                painter.drawText(visible, textX, textY, sungColor, style.shadow());
             }
             return;
         }
@@ -738,7 +1942,7 @@ public final class FloatingLyricRenderer {
             if (cursor + partWidth > sungWidth + 0.5f) {
                 break;
             }
-            painter.drawText(part, textX + cursor, textY, COLOR_SUNG);
+            painter.drawText(part, textX + cursor, textY, sungColor, style.shadow());
             cursor += partWidth;
             consumed += available;
         }
@@ -835,6 +2039,12 @@ public final class FloatingLyricRenderer {
         }
         if (deltaNanos <= 0L) {
             return current;
+        }
+        // 指数逼近永远到不了终点：差值按比例缩小后会在亚像素处停滞。
+        // 行尾因此永久残留一条几像素的暗边，看起来像「永远差一个字没唱完」。
+        // 差得足够小就直接吸附，视觉上无跳变。
+        if (Math.abs(target - current) < SNAP_EPSILON_PX) {
+            return target;
         }
         double dt = deltaNanos / 1_000_000_000.0;
         // 单帧上限，防止长时间卡顿后一步跳到底
@@ -999,5 +2209,20 @@ public final class FloatingLyricRenderer {
 
     private static int withAlpha(int color, int alpha) {
         return (color & 0x00FFFFFF) | ((alpha & 0xFF) << 24);
+    }
+
+    /**
+     * 在颜色已有 alpha 的基础上再乘一个系数。
+     *
+     * <p>羽化梯度与行级不透明度都必须生效：前者负责前沿那几个像素的溶开，
+     * 后者负责整行在切换过程中的明暗。若直接覆盖 alpha，
+     * 过渡期间羽化就会失效，前沿重新变成硬切。
+     *
+     * @param weight 0..255 的权重，255 保持原色
+     */
+    private static int scaleAlpha(int color, int weight) {
+        int base = (color >>> 24) & 0xFF;
+        int scaled = Math.round(base * (weight / 255f));
+        return withAlpha(color, Math.max(0, Math.min(255, scaled)));
     }
 }

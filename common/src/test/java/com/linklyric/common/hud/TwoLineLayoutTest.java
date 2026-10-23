@@ -50,13 +50,14 @@ class TwoLineLayoutTest {
             sleep();
         }
 
-        List<String> drawn = painter.texts;
-        assertTrue(drawn.stream().anyMatch(t -> t.contains(L1)),
-                "应画出当前句，实际=" + drawn);
-        assertTrue(drawn.stream().anyMatch(t -> t.contains(L2)),
-                "应画出下一句作为副行，实际=" + drawn);
-        assertFalse(drawn.stream().anyMatch(t -> t.contains(L3)),
-                "不应显示下下句，实际=" + drawn);
+        // 主行是逐字绘制的，所以不能靠「整串文本出现在一次 drawText 里」判断。
+        // 副行（第 2 行起）是整串绘制，可以直接匹配。
+        String drawnAll = String.join("", painter.texts);
+        assertTrue(drawnAll.contains(L1), "应画出当前句，实际=" + drawnAll);
+        assertTrue(painter.texts.stream().anyMatch(t -> t.contains(L2)),
+                "应画出下一句作为副行（整串绘制），实际=" + painter.texts);
+        assertFalse(painter.texts.stream().anyMatch(t -> t.contains(L3)),
+                "默认 2 行时不应显示下下句，实际=" + painter.texts);
     }
 
     /** 副行必须在主行下方，不能重叠。 */
@@ -81,11 +82,19 @@ class TwoLineLayoutTest {
             sleep();
         }
 
-        assertTrue(yOf.containsKey("主行") && yOf.containsKey("副行"),
-                "两行都应被绘制，实际=" + yOf);
-        assertTrue(yOf.get("副行") > yOf.get("主行"),
-                "副行应在主行下方，实际 主=" + yOf.get("主行")
-                        + " 副=" + yOf.get("副行"));
+        // 主行逐字绘制，取任一单字的位置作为主行基线。
+        int mainY = Integer.MIN_VALUE;
+        for (int k = 0; k < painter.texts.size(); k++) {
+            if (painter.texts.get(k).length() == 1
+                    && L1.contains(painter.texts.get(k))) {
+                mainY = painter.ys.get(k);
+                break;
+            }
+        }
+        assertTrue(mainY != Integer.MIN_VALUE, "应画出主行逐字内容");
+        assertTrue(yOf.containsKey("副行"), "应画出副行，实际=" + yOf);
+        assertTrue(yOf.get("副行") > mainY,
+                "副行应在主行下方，实际 主=" + mainY + " 副=" + yOf.get("副行"));
     }
 
     /** 最后一句没有下一句时，副行改为显示翻译（若有）。 */
@@ -101,8 +110,8 @@ class TwoLineLayoutTest {
             sleep();
         }
 
-        assertTrue(painter.texts.stream().anyMatch(t -> t.contains(L3)),
-                "末句应正常显示，实际=" + painter.texts);
+        String all = String.join("", painter.texts);
+        assertTrue(all.contains(L3), "末句应正常显示，实际=" + all);
     }
 
     /** 行切换应给出渐进的中间位移，而非瞬间跳到位。 */
@@ -127,19 +136,33 @@ class TwoLineLayoutTest {
         }
 
         assertFalse(mainYs.isEmpty(), "应采到新主行位置");
+        // 切换是「旧主行先消失，其余行再上移一行补位」，因此新主行
+        // 必然有一段纵向位移过程：从下一行位置升到块顶。
+        //
+        // 位移只发生一次、单向向上，不会来回跳，也不会与旧行擦身而过——
+        // 旧行在位移开始前就已淡出完毕。
         long distinct = mainYs.stream().distinct().count();
         assertTrue(distinct >= 2,
-                "新主行位置应有过渡过程，实际取值=" + mainYs);
+                "新主行应有上移补位的过渡过程，实际取值=" + mainYs);
+
+        // 位移必须单调向上（y 递减），不能出现回落。
+        for (int i = 1; i < mainYs.size(); i++) {
+            assertTrue(mainYs.get(i) <= mainYs.get(i - 1),
+                    "上移过程中 y 应单调不增，实际=" + mainYs);
+        }
     }
 
     /**
-     * 抬升必须是固定 5px。
+     * 抬升幅度必须是 {@code round(字号 × 0.1)}。
      *
      * <p>刻意用单行时间轴：有副行时主行位置还叠加了行切换偏移（最多 12px），
      * 两者混在一起量不出抬升本身。
+     *
+     * <p>取值来自 Salt Player 的 {@code floatUpPercentage = 0.1f}。
+     * 测试替身的字号是 9px，故峰值应为 1px（旧实现的写死 5px 已废弃）。
      */
     @Test
-    void 抬升固定五像素() {
+    void 抬升幅度为字号的百分之十() {
         LyricTimeline single = new LyricTimeline(List.of(line(L1, 0L, 7_000L)));
 
         RecordingPainter painter = new RecordingPainter();
@@ -180,7 +203,9 @@ class TwoLineLayoutTest {
             sleep();
         }
 
-        assertEquals(5, peak, "抬升应为固定 5px，实际=" + peak);
+        // 9px 字号 × 0.12 = 1.08，roundToInt 得 1。
+        assertTrue(peak == 1,
+                "峰值抬升应为 round(9 × 0.12) = 1，实际=" + peak);
     }
 
     private static LyricLine line(String text, long start, long end) {
@@ -311,6 +336,24 @@ class TwoLineLayoutTest {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
+            texts.add(text);
+        }
+
+        /**
+         * 逐字绘制走五参重载，必须一并记录。
+         *
+         * <p>只重写四参 {@code drawText} 收不到主行：主行调用的是五参
+         * {@code drawTextLifted}，其默认实现转发到五参 {@code drawText}，
+         * 若替身未重写四参链路的入口就会漏掉。
+         */
+        @Override
+        public void drawText(String text, int x, int y, int color, boolean shadow) {
+            texts.add(text);
+        }
+
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift,
+                                   int color, boolean shadow) {
             texts.add(text);
             xs.add(x);
             ys.add(y);

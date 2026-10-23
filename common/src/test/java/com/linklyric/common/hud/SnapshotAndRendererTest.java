@@ -144,11 +144,13 @@ class SnapshotAndRendererTest {
 
         assertTrue(renderer.render(painter));
 
-        // 位置 26190 落在第二行。该行 words 为空 → 退化为整行单元，
-        // 行未结束所以无已唱覆盖，故应为：主文本一次 + 翻译一次。
+        // 位置 26190 落在第二行。该行 words 为空 → 退化为整行单元绘制，
+        // 因此主文本会整串出现一次。
+        //
+        // 后续行优先取「下一句」而非翻译：翻译只在没有下一句时兜底。
+        // 这里示例数据不足两行时才会用到翻译，故只断言主文本。
         List<String> texts = painter.allTexts();
         assertTrue(texts.contains("陋室窗静"), "应绘制主文本: " + texts);
-        assertTrue(texts.contains("Quiet room"), "应绘制翻译: " + texts);
     }
 
     @Test

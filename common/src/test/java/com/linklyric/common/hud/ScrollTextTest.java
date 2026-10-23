@@ -65,9 +65,23 @@ class ScrollTextTest {
             r2.render(late);
             sleep();
         }
-        int shiftedX = late.textXs.get(late.textXs.size() - 1);
-        assertTrue(shiftedX < centerX - viewWidth / 2,
-                "演唱越过中点后应左移，实际 x=" + shiftedX);
+        // 滚动生效的证据不是「某个绘制坐标小于视口左边界」——
+        // 已经滚出视口的字根本不会被绘制，可见坐标必然 >= 视口左边界。
+        //
+        // 真正的判据是「行首字被推出视口」：滚动后最早可见的字
+        // 不再是第一个字。这里用采样坐标数少于总字数来间接体现，
+        // 并直接校验最左可见坐标贴着视口左边界。
+        int viewportLeft = centerX - viewWidth / 2;
+        int shiftedX = late.textXs.stream().mapToInt(Integer::intValue).min()
+                .orElse(Integer.MAX_VALUE);
+        assertTrue(shiftedX >= viewportLeft,
+                "可见字不应画到视口左侧之外，实际最左 x=" + shiftedX
+                        + " 视口左=" + viewportLeft);
+        assertTrue(late.textXs.size() < 60,
+                "滚动后应有字被推出视口而不再绘制，实际绘制次数="
+                        + late.textXs.size());
+        assertTrue(shiftedX <= viewportLeft + 2,
+                "滚动到位后最左可见字应贴着视口左边界，实际 x=" + shiftedX);
     }
 
     /** 滚动量必须在 [视口左边界, 0] 内，不能把文本推出面板。 */
@@ -88,7 +102,9 @@ class ScrollTextTest {
         int viewWidth = (int) (480 * 0.72f);
         int lineWidth = painter.textWidth(text);
         int viewportLeft = 480 / 2 - viewWidth / 2;
-        int x = painter.textXs.get(painter.textXs.size() - 1);
+        // 取最小 x：逐字绘制会画很多字，且会跳过滚出视口的字。
+        int x = painter.textXs.stream().mapToInt(Integer::intValue).min()
+                .orElse(Integer.MAX_VALUE);
 
         // 文本右端不能早于视口右端，否则行尾会留白
         assertTrue(x + lineWidth >= viewportLeft + viewWidth - 1,
@@ -216,6 +232,28 @@ class ScrollTextTest {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
+            texts.add(text);
+            textXs.add(x);
+        }
+
+        @Override
+        public void drawText(String text, int x, int y, int color, boolean shadow) {
+            texts.add(text);
+            textXs.add(x);
+        }
+
+        /**
+         * 逐字绘制走这个重载。
+         *
+         * <p>只重写四参 {@code drawText} 收不到主行数据：
+         * 五参 {@code drawTextLifted} 的默认实现会转调四参 {@code drawTextLifted}，
+         * 再转调四参 {@code drawText}，但主行实际调用的是**五参**版本，
+         * 它默认只转发到四参 {@code drawTextLifted}，若该重载也被重写就断了链。
+         * 这里直接记录，保证滚动测试能采到坐标。
+         */
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift,
+                                   int color, boolean shadow) {
             texts.add(text);
             textXs.add(x);
         }

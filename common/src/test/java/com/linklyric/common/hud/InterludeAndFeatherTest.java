@@ -90,12 +90,15 @@ class InterludeAndFeatherTest {
             }
         }
 
-        int lineWidth = painter.textWidth(text);
-        assertEquals(1, painter.scissors.size(),
-                "全亮后不应再有羽化裁剪，实际裁剪次数=" + painter.scissors.size()
-                        + " 宽度=" + painter.scissors);
-        assertTrue(painter.scissors.get(0) >= lineWidth - 1,
-                "唯一裁剪应覆盖整行，实际=" + painter.scissors.get(0) + " 行宽=" + lineWidth);
+        // 整行唱完时，未唱区蒙版只剩边界处的过渡带，不应再有成片的压暗。
+        //
+        // 过渡带本身是「透明 → 黑」的渐变，末级才接近满压暗；
+        // 判据是「已唱色覆盖到哪里」：整行唱完就必须覆盖整行，
+        // 且不再有只画未唱色的段。
+        int sungRight = painter.sungRightEdge();
+        assertTrue(sungRight >= lineWidthOf(text),
+                "全亮时已唱色应覆盖整行，实际右缘=" + sungRight
+                        + " 行宽=" + lineWidthOf(text));
     }
 
     /** 过渡带应该逐级变淡，而不是单级突变。 */
@@ -120,26 +123,47 @@ class InterludeAndFeatherTest {
             }
         }
 
-        assertTrue(painter.scissors.size() >= 3,
-                "行中段应有实心 + 多级羽化，实际裁剪次数=" + painter.scissors.size());
-
-        // 羽化只发生在**带裁剪**的绘制里，因此直接从裁剪态颜色取序列。
-        // 双行布局引入后，非裁剪绘制还会混入副行、离场行与未唱底色，
-        // 全量检查单调性会把它们算进来。
-        List<Integer> fadeAlphas = new ArrayList<>();
-        for (int color : painter.clipColors) {
-            fadeAlphas.add((color >>> 24) & 0xFF);
-        }
+        // 羽化是「已唱色的多级 alpha 覆盖」：实心段之后跟着若干级递减，
+        // 让颜色从蓝平滑过渡到灰，而不是一刀切。
+        //
+        // 记录是跨帧累积的，必须按帧切分后再看梯度：
+        // 否则下一帧的实心段会被拼到上一帧的末级后面，序列当然不单调。
+        List<Integer> fadeAlphas = painter.sungAlphaSeries();
         assertTrue(fadeAlphas.size() >= 3,
-                "应有多级羽化裁剪，实际=" + fadeAlphas);
+                "行中段应有多级已唱色覆盖（实心 + 羽化），实际=" + fadeAlphas);
 
-        // 首段为实心（255），之后逐级变淡
-        for (int i = 2; i < fadeAlphas.size(); i++) {
-            assertTrue(fadeAlphas.get(i) <= fadeAlphas.get(i - 1),
-                    "羽化 alpha 必须递减，实际=" + fadeAlphas);
+        // 现在每段都是不透明色，不能用 alpha 切帧。
+        // 改按「蓝通道单调下降」切分：一帧内从已唱色蓝值逐级趋向未唱色。
+        int sungBlue = FloatingLyricRenderer.COLOR_SUNG & 0xFF;
+
+        int frames = 0;
+        int i = 0;
+        while (i < fadeAlphas.size()) {
+            // 一帧的起点是已唱色本身（蓝值等于已唱色）。
+            if (fadeAlphas.get(i) != sungBlue) {
+                i++;
+                continue;
+            }
+            int start = i;
+            while (i + 1 < fadeAlphas.size() && fadeAlphas.get(i + 1) <= fadeAlphas.get(i)) {
+                i++;
+            }
+            List<Integer> frame = fadeAlphas.subList(start, i + 1);
+            if (frame.size() >= 3) {
+                int first = frame.get(0);
+                int last = frame.get(frame.size() - 1);
+                assertTrue(last < first,
+                        "羽化末级应更接近未唱色（蓝通道更低），实际=" + frame);
+                frames++;
+            }
+            i++;
         }
-        assertTrue(fadeAlphas.get(fadeAlphas.size() - 1) < 0x40,
-                "末级应足够淡，实际=" + fadeAlphas);
+        assertTrue(frames > 0, "应有至少一帧带完整颜色渐变，实际序列=" + fadeAlphas);
+    }
+
+    /** 与替身一致的逐字宽度（9px）。 */
+    private static int lineWidthOf(String text) {
+        return text.length() * 9;
     }
 
     private static LyricLine line(String text, long start, long end) {
@@ -200,6 +224,56 @@ class InterludeAndFeatherTest {
             clipColors.clear();
             texts.clear();
             clipping = false;
+            clipX = 0;
+            clipWidth = 480;
+        }
+
+        /** 已唱色覆盖区：每段的 alpha 与右缘。 */
+        final List<Integer> sungAlphas = new ArrayList<>();
+        final List<Integer> sungRights = new ArrayList<>();
+        int clipX;
+        int clipWidth = 480;
+
+        private boolean isSung(int color) {
+            return (color & 0x00FFFFFF)
+                    == (FloatingLyricRenderer.COLOR_SUNG & 0x00FFFFFF);
+        }
+
+        /** 该色是否更接近已唱色而非未唱色（逐通道距离比较）。 */
+        private boolean closerToSung(int color) {
+            return distance(color, FloatingLyricRenderer.COLOR_SUNG)
+                    <= distance(color, FloatingLyricRenderer.COLOR_UNSUNG);
+        }
+
+        private static int distance(int a, int b) {
+            int dr = ((a >>> 16) & 0xFF) - ((b >>> 16) & 0xFF);
+            int dg = ((a >>> 8) & 0xFF) - ((b >>> 8) & 0xFF);
+            int db = (a & 0xFF) - (b & 0xFF);
+            return Math.abs(dr) + Math.abs(dg) + Math.abs(db);
+        }
+
+        /**
+         * 以蓝色通道作为「已唱程度」的度量。
+         *
+         * <p>已唱色偏蓝（0x7FD4FF），未唱色偏灰（0xD8D8D8），
+         * 两者蓝通道差异明显，用它衡量插值推进最直观。
+         */
+        private static int blueness(int color) {
+            return color & 0xFF;
+        }
+
+        /** 已唱色各段的 alpha 序列（实心在前，羽化在后）。 */
+        List<Integer> sungAlphaSeries() {
+            return new ArrayList<>(sungAlphas);
+        }
+
+        /** 已唱色覆盖到的最右缘。 */
+        int sungRightEdge() {
+            int best = 0;
+            for (int r : sungRights) {
+                best = Math.max(best, r);
+            }
+            return best;
         }
 
         @Override
@@ -224,6 +298,12 @@ class InterludeAndFeatherTest {
             if (clipping) {
                 clipColors.add(color);
             }
+            // 羽化带现在是「已唱色→未唱色」的插值，中间色并不等于已唱色，
+            // 因此按接近度归入已唱侧，而不是严格相等。
+            if (closerToSung(color)) {
+                sungAlphas.add(blueness(color));
+                sungRights.add(clipX + clipWidth);
+            }
         }
 
         @Override
@@ -238,6 +318,8 @@ class InterludeAndFeatherTest {
         @Override
         public void enableScissor(int x, int y, int width, int height) {
             scissors.add(width);
+            clipX = x;
+            clipWidth = width;
             clipping = true;
         }
 

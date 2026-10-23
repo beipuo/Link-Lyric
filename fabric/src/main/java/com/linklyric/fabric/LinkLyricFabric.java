@@ -2,8 +2,12 @@ package com.linklyric.fabric;
 
 import com.linklyric.common.bridge.BridgePlaybackSource;
 import com.linklyric.common.hud.FloatingLyricRenderer;
+import com.linklyric.common.config.LayoutConfig;
+import com.linklyric.common.hud.LyricDragController;
 import net.fabricmc.api.ClientModInitializer;
+import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -27,15 +31,25 @@ public final class LinkLyricFabric implements ClientModInitializer {
 
     private static BridgePlaybackSource source;
     private static FloatingLyricRenderer renderer;
+    private static LyricDragController dragController;
 
     @Override
     public void onInitializeClient() {
         source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT);
         source.start();
         renderer = new FloatingLyricRenderer(source);
+
+        // 位置持久化到 config 目录：换存档、换分辨率都跟着玩家走。
+        LayoutConfig layout = LayoutConfig.load(
+                FabricLoader.getInstance().getConfigDir());
+        dragController = new LyricDragController(renderer, layout);
         LOGGER.info("[Link Lyric] 数据源已启动，目标 127.0.0.1:{}", BRIDGE_PORT);
 
         HudRenderCallback.EVENT.register(LinkLyricFabric::onHudRender);
+
+        // 指令需要客户端命令源：位置是本机显示偏好，服务端无对应状态。
+        ClientCommandRegistrationCallback.EVENT.register((dispatcher, registry) ->
+                FabricLyricCommand.register(dispatcher, dragController));
 
         // 关闭游戏时停掉轮询线程，避免守护线程持有连接
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -60,6 +74,51 @@ public final class LinkLyricFabric implements ClientModInitializer {
         renderer.render(new GuiPainter(graphics, client));
     }
 
+    /**
+     * 把 {@link GuiGraphics} 适配成渲染器需要的绘制接口。
+     *
+     * <p>HUD 与位置调整界面共用同一份适配，避免两处绘制参数走样。
+     */
+    static FloatingLyricRenderer.Painter painterFor(GuiGraphics graphics, Minecraft client) {
+        return new GuiPainter(graphics, client);
+    }
+
+    /**
+     * 打开位置调整界面。
+     *
+     * <p>必须开界面而不是在 HUD 上直接操作：HUD 状态下光标被锁在窗口中心，
+     * 玩家既看不见指针也无法按住拖动。
+     */
+    /** 供配置界面取用控制器。 */
+    static LyricDragController controller() {
+        return dragController;
+    }
+
+    /** 供配置界面取用渲染器。 */
+    static FloatingLyricRenderer renderer() {
+        return renderer;
+    }
+
+    static void openConfigScreen() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || renderer == null || dragController == null) {
+            return;
+        }
+        renderer.setPreviewForced(true);
+        dragController.enable();
+        client.setScreen(new LyricConfigScreen(renderer, dragController, null));
+    }
+
+    static void openLocationScreen() {
+        Minecraft client = Minecraft.getInstance();
+        if (client == null || renderer == null || dragController == null) {
+            return;
+        }
+        // 进入前先确保歌词可见，否则调位置时是一片空白。
+        dragController.enable();
+        client.setScreen(new LyricLocationScreen(renderer, dragController, null));
+    }
+
     /** {@link GuiGraphics} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
     private record GuiPainter(GuiGraphics graphics, Minecraft client)
             implements FloatingLyricRenderer.Painter {
@@ -81,8 +140,106 @@ public final class LinkLyricFabric implements ClientModInitializer {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
-            // 末尾两个参数：是否投影、是否应用背景色。投影可提升在亮场景下的可读性。
-            graphics.drawString(client.font, text, x, y, color, true);
+            drawText(text, x, y, color, true);
+        }
+
+        @Override
+        public void drawText(String text, int x, int y, int color, boolean shadow) {
+            // 末两个参数：是否投影、是否应用背景色。投影提升亮场景下的可读性。
+            graphics.drawString(client.font, text, x, y, color, shadow);
+        }
+
+        /**
+         * 亚像素抬升。
+         *
+         * <p>位移取整到整像素，**不能**用浮点平移。
+         *
+         * <p>MC 的字体是位图图集，按整像素对齐取样。若把字形平移到半像素上，
+         * 采样点落在纹素之间，会触发线性过滤，笔画边缘出现颗粒与锯齿，
+         * 细笔画还会因为两侧都采到半透明值而黏连变糊——
+         * 看起来像低分辨率放大。取整后每个字形都落在整数格点上，
+         * 边缘与图集原样一致。
+         *
+         * <p>代价是抬升在 0/1 像素之间跳变。但抬升幅度本身就只有 1px，
+         * 且由时间驱动的连续宽度算出，观感上仍是平滑推进，
+         * 清晰度比那半个像素的平滑更值得。
+         */
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift,
+                                   int color, boolean shadow) {
+            int dy = Math.round(lift);
+            if (dy == 0) {
+                drawText(text, x, y, color, shadow);
+                return;
+            }
+            graphics.drawString(client.font, text, x, y - dy, color, shadow);
+        }
+
+        /**
+         * 缩放绘制副行。
+         *
+         * <p>以左上角为原点缩放，再把坐标乘回去，使 {@code x}/{@code y}
+         * 仍然表示未缩放时的锚点，调用方不必做逆变换。
+         */
+        @Override
+        public void drawTextScaled(String text, int x, int y, float scale,
+                                   int color, boolean shadow) {
+            if (scale == 1f) {
+                drawText(text, x, y, color, shadow);
+                return;
+            }
+            var pose = graphics.pose();
+            pose.pushPose();
+            pose.translate(x, y, 0f);
+            pose.scale(scale, scale, 1f);
+            pose.translate(-x, -y, 0f);
+            graphics.drawString(client.font, text, x, y, color, shadow);
+            pose.popPose();
+        }
+
+        @Override
+        public int textWidthScaled(String text, float scale) {
+            return Math.round(client.font.width(text) * scale);
+        }
+
+        /**
+         * 真实行高，供裁剪区留足空间。
+         *
+         * <p>不能用渲染器的常量：中文走 fallback 字体，字形比拉丁字母高，
+         * 按写死的行高裁剪会把中文的下缘（尤其是阴影）切掉。
+         * 这正是「英文有阴影、中文没有」的来源。
+         */
+        @Override
+        public int lineHeight() {
+            // 加 2 像素容纳阴影偏移与字形下缘的留白。
+            return client.font.lineHeight + 2;
+        }
+
+        /** 把原版 PoseStack 适配成 common 的极简变换栈。 */
+        @Override
+        public FloatingLyricRenderer.Pose2D pose() {
+            var stack = graphics.pose();
+            return new FloatingLyricRenderer.Pose2D() {
+                @Override
+                public void pushPose() {
+                    stack.pushPose();
+                }
+
+                @Override
+                public void popPose() {
+                    stack.popPose();
+                }
+
+                @Override
+                public void translate(float x, float y) {
+                    stack.translate(x, y, 0f);
+                }
+
+                @Override
+                public void scale(float x, float y) {
+                    stack.scale(x, y, 1f);
+                }
+            };
         }
 
         @Override

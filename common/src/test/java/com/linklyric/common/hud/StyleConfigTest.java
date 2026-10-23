@@ -1,0 +1,236 @@
+package com.linklyric.common.hud;
+
+import com.linklyric.common.config.LayoutConfig;
+import com.linklyric.common.config.LyricOptions;
+import com.linklyric.common.style.LyricStyleConfig;
+import org.junit.jupiter.api.Test;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * 样式配置与配置界面的行为约束。
+ *
+ * <p>重点在「越界不崩、旧配置不丢、实时生效」三件事——
+ * 这三处一旦退化，表现分别是画面异常、升级后设置丢失、以及改了没反应。
+ */
+class StyleConfigTest {
+
+    /** 越界值必须夹到合法区间，而不是原样接受。 */
+    @Test
+    void 越界值被夹紧() {
+        LyricStyleConfig s = new LyricStyleConfig(
+                0xFFFFFFFF, 0xFF000000, 0xFF888888,
+                99_999, 99_999, 99f, 99f, true,
+                null, null, true, 2, null, 1f);
+
+        assertEquals(LyricStyleConfig.MAX_OFFSET_MS, s.offsetMs());
+        assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, s.lineTransitionMs());
+        assertEquals(LyricStyleConfig.MAX_LINE_SCALE, s.lineScale());
+        assertEquals(LyricStyleConfig.MAX_WIDTH_RATIO, s.maxWidthRatio());
+    }
+
+    /** 负数侧同样要夹紧。 */
+    @Test
+    void 负向越界被夹紧() {
+        LyricStyleConfig s = LyricStyleConfig.DEFAULT
+                .withOffsetMs(-99_999)
+                .withLineScale(-5f);
+
+        assertEquals(LyricStyleConfig.MIN_OFFSET_MS, s.offsetMs());
+        assertEquals(LyricStyleConfig.MIN_LINE_SCALE, s.lineScale());
+    }
+
+    /** 时间偏移必须真的作用到渲染位置：正偏移让歌词提前，即同一时刻唱得更多。 */
+    @Test
+    void 正时间偏移让歌词提前() {
+        FloatingLyricRenderer early = rendererWithOffset(500);
+        FloatingLyricRenderer normal = rendererWithOffset(0);
+
+        early.render(new NullPainter());
+        normal.render(new NullPainter());
+
+        assertTrue(early.currentSungWidth() > normal.currentSungWidth(),
+                "正偏移应更早唱到，实际 early=" + early.currentSungWidth()
+                        + " normal=" + normal.currentSungWidth());
+    }
+
+    private static FloatingLyricRenderer rendererWithOffset(int offsetMs) {
+        FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
+        r.setStyle(LyricStyleConfig.DEFAULT.withOffsetMs(offsetMs));
+        return r;
+    }
+
+    /** 关闭羽化不应报错，且不应影响唱到宽度。 */
+    @Test
+    void 关闭羽化仍能渲染() {
+        FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
+        r.setStyle(LyricStyleConfig.DEFAULT.withFeather(false));
+        RecordingPainter p = new RecordingPainter();
+        r.render(p);
+
+        assertTrue(p.textCount > 0, "应仍绘制文字");
+    }
+
+    /** 样式与位置必须一起持久化，互不覆盖。 */
+    @Test
+    void 样式与位置独立保存() throws Exception {
+        Path dir = Files.createTempDirectory("linklyric-style");
+        LayoutConfig config = LayoutConfig.load(dir);
+
+        config.save(30, -12, true, LyricStyleConfig.DEFAULT.withSungColor(0xFFFF0000));
+        config.saveStyle(LyricStyleConfig.DEFAULT.withUnsungColor(0xFF00FF00));
+
+        LayoutConfig reloaded = LayoutConfig.load(dir);
+        assertEquals(30, reloaded.offsetX(), "位置不应被样式保存覆盖");
+        assertEquals(-12, reloaded.offsetY(), "位置不应被样式保存覆盖");
+        assertEquals(0xFF00FF00, reloaded.style().unsungColor(), "样式应更新");
+    }
+
+    /** 旧配置文件缺少样式键时，样式必须回落到默认值而不是坏值。 */
+    @Test
+    void 旧配置样式回落默认() throws Exception {
+        Path dir = Files.createTempDirectory("linklyric-oldstyle");
+        Files.writeString(dir.resolve("linklyric-layout.properties"),
+                "offsetX=5\noffsetY=5\nenabled=true\n");
+
+        LyricStyleConfig style = LayoutConfig.load(dir).style();
+        assertEquals(LyricStyleConfig.DEFAULT.sungColor(), style.sungColor());
+        assertEquals(LyricStyleConfig.DEFAULT.lineTransitionMs(), style.lineTransitionMs());
+    }
+
+    /** 十六进制与十进制两种颜色写法都要能读。 */
+    @Test
+    void 颜色两种写法都可读() throws Exception {
+        Path dir = Files.createTempDirectory("linklyric-color");
+        Files.writeString(dir.resolve("linklyric-layout.properties"),
+                "sungColor=#FF102030\nunsungColor=-16777216\n");
+
+        LyricStyleConfig style = LayoutConfig.load(dir).style();
+        assertEquals(0xFF102030, style.sungColor(), "应支持 #AARRGGBB");
+        assertEquals(0xFF000000, style.unsungColor(), "应支持十进制");
+    }
+
+    /** 滑条映射必须往返一致，否则一拖就漂移。 */
+    @Test
+    void 滑条映射往返一致() {
+        for (LyricOptions.Option option : LyricOptions.Option.values()) {
+            for (int raw : new int[]{option.min, (option.min + option.max) / 2, option.max}) {
+                LyricStyleConfig s = option.write(LyricStyleConfig.DEFAULT, 0d);
+                s = option.write(s, (raw - option.min) / (double) (option.max - option.min));
+                assertEquals(raw, option.readRaw(s),
+                        option + " 在 " + raw + " 处往返不一致");
+            }
+        }
+    }
+
+    /** 通道微调必须夹在 0..255，不能溢出成反向颜色。 */
+    @Test
+    void 通道微调不溢出() {
+        int white = 0xFFFFFFFF;
+        int brighter = LyricOptions.shiftChannel(white, LyricOptions.Channel.RED, 32);
+        assertEquals(0xFFFF0000 | (white & 0x0000FFFF), brighter, "255 再加仍是 255");
+
+        int black = 0xFF000000;
+        int darker = LyricOptions.shiftChannel(black, LyricOptions.Channel.BLUE, -32);
+        assertEquals(0xFF000000, darker, "0 再减仍是 0");
+    }
+
+    /** 数据源开关应持久化，重启后保持禁用。 */
+    @Test
+    void 数据源开关持久化() throws Exception {
+        Path dir = Files.createTempDirectory("linklyric-source");
+        LayoutConfig config = LayoutConfig.load(dir);
+
+        config.saveSourceEnabled("salt-player", false);
+        assertTrue(LayoutConfig.load(dir).isSourceDisabled("salt-player"),
+                "禁用状态应落盘");
+
+        config.saveSourceEnabled("salt-player", true);
+        assertFalse(LayoutConfig.load(dir).isSourceDisabled("salt-player"),
+                "重新启用后应清除禁用记录");
+    }
+
+    /** 禁用数据源后渲染器应停止出画。 */
+    @Test
+    void 禁用数据源后不出画() {
+        TestFeeds.Toggleable feed = new TestFeeds.Toggleable();
+        FloatingLyricRenderer r = new FloatingLyricRenderer(feed);
+        RecordingPainter p = new RecordingPainter();
+        assertTrue(r.render(p), "启用时应出画");
+
+        feed.setEnabled(false);
+        RecordingPainter after = new RecordingPainter();
+        assertFalse(r.render(after), "禁用后不应出画");
+    }
+
+    private static final class NullPainter implements FloatingLyricRenderer.Painter {
+        @Override
+        public int screenWidth() {
+            return 400;
+        }
+
+        @Override
+        public int screenHeight() {
+            return 300;
+        }
+
+        @Override
+        public int textWidth(String text) {
+            return text == null ? 0 : text.length() * 9;
+        }
+
+        @Override
+        public void drawText(String text, int x, int y, int color) {
+        }
+
+        @Override
+        public void fillRect(int x, int y, int width, int height, int color) {
+        }
+    }
+
+    private static final class RecordingPainter implements FloatingLyricRenderer.Painter {
+        int textCount;
+
+        @Override
+        public int screenWidth() {
+            return 400;
+        }
+
+        @Override
+        public int screenHeight() {
+            return 300;
+        }
+
+        @Override
+        public int textWidth(String text) {
+            return text == null ? 0 : text.length() * 9;
+        }
+
+        @Override
+        public void drawText(String text, int x, int y, int color) {
+            textCount++;
+        }
+
+        @Override
+        public void fillRect(int x, int y, int width, int height, int color) {
+        }
+
+        @Override
+        public boolean supportsScissor() {
+            return true;
+        }
+
+        @Override
+        public void enableScissor(int x, int y, int width, int height) {
+        }
+
+        @Override
+        public void disableScissor() {
+        }
+    }
+}

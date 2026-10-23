@@ -51,12 +51,12 @@ class DynamicProgressTest {
         FloatingLyricRenderer renderer = new FloatingLyricRenderer(feed);
 
         renderer.render(painter);
-        int first = painter.lastScissorWidth();
+        float first = renderer.currentSungWidth();
 
         Thread.sleep(200L);
         painter.reset();
         renderer.render(painter);
-        int second = painter.lastScissorWidth();
+        float second = renderer.currentSungWidth();
 
         assertTrue(second > first,
                 "位置固定但播放在进行时，已唱宽度必须增长。first=" + first + " second=" + second);
@@ -94,7 +94,7 @@ class DynamicProgressTest {
             Thread.sleep(50L);
             painter.reset();
             renderer.render(painter);
-            int width = painter.lastScissorWidth();
+            int width = Math.round(renderer.currentSungWidth());
             if (previous >= 0 && width <= previous && previous < lineWidth) {
                 stalls++;
             }
@@ -124,12 +124,13 @@ class DynamicProgressTest {
         FloatingLyricRenderer renderer = new FloatingLyricRenderer(feed);
 
         renderer.render(painter);
-        int first = painter.lastScissorWidth();
+        float first = renderer.currentSungWidth();
         Thread.sleep(120L);
         painter.reset();
         renderer.render(painter);
 
-        assertEquals(first, painter.lastScissorWidth(), "暂停时已唱宽度不应变化");
+        assertEquals(first, renderer.currentSungWidth(),
+                "暂停时已唱宽度不应变化");
     }
 
     /** 支持裁剪时，正在唱的字可以只覆盖一部分宽度。 */
@@ -141,9 +142,10 @@ class DynamicProgressTest {
                 new LyricWord("二", 1000, 2000));
         MutableFeed feed = new MutableFeed(new LyricTimeline(List.of(line)), 250L, false);
         ScissorPainter painter = new ScissorPainter();
-        new FloatingLyricRenderer(feed).render(painter);
+        FloatingLyricRenderer renderer = new FloatingLyricRenderer(feed);
+        renderer.render(painter);
 
-        int width = painter.lastScissorWidth();
+        int width = Math.round(renderer.currentSungWidth());
         int wordWidth = painter.textWidth("一");
 
         assertTrue(width > 0, "已开始演唱应有正宽度");
@@ -167,15 +169,21 @@ class DynamicProgressTest {
         assertFalse(painter.sawScissor, "不应尝试调用裁剪");
     }
 
-    /** 底板必须绘制，否则明亮场景下文字不可读。 */
+    /**
+     * 默认不绘制底板。
+     *
+     * <p>底板只在拖动模式出现，作为可拖区域的提示；
+     * 平时留着会压住画面，也违背「不打扰」的默认。
+     */
     @Test
-    void 绘制底板() {
+    void 默认不绘制底板() {
         LyricLine line = lineWithWords("字", 0, 1000, new LyricWord("字", 0, 1000));
         MutableFeed feed = new MutableFeed(new LyricTimeline(List.of(line)), 500L, false);
         ScissorPainter painter = new ScissorPainter();
         new FloatingLyricRenderer(feed).render(painter);
 
-        assertEquals(1, painter.fills, "应绘制一块底板");
+        // 按底板色单独识别，避免把其它矩形填充算进来。
+        assertEquals(0, painter.backdropFills, "默认不应绘制底板");
     }
 
     // ---------------- 替身 ----------------
@@ -219,14 +227,33 @@ class DynamicProgressTest {
 
         void reset() {
             scissorWidths.clear();
+            textOriginX = Integer.MIN_VALUE;
+            sungClipWidth = 0;
+            solidAlpha = 0;
+            currentClipWidth = 400;
         }
         int fills;
+        /** 底板绘制次数。底板是半透明黑且宽度覆盖整行区域。 */
+        int backdropFills;
         boolean sawScissor;
 
-        /** 只关心实心层：它是第一次裁剪，后续裁剪属于羽化过渡。 */
-        int lastScissorWidth() {
-            return scissorWidths.isEmpty() ? 0 : scissorWidths.get(0);
+        /**
+         * 已唱宽度。
+         *
+         * <p>已唱色那一层总被裁剪到「已唱段」，所以记录到的
+         * 已唱色裁剪宽度就是已唱进度；没有裁剪到已唱色说明整行都唱完了。
+         */
+        int sungWidth(int lineWidth) {
+            // 取「已唱色里最宽的裁剪区」即实心段宽度，
+            // 也就是真正的已唱进度；羽化段裁剪区更窄，不影响结果。
+            return sungClipWidth > 0 ? Math.min(sungClipWidth, lineWidth) : 0;
         }
+
+        int textOriginX = Integer.MIN_VALUE;
+        /** 已唱色那层的裁剪宽度。 */
+        int sungClipWidth;
+        /** 本帧已唱色的最高 alpha，用于识别实心段。 */
+        int solidAlpha;
 
         @Override
         public int screenWidth() {
@@ -245,11 +272,31 @@ class DynamicProgressTest {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
+            if (textOriginX == Integer.MIN_VALUE) {
+                textOriginX = x;
+            }
+            // 已唱色那层的绘制宽度就是当前已唱进度
+            if ((color & 0x00FFFFFF)
+                    == (FloatingLyricRenderer.COLOR_SUNG & 0x00FFFFFF)) {
+                // 实心段是 alpha 最高的那一段，取它的裁剪宽度。
+                // 不能简单取最宽裁剪区：整行唱完时没有实心裁剪，
+                // 羽化段会被误认成已唱进度。
+                int alpha = (color >>> 24) & 0xFF;
+                if (alpha > solidAlpha) {
+                    solidAlpha = alpha;
+                    sungClipWidth = currentClipWidth;
+                } else if (alpha == solidAlpha && currentClipWidth > sungClipWidth) {
+                    sungClipWidth = currentClipWidth;
+                }
+            }
         }
 
         @Override
         public void fillRect(int x, int y, int width, int height, int color) {
             fills++;
+            if (color == FloatingLyricRenderer.COLOR_BACKDROP) {
+                backdropFills++;
+            }
         }
 
         @Override
@@ -257,14 +304,19 @@ class DynamicProgressTest {
             return true;
         }
 
+        /** 当前裁剪区宽度；未裁剪时视为整屏。 */
+        int currentClipWidth = 400;
+
         @Override
         public void enableScissor(int x, int y, int width, int height) {
             sawScissor = true;
             scissorWidths.add(width);
+            currentClipWidth = width;
         }
 
         @Override
         public void disableScissor() {
+            currentClipWidth = 400;
         }
     }
 
@@ -273,8 +325,14 @@ class DynamicProgressTest {
         final List<Integer> colors = new ArrayList<>();
         boolean sawScissor;
 
+        /** 只比较 RGB：行切换期间 alpha 会变化，颜色本身不变。 */
         boolean hasColor(int color) {
-            return colors.contains(color);
+            for (int c : colors) {
+                if ((c & 0x00FFFFFF) == (color & 0x00FFFFFF)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override

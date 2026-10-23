@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -64,7 +65,9 @@ class ProgressCurveTest {
             for (int frame = 0; frame < 5; frame++) {
                 painter.reset();
                 renderer.render(painter);
-                last = painter.lastSolid;
+                // 直接读渲染器状态：滚动布局下已唱色的裁剪区会被视口夹紧，
+                // 从绘制指令反推会得到周期性回落的假象。
+                last = renderer.currentSungWidth();
                 Thread.sleep(4L);
             }
             samples.add(last);
@@ -100,8 +103,11 @@ class ProgressCurveTest {
             renderer.render(painter);
             Thread.sleep(4L);
         }
-        assertTrue(painter.lastSolid >= lineWidth * 0.99f,
-                "行结束后应收敛到全亮，实际=" + painter.lastSolid + " 行宽=" + lineWidth);
+        // 超宽行走滚动布局：文本左移后蒙版的绝对坐标不再等于已唱宽度，
+        // 因此这里守「压暗已消失」——满宽时不该再有任何蒙版。
+        assertTrue(renderer.currentSungWidth() >= lineWidth * 0.99f,
+                "行结束后已唱色应覆盖整行，实际=" + renderer.currentSungWidth()
+                        + " 行宽=" + lineWidth);
 
         // 起点必须接近 0：一开始就大段发亮说明进度映射错了
         assertTrue(samples.get(0) <= lineWidth * 0.05f,
@@ -180,9 +186,26 @@ class ProgressCurveTest {
             this.height = height;
         }
 
+        /** 最近一帧的行宽，唱完时没有已唱色裁剪可测。 */
+        int lineWidth;
+        /** 已唱色实心段的裁剪宽度，即已唱进度。 */
+        int sungClipWidth;
+        int currentClipWidth;
+        int solidAlpha;
+
         void reset() {
             lastSolid = 0f;
             scissorCalls = 0;
+            sungClipWidth = 0;
+            solidAlpha = 0;
+            // 未裁剪时记 0，表示「整段可见」；
+            // 若沿用屏幕宽度会被误当成已唱进度。
+            currentClipWidth = 0;
+        }
+
+        /** 已唱宽度：已唱色那层总被裁剪到已唱段，宽度即进度。 */
+        float sungWidth() {
+            return sungClipWidth > 0 ? Math.min(sungClipWidth, lineWidth) : lineWidth;
         }
 
         @Override
@@ -202,6 +225,19 @@ class ProgressCurveTest {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
+            if ((color & 0x00FFFFFF)
+                    == (FloatingLyricRenderer.COLOR_SUNG & 0x00FFFFFF)) {
+                // 只认满 alpha 的实心段：羽化段 alpha 递减，
+                // 混进来会让「已唱宽度」忽大忽小、表现为回退。
+                int alpha = (color >>> 24) & 0xFF;
+                if (alpha > solidAlpha) {
+                    solidAlpha = alpha;
+                    sungClipWidth = currentClipWidth;
+                } else if (alpha == solidAlpha && currentClipWidth > sungClipWidth) {
+                    sungClipWidth = currentClipWidth;
+                }
+                lineWidth = Math.max(lineWidth, textWidth(text));
+            }
         }
 
         @Override
@@ -216,14 +252,12 @@ class ProgressCurveTest {
         @Override
         public void enableScissor(int x, int y, int w, int h) {
             scissorCalls++;
-            // 第一次裁剪是实心已唱层，后续是羽化层
-            if (scissorCalls == 1) {
-                lastSolid = w;
-            }
+            currentClipWidth = w;
         }
 
         @Override
         public void disableScissor() {
+            currentClipWidth = 0;
         }
     }
 }

@@ -19,6 +19,11 @@ neoForge {
         create("client") {
             client()
             gameDirectory = file("run")
+            // 抬升坐标采集：仅 gradle -PdiagLift 时打开，
+            // 平时不写日志，避免每帧刷屏。
+            if (providers.gradleProperty("diagLift").isPresent) {
+                jvmArgument("-Dlinklyric.diagLift=true")
+            }
         }
     }
 
