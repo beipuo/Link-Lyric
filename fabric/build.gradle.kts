@@ -26,6 +26,17 @@ dependencies {
     implementation(project(":common"))
 }
 
+/**
+ * 把 :common 的类直接并入模组 jar。
+ *
+ * <p>只写 {@code implementation(project(":common"))} 是不够的：Gradle 会把它当作
+ * 外部依赖，编译期可见但**不会**进入制品，装进游戏后立刻
+ * {@code NoClassDefFoundError}。这里显式展开依赖的 class 输出。
+ */
+tasks.jar {
+    from(project(":common").sourceSets.main.get().output)
+}
+
 tasks.withType<JavaCompile>().configureEach {
     options.encoding = "UTF-8"
     options.release = providers.gradleProperty("java_release").get().toInt()
