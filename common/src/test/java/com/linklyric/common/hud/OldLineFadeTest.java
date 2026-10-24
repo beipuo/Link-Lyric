@@ -121,6 +121,10 @@ class OldLineFadeTest {
 
         final List<String> wholeTexts = new ArrayList<>();
         final List<Integer> alphasSeen = new ArrayList<>();
+        /** 本次 render 内「文本 -> y」的最后一次记录，用于验证绘制位置。 */
+        final java.util.Map<String, Integer> ys = new java.util.LinkedHashMap<>();
+        /** reset 时暂存上一帧的 ys，供断言读取。 */
+        java.util.Map<String, Integer> lastYs = new java.util.LinkedHashMap<>();
 
         /** 淡出全过程的透明度样本。 */
         void collectAlphas(List<Integer> sink) {
@@ -128,13 +132,45 @@ class OldLineFadeTest {
         }
 
         void reset() {
+            lastYs = new java.util.LinkedHashMap<>(ys);
             wholeTexts.clear();
             alphasSeen.clear();
+            ys.clear();
+        }
+
+        /** 把本帧记录转成可读快照。 */
+        void replayYs() {
+            lastYs = new java.util.LinkedHashMap<>(ys);
+        }
+
+        /** 整串（旧行）或逐字（主行）都能命中：取等值或前缀匹配。 */
+        Integer yOfText(String text) {
+            Integer exact = lastYs.get(text);
+            if (exact != null) {
+                return exact;
+            }
+            // 主行走逐字绘制，键是单个字符；取该行首字的 y。
+            return lastYs.get(text.substring(0, 1));
+        }
+
+        /**
+         * 该文本本帧是以「主行」身份绘制的吗。
+         *
+         * <p>主行走逐字路径（键为单字），旧行走整串路径（键为整句）。
+         * 两者同时存在时，用键长度即可区分，不必依赖顺序。
+         */
+        boolean lastWholeWasMain(String text) {
+            return lastYs.containsKey(text.substring(0, 1))
+                    && !lastYs.containsKey(text);
         }
 
         @Override
         public void drawText(String text, int x, int y, int color) {
-            if (text != null && text.length() > 1) {
+            if (text == null || text.isEmpty()) {
+                return;
+            }
+            ys.put(text.length() > 1 ? text : text.substring(0, 1), y);
+            if (text.length() > 1) {
                 wholeTexts.add(text);
                 alphasSeen.add((color >>> 24) & 0xFF);
             }
@@ -176,5 +212,103 @@ class OldLineFadeTest {
         @Override
         public void disableScissor() {
         }
+    }
+
+    /**
+     * 过渡期间旧行必须停在**块顶上方一行**，不得占据新主行的槽位。
+     *
+     * <p>这是「旧行消失瞬间会抬升一行、后面的行错位一下」的回归测试。
+     *
+     * <p>缺陷形态：{@code block} 是按当前 {@code drawableLines} 算的，
+     * {@code block.baseline()} 已经是**新主行**的位置。旧行若画在那里，
+     * 就等于和新顶上来的主行抢同一格；再叠加 {@code blockShift}
+     * 在淡出期间恒为一整行，整块会先挂在「偏移一行」的第三种状态上。
+     *
+     * <p>正确性质有两条，缺一不可：
+     * 旧行的 y 严格小于同一帧主行的 y；
+     * 两者相差恰好一个行步长（行高 + 行距），不多不少。
+     */
+    @Test
+    void 旧行停在块顶上方且不占新主行槽位() {
+        RecordingPainter painter = new RecordingPainter();
+        LyricTimeline timeline = new LyricTimeline(List.of(
+                line(L1, 0L, 5_000L),
+                line(L2, 5_000L, 10_000L)));
+
+        long start = System.nanoTime();
+        FloatingLyricRenderer renderer = new FloatingLyricRenderer(new LyricFeed() {
+            @Override
+            public boolean isAlive() {
+                return true;
+            }
+
+            @Override
+            public PlayerSnapshot pollSnapshot() {
+                long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
+                return new PlayerSnapshot("test", TrackIdentity.of("曲目", "", 0L),
+                        4_700L + elapsedMs, true, 0L, System.nanoTime(),
+                        CapabilitySet.empty());
+            }
+
+            @Override
+            public LyricTimeline lyric() {
+                return timeline;
+            }
+
+            @Override
+            public long lyricSignature() {
+                return 1L;
+            }
+        });
+
+        // 分两段采集。
+        //
+        // 第一段：换行前，记录 L1 作为主行时的 y —— 这就是旧行**应该**
+        // 停留的位置，必须从真实绘制里取，不能按布局常量推算。
+        // 第二段：换行后，记录旧行每一次出现的 y，验证它恒定等于第一段的值。
+        int beforeY = Integer.MIN_VALUE;
+        java.util.List<Integer> oldYs = new ArrayList<>();
+        long deadline = System.nanoTime() + 3_000_000_000L;
+        while (System.nanoTime() < deadline) {
+            painter.reset();
+            renderer.render(painter);
+            painter.replayYs();
+            Integer oy = painter.yOfText(L1);
+            if (beforeY == Integer.MIN_VALUE && oy != null && oldYs.isEmpty()
+                    && painter.lastWholeWasMain(L1)) {
+                // 换行前：L1 是主行（逐字路径），先记下它的位置。
+                beforeY = oy;
+            } else if (oy != null) {
+                oldYs.add(oy);
+            }
+            if (!oldYs.isEmpty() && oldYs.size() >= 6) {
+                break;
+            }
+            sleep();
+        }
+
+        assertTrue(beforeY != Integer.MIN_VALUE,
+                "应采集到换行前主行的位置");
+        assertTrue(!oldYs.isEmpty(),
+                "换行后旧行应被绘制，实际一次都没有");
+
+        // 三条性质。
+        //
+        // 缺陷史：曾用 block.baseline() - blockLineStep() 推旧行位置，
+        // 而块按 drawableLines 居中，换行后行数变化让块整体重新居中，
+        // 基线本身已跳；在其上再减一行，旧行跑到上方一格闪现。
+        // 实测：主行在 213，旧行却画在 190。
+        //
+        // 容差 1px：位置要过 blockShift 的取整。
+        for (int y : oldYs) {
+            assertTrue(Math.abs(y - beforeY) <= 1,
+                    "旧行应停在换行前的位置 " + beforeY
+                            + "，实际=" + y + "（全部样本=" + oldYs + "）");
+        }
+        // 全程恒定：不能跟着新主行往上跑。
+        int min = oldYs.stream().mapToInt(Integer::intValue).min().orElse(0);
+        int max = oldYs.stream().mapToInt(Integer::intValue).max().orElse(0);
+        assertTrue(max - min <= 1,
+                "旧行淡出期间位置应恒定，实际波动 " + min + ".." + max);
     }
 }

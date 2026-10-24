@@ -1,7 +1,11 @@
 package com.linklyric.common.hud;
 
 import com.linklyric.common.style.LyricStyleConfig;
+import com.linklyric.core.lyric.LyricLine;
+import com.linklyric.core.lyric.LyricTimeline;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -178,15 +182,53 @@ class TextStyleTest {
         assertTrue(rightAligned > centered, "右对齐应比居中更靠右");
     }
 
-    /** 长文本裁剪时，平台行高必须参与裁剪高度计算。 */
+    /**
+     * 视口裁剪时，平台行高必须参与裁剪高度计算。
+     *
+     * <p>触发裁剪的条件是「字被视口边缘切掉」。染色前沿本身
+     * 不再依赖裁剪（改用逐顶点配色），因此这里必须构造真正超宽的行，
+     * 让它滚出视口，否则一次裁剪都不会发生、断言测量的是 0。
+     */
     @Test
     void 裁剪高度取平台行高() {
-        FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
-        // 构造超长文本以触发裁剪
+        String longText = "字".repeat(80);
+        LyricTimeline timeline = new LyricTimeline(
+                java.util.List.of(new LyricLine(longText, "", 0L, 60_000L,
+                        java.util.List.of(), "")));
+        FloatingLyricRenderer r = new FloatingLyricRenderer(new LyricFeed() {
+            @Override
+            public boolean isAlive() {
+                return true;
+            }
+
+            @Override
+            public com.linklyric.core.sync.PlayerSnapshot pollSnapshot() {
+                return TestFeeds.snapshot(30_000L);
+            }
+
+            @Override
+            public LyricTimeline lyric() {
+                return timeline;
+            }
+
+            @Override
+            public long lyricSignature() {
+                return 1L;
+            }
+        });
         r.setStyle(base().withMaxWidthRatio(0.3f));
 
         LineHeightPainter p = new LineHeightPainter();
-        r.render(p);
+        // 多帧：滚动量随时间推进，视口外必然出现被切掉的字。
+        for (int i = 0; i < 10; i++) {
+            r.render(p);
+            try {
+                Thread.sleep(16L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
 
         assertTrue(p.scissorHeight >= p.reportedLineHeight,
                 "裁剪高度应不小于平台行高，否则中文阴影会被切掉，实际="

@@ -4,8 +4,11 @@ import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
 import com.linklyric.common.style.ColorMath;
+import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GradientColorizer;
 import com.linklyric.common.style.LyricStyleConfig;
 import com.linklyric.common.style.LyricStyleConfig.Align;
+import com.linklyric.common.style.LyricEasing;
 import com.linklyric.common.style.LyricStyleConfig.Weight;
 import com.linklyric.core.sync.PlaybackClock;
 import com.linklyric.core.sync.PlayerSnapshot;
@@ -258,12 +261,6 @@ public final class FloatingLyricRenderer {
      */
 
 
-    /** 行切换缓动的控制点，对应 {@code CubicBezierEasing(0.25, 0.0, 0.2, 1.0)}。 */
-    private static final float EASE_X1 = 0.25f;
-    private static final float EASE_Y1 = 0.0f;
-    private static final float EASE_X2 = 0.2f;
-    private static final float EASE_Y2 = 1.0f;
-
     /**
      * 桥接端的上报周期初值（毫秒）。
      *
@@ -370,6 +367,33 @@ public final class FloatingLyricRenderer {
 
         default void drawTextLifted(String text, int x, int y, float lift, int color) {
             drawText(text, x, y - Math.round(lift), color, true);
+        }
+
+        /**
+         * 绘制单个字形，左右两端可不同色。
+         *
+         * <p>这是**字内渐变**的唯一入口。字形是四边形，GPU 在顶点之间
+         * 线性插值，因此给左两顶点一个颜色、右两顶点另一个颜色，
+         * 就能让一个字内部出现连续的染色前沿。
+         *
+         * <p>为什么需要它：裁剪法只能用整像素边界分色，9px 的字最多
+         * 9 个台阶，观感是「先亮一列，卡住，再整段跳」。逐顶点配色
+         * 中颜色是浮点量，前沿走到字内任何位置都只是两端色不同，
+         * 没有量化下限。
+         *
+         * <p>默认实现退回单色（取左端色），保证只实现单色绘制的平台
+         * 与测试替身仍可工作。平台层覆盖本方法后才有真正的字内渐变。
+         *
+         * @param glyph  要绘制的单个字符
+         * @param x      字形左边缘横坐标
+         * @param y      基线纵坐标
+         * @param lift   亚像素抬升量，向下为正
+         * @param colors 左右端点颜色
+         * @param shadow 是否绘制阴影
+         */
+        default void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       GlyphColors colors, boolean shadow) {
+            drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
         }
 
         /**
@@ -713,6 +737,28 @@ public final class FloatingLyricRenderer {
     private String lastMainText;
 
     /**
+     * 上一帧主行实际绘制用的 y（不含切换偏移的稳定位置）。
+     *
+     * <p>换行时旧行必须回到它**真实停留过**的地方淡出。
+     * 用当前帧的块几何去推旧行位置是错的：块按 drawableLines
+     * 居中计算，换行后行数变化会让块整体重新居中，
+     * 基线本身就跳了，在它之上再加减行步长只会算出第三个位置。
+     *
+     * <p>记录的是 {@code block.baseline()}（不加 blockShift）：
+     * 动画期间的临时偏移不该被继承，否则连续换行会累积误差。
+     */
+    private int lastMainBaselineY = Integer.MIN_VALUE;
+
+    /** 换行瞬间冻结的旧句内容，供淡出期绘制。 */
+    private String oldLineText;
+
+    /** 换行瞬间冻结的旧句基线 y，淡出期间不随块几何变化。 */
+    private int oldLineBaselineY = Integer.MIN_VALUE;
+
+    /** 换行瞬间冻结的旧句已唱宽度，淡出时用它还原配色分界。 */
+    private float oldLineSungWidth;
+
+    /**
      * 上一帧主行的已唱宽度。
      *
      * <p>旧行淡出时必须用它重画「已唱 / 未唱」的分界，
@@ -926,17 +972,44 @@ public final class FloatingLyricRenderer {
         // 少了这一步符号判断，新行会从上方往下掉。
         // 淡出用绝对时长算，补位用剩余时长算。
         // 这样调慢切换动画只会拉长上移，不会让旧句黏在屏幕上。
+        // 两段各自的归一化进度。
+        //
+        // 这里曾经有一个缺陷，就是「旧行消失瞬间先抬一行、
+        // 后面的行错位一下才顶上」的根源：
+        //
+        // 上移进度从淡出结束才开始算（分子减去 OLD_LINE_FADE_MS），
+        // 淡出那 0.1 秒里被 clamp01 压成 0，于是 blockShift 恒定等于一整行。
+        // 整块在淡出阶段**静止地挂在「偏移一整行」的位置上**，
+        // 后面的行凭空向下错一格，然后第二阶段才跳上来。
+        //
+        // 也就是说那 0.1 秒里，画面既不是旧状态也不是新状态，
+        // 而是「所有行整体下移一行」的第三种错位状态。
+        //
+        // 正确的语义：上移从换行那一刻就开始，全程连续。
+        // 旧行的淡出与它并行，互不干扰——旧行不属于这个块，
+        // 它停在自己的位置上等自己消失，块里的行同时往上走，
+        // 中途不会出现任何一格是凭空来的。
         long transitionNanos = lineTransitionNanos();
+        long elapsedMs = lineTransitionElapsedNanos / 1_000_000L;
         float oldFade = transitionNanos <= 0L
                 ? 1f
-                : clamp01(lineTransitionElapsedNanos / (float) OLD_LINE_FADE_MS
-                        / 1_000_000f);
-        float risePart = clamp01((lineTransitionElapsedNanos
-                - OLD_LINE_FADE_MS * 1_000_000L)
-                / (float) Math.max(1L, transitionNanos - OLD_LINE_FADE_MS * 1_000_000L));
+                : clamp01(elapsedMs / (float) Math.max(1L, OLD_LINE_FADE_MS));
+        float risePart = transitionNanos <= 0L
+                ? 1f
+                : clamp01(elapsedMs / (float) Math.max(1L, transitionNanos / 1_000_000L));
         int blockShift = Math.round(blockLineStep()
                 * (1f - cubicBezierEase(risePart)));
-        int oldLineAlpha = Math.round(255f * (1f - oldFade));
+        // 旧行淡出也走共享缓动。
+        //
+        // 原先这里是纯线性：alpha 随时间匀速降到 0，而同一时刻
+        // 其余行的上移走的是贝塞尔。同一段过渡里两种节奏并存，
+        // 眼睛会看到「旧字还在匀速消失，新字已经加速就位」，像两件事。
+        //
+        // 现在只有一条曲线：{@code LyricEasing.ease}。
+        // 淡出与补位的相对先后由各自的时间窗口保证，
+        // 曲线的快慢由同一条参数决定，两者不会再打架。
+        float oldFadeEased = LyricEasing.ease(oldFade);
+        int oldLineAlpha = Math.round(255f * (1f - oldFadeEased));
 
         int mainBaselineY = block.baseline() + blockShift;
 
@@ -1045,12 +1118,23 @@ public final class FloatingLyricRenderer {
         // 因此在这里统一相乘；分散到各自路径很容易漏掉某一条
         // （例如降级绘制或间奏），表现为调低之后还有一行是亮的。
         float opacity = this.style.opacity();
-        // 第一阶段：旧行留在原主行位置淡出。
+        // 旧行画在它**换行前最后一帧所在的位置**，原地淡出。
         //
-        // 它不参与上移——上移是第二阶段的事。两段分开，
-        // 旧字不会在移动中被新字穿过，画面只有「让位」和「补位」两步。
-        if (oldFade < 1f && lastMainText != null) {
-            String old = clip(painter, lastMainText, maxWidth);
+        // 不能锚在 block.baseline() - blockLineStep()：
+        // 块是按当前 drawableLines 居中算的，换行后行数变化会让
+        // block 整体重新居中，block.baseline() 本身已经跳了两行左右。
+        // 在这个基线之上再减一行，旧行会跑到它原位置的上方一格
+        // 凭空出现一次——这就是「旧主行在高一行位置闪一瞬间」。
+        //
+        // 也不能只锚在 block.baseline()：那是**新主行**的槽位，
+        // 旧行画在那里会和新顶上来的句子重叠。
+        //
+        // 正确的量是 lastMainBaselineY：上一帧主行实际绘制用的 y。
+        // 它是旧句真实停留过的地方，与当前帧的块几何无关，
+        // 因此换行前后不会有任何跳变。
+        int oldBaselineY = oldLineBaselineY;
+        if (oldFade < 1f && oldLineText != null) {
+            String old = clip(painter, oldLineText, maxWidth);
             if (!old.isEmpty()) {
                 int oldWidth = painter.textWidth(old);
                 int oldX = layoutLeft(this.style.align(), centerX, maxWidth, oldWidth);
@@ -1068,22 +1152,22 @@ public final class FloatingLyricRenderer {
                 int oldUnsung = withAlpha(unsungColor(),
                         Math.round(255f * oldOpacity * UNSUNG_ALPHA));
                 int boundary = Math.max(0,
-                        Math.min((int) lastSungWidth, oldWidth));
+                        Math.min((int) oldLineSungWidth, oldWidth));
 
                 if (boundary > 0 && boundary < oldWidth
                         && !painter.supportsScissor()) {
                     // 不能裁剪时无法分区上色。此时退回单色，
                     // 但取**已唱色**而非未唱色：旧行唱过的部分通常更多，
                     // 用未唱色整行压淡会让它显得比实际更暗，像没跟上进度。
-                    painter.drawText(old, oldX, block.baseline(),
+                    painter.drawText(old, oldX, oldBaselineY,
                             withAlpha(sungColor(), Math.round(255f * oldOpacity)));
                 } else {
-                    painter.drawText(old, oldX, block.baseline(), oldUnsung);
+                    painter.drawText(old, oldX, oldBaselineY, oldUnsung);
                     if (boundary > 0) {
-                        painter.enableScissor(oldX, block.baseline() - LIFT_HEADROOM,
+                        painter.enableScissor(oldX, oldBaselineY - LIFT_HEADROOM,
                                 boundary, painter.lineHeight() + LIFT_HEADROOM
                                         + SHADOW_HEADROOM);
-                        painter.drawText(old, oldX, block.baseline(), oldSung);
+                        painter.drawText(old, oldX, oldBaselineY, oldSung);
                         painter.disableScissor();
                     }
                 }
@@ -1152,6 +1236,15 @@ public final class FloatingLyricRenderer {
 
         lastSecondaryPresent = hasSecondary;
         lastMainText = fullText;
+        // 必须记录**实际绘制**用的 mainBaselineY，不能记 block.baseline()。
+        //
+        // block.baseline() 是不含切换偏移的稳定基线。换行前若干帧
+        // 主行仍在上一轮过渡的位移中（blockShift 尚未归零），
+        // 实际画在 mainBaselineY，与稳定基线相差最多一整行。
+        // 记稳定基线的话，旧行会从「主行真正停留的地方」跳到
+        // 「本该去的地方」，跳变恰好等于残留的 blockShift——
+        // 实测过：主行显示在 213，旧行却出现在 202，差 11px。
+        lastMainBaselineY = mainBaselineY;
         // 记住分界，供下一帧的旧行淡出还原配色。
         lastSungWidth = clampedSung;
         lastLineWidth = primaryWidth;
@@ -1164,6 +1257,11 @@ public final class FloatingLyricRenderer {
      * <p>仅在行索引变化时重新开始计时；同一行内不动，
      * 否则每帧都会重置，动画永远走不完。
      */
+    /** 当前是否处在换行过渡中（淡出或补位尚未结束）。 */
+    private boolean inTransition() {
+        return lineTransitionElapsedNanos < lineTransitionNanos();
+    }
+
     private void updateLineTransition(int index, long frameDeltaNanos) {
         if (index == lineTransitionFromIndex) {
             if (lineTransitionElapsedNanos < lineTransitionNanos()) {
@@ -1173,7 +1271,19 @@ public final class FloatingLyricRenderer {
         }
         lineTransitionFromIndex = index;
         lineTransitionElapsedNanos = 0L;
-
+        // 换行这一刻，把上一句的内容与位置打包冻结。
+        //
+        // 必须在这里取快照，不能在帧末按「是否过渡中」判断：
+        // 帧末执行时本帧已经切到新 index，lastMainText 正要被覆盖成
+        // **新句子**；而换行前最后一帧的 index 还是旧的，
+        // 帧末判断读到的是上一轮残留的过渡状态，取值时机根本不对。
+        //
+        // 之前因此出现过两种症状：旧行闪一帧就没了（读到新句子，
+        // 与主行内容相同看不出是旧行），或者旧行跑到上方一行
+        // （用当前块几何去推旧位置）。在换行瞬间取值两者都不会发生。
+        oldLineText = lastMainText;
+        oldLineBaselineY = lastMainBaselineY;
+        oldLineSungWidth = lastSungWidth;
     }
 
     /**
@@ -1217,65 +1327,7 @@ public final class FloatingLyricRenderer {
 
     /** 按行切换缓动求值：{@code CubicBezierEasing(0.25, 0.0, 0.2, 1.0)}。 */
     private static float cubicBezierEase(float t) {
-        return cubicBezierY(solveCubicBezierT(t));
-    }
-
-    /**
-     * 由 x 反解贝塞尔参数 t。
-     *
-     * <p>x 与 t 不是同一个量，必须先解 {@code x(t) = 目标x} 才能取 {@code y(t)}。
-     * 用牛顿迭代加速、二分兜底：曲线在 {@code x1 = 0.25} 处导数可能接近 0，
-     * 纯牛顿会在这一段来回振荡。
-     */
-    private static float solveCubicBezierT(float x) {
-        float t = x;
-        for (int i = 0; i < 8; i++) {
-            float dx = cubicBezierX(t) - x;
-            if (Math.abs(dx) < 1e-5f) {
-                return t;
-            }
-            float slope = cubicBezierDX(t);
-            if (Math.abs(slope) < 1e-6f) {
-                break;
-            }
-            t -= dx / slope;
-            if (t < 0f || t > 1f) {
-                break;
-            }
-        }
-        // 兜底：二分
-        float lo = 0f;
-        float hi = 1f;
-        t = x;
-        for (int i = 0; i < 20; i++) {
-            float mid = (lo + hi) * 0.5f;
-            if (cubicBezierX(mid) < x) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-        }
-        return (lo + hi) * 0.5f;
-    }
-
-    /** 三次贝塞尔的 x 分量。 */
-    private static float cubicBezierX(float t) {
-        float u = 1f - t;
-        return 3f * u * u * t * EASE_X1 + 3f * u * t * t * EASE_X2 + t * t * t;
-    }
-
-    /** 三次贝塞尔的 y 分量。 */
-    private static float cubicBezierY(float t) {
-        float u = 1f - t;
-        return 3f * u * u * t * EASE_Y1 + 3f * u * t * t * EASE_Y2 + t * t * t;
-    }
-
-    /** x 分量对 t 的导数。 */
-    private static float cubicBezierDX(float t) {
-        float u = 1f - t;
-        return 3f * u * u * EASE_X1
-                + 6f * u * t * (EASE_X2 - EASE_X1)
-                + 3f * t * t * (1f - EASE_X2);
+        return LyricEasing.ease(t);
     }
 
     /**
@@ -1410,6 +1462,16 @@ public final class FloatingLyricRenderer {
             return;
         }
 
+        // 逐字一次绘制，颜色是左右两端的一对色。
+        //
+        // 关键变化：**不再按条带重画同一个字**。
+        // 旧做法是「先铺底色，再叠 1~3 条竖带」，一个字画 2~4 次，
+        // 每次都要切裁剪区。裁剪打断批次合并，是性能主成本；
+        // 而且裁剪边界只能整像素，彩色前沿因此有 9 个台阶。
+        //
+        // 现在前沿位置完全交给顶点：一个字画一次，左两顶点给已唱色、
+        // 右两顶点给未唱色，GPU 逐像素插值。绘制次数从每字 2~4 次
+        // 降到 1 次，裁剪切换降到 0 次，前沿仍可落在任意亚像素位置。
         int cursor = 0;
         for (int i = 0; i < visible.length(); i++) {
             String ch = visible.substring(i, i + 1);
@@ -1427,53 +1489,14 @@ public final class FloatingLyricRenderer {
                 continue;
             }
 
-            // 先铺这个字的**未唱底色**（或已唱色）。
-            //
-            // 这一步不能省。条带只负责前沿那一两个字的渐变，
-            // 若只画条带，没有条带覆盖的笔画就完全不出现在屏幕上，
-            // 表现为「整行只剩前沿几个像素」。
-            float base = progress[i];
-            int baseColor;
-            if (base >= 1f) {
-                baseColor = sungColor;
-            } else {
-                // 未唱和正在染的字都以**未唱色**打底。
-                //
-                // 不能给正在染的字先铺一个按进度算的中间色：
-                // 那样整字会偏亮，而且前沿之外的笔画也是中间色，
-                // 与「还没唱到」的语义相反。前沿的渐变由下面的条带负责，
-                // 底色只该表达「尚未唱满」。
-                baseColor = unsungColor;
-            }
-            drawChar(painter, ch, charX, textY, lifts, i,
-                    viewportLeft, viewRight, baseColor);
+            // 端点色由该字与前沿的相对位置决定：
+            // 完全在前沿左边 = 整字已唱；完全在右边 = 整字未唱；
+            // 跨越前沿 = 左已唱右未唱，插值把前沿画在字内正确位置。
+            GlyphColors colors = GradientColorizer.forChar(
+                    charX, charRight, edge, sungColor, unsungColor);
 
-            // 再叠加前沿过渡：只对正在染的字做，已唱满和未开唱的字不需要。
-            if (base <= 0f || base >= 1f) {
-                continue;
-            }
-            int slices = Math.max(1, Math.min(charWidth, 3));
-            float perSlice = charWidth / (float) slices;
-            for (int s = 0; s < slices; s++) {
-                float sliceLeft = charX + s * perSlice;
-                float sliceCenter = sliceLeft + perSlice * 0.5f;
-
-                // 条中心到前沿的有符号距离（像素）：正值表示尚未唱到。
-                // 用浮点前沿算，绝不先取整——取整会丢掉亚像素推进，
-                // 边界就会卡在同一个整数上，表现为「停住再整段跳」。
-                float distance = sliceCenter - edge;
-                float t = (distance + band * 0.5f) / band;
-                if (t <= 0f || t >= 1f) {
-                    // 完全落在实色区，底色已经足够，不必重画。
-                    continue;
-                }
-                int color = ColorMath.lerp(sungColor, unsungColor, t);
-                int left = Math.round(sliceLeft);
-                int right = Math.round(sliceLeft + perSlice);
-                int width = Math.max(1, right - left);
-                drawSlice(painter, ch, charX, textY, lifts, i,
-                        viewportLeft, viewRight, left, width, color);
-            }
+            drawGlyph(painter, ch, charX, textY, lifts, i,
+                    viewportLeft, viewRight, colors);
         }
     }
 
@@ -1496,6 +1519,71 @@ public final class FloatingLyricRenderer {
         if (solidWidth > 0) {
             drawColorLayer(painter, visible, textX, textY, null,
                     viewportLeft, viewRight, textX, solidWidth, sungColor);
+        }
+    }
+
+    /**
+     * 绘制单个字，支持左右两端不同色。
+     *
+     * <p>视口裁剪仍然存在，但它只处理「字被屏幕边缘切掉」这一种情况，
+     * 与染色无关：染色前沿不再依赖裁剪。因此绝大多数帧里
+     * {@code full} 为 true，一次裁剪都不会开。
+     *
+     * <p>平台不支持渐变时退回单色（取左端色），功能降级但不崩。
+     * 同色时也走单色路径，省掉自定义顶点的开销。
+     */
+    private void drawGlyph(Painter painter, String ch, int charX, int textY,
+                           float[] lifts, int index,
+                           int viewportLeft, int viewRight, GlyphColors colors) {
+        int charWidth = painter.textWidth(ch);
+        int left = Math.max(charX, viewportLeft);
+        int right = Math.min(charX + charWidth, viewRight);
+        if (right - left <= 0) {
+            return;
+        }
+        float lift = lifts == null ? 0f : lifts[index];
+
+        // 同色不需要顶点着色，走原版路径最省。
+        if (!colors.isGradient()) {
+            boolean full = left <= charX && right >= charX + charWidth;
+            if (!full) {
+                painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                        painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
+            }
+            drawTextLiftedStyled(painter, ch, charX, textY, lift, colors.left());
+            if (!full) {
+                painter.disableScissor();
+            }
+            return;
+        }
+
+        // 左右异色：交给平台的逐顶点着色。
+        //
+        // 抬升量原样传 float，绝不取整。
+        // 顶点写入路径本身就是浮点的（addVertex 接收 float 坐标），
+        // 中间取整会把连续位移压成整数台阶，这是上浮僵硬的直接原因。
+        //
+        // 视口裁剪仍然要开，但它此时**只服务于屏幕边界**：
+        // 滚动行会把字推到面板之外，不裁剪就会画到 HUD 其他元素上。
+        // 与旧方案的区别在于裁剪不再承担分色职责——
+        // 染色前沿由顶点插值决定，因此裁剪的整像素限制不再影响颜色过渡。
+        boolean full = left <= charX && right >= charX + charWidth;
+        if (!full) {
+            painter.enableScissor(left, textY - LIFT_HEADROOM, right - left,
+                    painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
+        }
+
+        // 加粗仍然通过样式符表达，而不是在平台层重复绘制：
+        // 单字包一层 §l…§r 看似碎片化，但这一条路径上本来就一次只画
+        // 一个字，包裹不会让其他文本变碎。不这么做的话，
+        // 落在前沿上的那个字会变成常规字重，与同行其余字不一致。
+        Weight w = this.style.weight();
+        String styled = w == Weight.REGULAR ? ch : stylePrefix(w) + ch + styleSuffix(w);
+        painter.drawGlyphGradient(styled, charX, textY, lift, colors,
+                this.style.shadow());
+
+        if (!full) {
+            painter.disableScissor();
         }
     }
 
@@ -1710,9 +1798,17 @@ public final class FloatingLyricRenderer {
             return null;
         }
 
-        // 幅度取整：Salt 用的是 roundToInt，整像素位移不会让字形落在半像素上
-        // 而被抗锯齿抹成灰边。
-        float maxOffset = Math.round(fontSizePx * LIFT_FONT_RATIO);
+        // 幅度**不取整**。
+        //
+        // 曾经对这里取整，理由是「整像素位移不会让字形落在半像素上」。
+        // 但 MC 默认字号 9px × 0.1 = 0.9，取整后变成 1，
+        // 随后绘制端又对 1×进度 再取整一次，结果整条曲线只剩 {0,1} 两档：
+        // 一句 3 秒的歌，字在前 1.5 秒完全不动，然后跳 1px 再不动。
+        // 这才是「上浮僵硬」的真实原因，与缓动曲线无关。
+        //
+        // Salt 的 floatUpPercentage 全程走 float，中间没有 round，
+        // 它的位移每帧都是不同的值。这里保持一致。
+        float maxOffset = fontSizePx * LIFT_FONT_RATIO;
         if (maxOffset <= 0f) {
             return null;
         }
@@ -1807,16 +1903,18 @@ public final class FloatingLyricRenderer {
     /**
      * 上浮缓动曲线。
      *
-     * <p>用 {@code 1-(1-t)³}（ease-out cubic）：起步快、收尾慢。
-     * 这符合「字被推上来」的物理直觉——离开基线时阻力小，靠近顶点时减速停住。
-     * 线性曲线会让顶端显得生硬，而 ease-in-out 会在起步时迟滞，像卡了一下。
+     * <p>与行切换、染色共用 {@link LyricEasing}，不再单独用 {@code 1-(1-t)³}。
+     *
+     * <p>原先三条动画各用一条曲线，在 t=0.5 处输出分别为
+     * 行切换约 0.60、上浮 0.875、染色 0.625。
+     * 也就是说同一个时刻，字已经升到 87% 而颜色只走到 62%：
+     * 视觉上表现为「字先窜上去，颜色慢慢追」，即使每帧都在更新也显得脱节。
+     * 统一到一条曲线后，三者同步推进。
      *
      * @param t 0 表示刚开始上升，1 表示已到顶；越界会被夹紧
      */
     static float liftEase(float t) {
-        float x = t < 0f ? 0f : (t > 1f ? 1f : t);
-        float inv = 1f - x;
-        return 1f - inv * inv * inv;
+        return LyricEasing.ease(t);
     }
 
     /** 副行的实际行高：按 SubTextFontSizeScale 缩放后取整。 */
@@ -1962,13 +2060,7 @@ public final class FloatingLyricRenderer {
      * 给它套曲线只会让合成痕迹更明显。
      */
     private static float sustainCurve(float progress) {
-        if (progress <= 0f) {
-            return 0f;
-        }
-        if (progress >= 1f) {
-            return 1f;
-        }
-        return progress * (2.5f - 2.5f * progress + progress * progress);
+        return LyricEasing.ease(progress);
     }
 
     /**

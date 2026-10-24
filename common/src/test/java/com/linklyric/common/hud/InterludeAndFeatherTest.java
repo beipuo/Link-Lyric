@@ -306,6 +306,38 @@ class InterludeAndFeatherTest {
             }
         }
 
+        /**
+         * 采集字内渐变绘制。
+         *
+         * <p>逐顶点配色后，染色前沿上的字不再画成「若干条 alpha 递减的
+         * 同色条带」，而是**一个字一对端点色**：左端已唱、右端未唱，
+         * 中间由 GPU 插值。因此「羽化」不再表现为多个中间色像素，
+         * 而是同一字形内的双色。
+         *
+         * <p>这里把左右两端的蓝值都记入序列，
+         * 让「已唱色到未唱色之间确实存在过渡」这件事仍可被观察到。
+         */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       com.linklyric.common.style.GlyphColors gc,
+                                       boolean shadow) {
+            texts.add(glyph);
+            colors.add(gc.left());
+            if (clipping) {
+                clipColors.add(gc.left());
+            }
+            if (closerToSung(gc.left())) {
+                sungAlphas.add(blueness(gc.left()));
+                sungRights.add(clipX + clipWidth);
+                // 左端已唱而右端未唱：这就是前沿所在的那个字，
+                // 两个端点色都要记录，才能看出过渡方向。
+                if (!closerToSung(gc.right())) {
+                    sungAlphas.add(blueness(gc.right()));
+                    sungRights.add(clipX + clipWidth);
+                }
+            }
+        }
+
         @Override
         public void fillRect(int x, int y, int width, int height, int color) {
         }

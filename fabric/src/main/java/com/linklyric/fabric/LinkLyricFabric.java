@@ -2,6 +2,8 @@ package com.linklyric.fabric;
 
 import com.linklyric.common.bridge.BridgePlaybackSource;
 import com.linklyric.common.hud.FloatingLyricRenderer;
+import com.linklyric.common.style.GlyphColors;
+import com.linklyric.fabric.render.GradientPainter;
 import com.linklyric.common.config.LayoutConfig;
 import com.linklyric.common.hud.LyricDragController;
 import net.fabricmc.api.ClientModInitializer;
@@ -173,6 +175,47 @@ public final class LinkLyricFabric implements ClientModInitializer {
                 return;
             }
             graphics.drawString(client.font, text, x, y - dy, color, shadow);
+        }
+
+        /**
+         * 逐顶点着色的单字绘制。
+         *
+         * <p>左右异色时，一个字形会写成两条不同颜色的边，GPU 逐像素插值，
+         * 染色前沿就能落在字内的任意亚像素位置。这是取代
+         * 「裁剪切条带」的关键：裁剪只能整像素，9px 的字只有 9 个台阶。
+         *
+         * <p>平台能力不可用（字段改名、字形缺失）时退回单色，保住可读性。
+         */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       GlyphColors colors, boolean shadow) {
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
+                return;
+            }
+            // 抬升量**不取整**，直接进顶点坐标。
+            //
+            // 曾经写成 Math.round(lift)：9px 字号下抬升幅度只有 0.9px，
+            // 取整后变成 {0,1} 两档，一句 3 秒的歌有一半时间字完全不动。
+            // 这是「上浮僵硬」的直接原因，与缓动曲线无关。
+            //
+            // 顶点写入接收的是 float（BakedGlyph 的 left/up 也是 float），
+            // 整条链路本来就能表达亚像素位置，是这里自己把精度丢掉的。
+            //
+            // 代价是字形在半像素位置会被纹理线性过滤采样。这一点与
+            // Salt 用翻译矩阵平移已光栅化图层在物理上等价：
+            // 它的 translationY 同样让 GPU 采样落在纹素之间。
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.draw(graphics, client.font, glyph, x, y,
+                        colors, shadow);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.draw(graphics, client.font, glyph, x, y,
+                    colors, shadow);
         }
 
         /**

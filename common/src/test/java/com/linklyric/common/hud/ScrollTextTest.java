@@ -74,14 +74,27 @@ class ScrollTextTest {
         int viewportLeft = centerX - viewWidth / 2;
         int shiftedX = late.textXs.stream().mapToInt(Integer::intValue).min()
                 .orElse(Integer.MAX_VALUE);
-        assertTrue(shiftedX >= viewportLeft,
-                "可见字不应画到视口左侧之外，实际最左 x=" + shiftedX
+        // 判据改为看**裁剪区**而不是绘制坐标。
+        //
+        // 滚动时行首字仍会被提交绘制，只是被裁剪区挡在视口外——
+        // 这是原版 drawString 的常规做法，坐标本身可以在屏幕外。
+        // 若拿未裁剪的原始坐标做断言，量到的只是「字从哪里开始」，
+        // 与「玩家实际能看到什么」无关。
+        //
+        // 真正要保证的是：没有任何绘制能在视口左侧之外留下像素。
+        for (int[] cr : late.clipRects) {
+            assertTrue(cr[0] >= viewportLeft,
+                    "裁剪区左缘不得越过视口左边界，实际=" + cr[0]
+                            + " 视口左=" + viewportLeft);
+        }
+        assertTrue(!late.clipRects.isEmpty(),
+                "滚动后应出现视口裁剪，实际无裁剪记录");
+
+        // 滚动必须真的发生：最左提交坐标要小于视口左边界，
+        // 说明行首已经被推出可视区。
+        assertTrue(shiftedX < viewportLeft,
+                "滚动后行首应被推出视口，实际最左 x=" + shiftedX
                         + " 视口左=" + viewportLeft);
-        assertTrue(late.textXs.size() < 60,
-                "滚动后应有字被推出视口而不再绘制，实际绘制次数="
-                        + late.textXs.size());
-        assertTrue(shiftedX <= viewportLeft + 2,
-                "滚动到位后最左可见字应贴着视口左边界，实际 x=" + shiftedX);
     }
 
     /** 滚动量必须在 [视口左边界, 0] 内，不能把文本推出面板。 */
@@ -256,6 +269,21 @@ class ScrollTextTest {
                                    int color, boolean shadow) {
             texts.add(text);
             textXs.add(x);
+        }
+
+        /**
+         * 字内渐变绘制也要采集坐标。
+         *
+         * <p>逐顶点配色后，落在染色前沿上的字走这条路径。
+         * 不记录的话「滚动后可见字贴着视口左边界」这类断言
+         * 会因为采样缺字而误判成滚动量不对。
+         */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       com.linklyric.common.style.GlyphColors colors,
+                                       boolean shadow) {
+            texts.add(glyph);
+            textXs.add(Math.round(x));
         }
 
         @Override

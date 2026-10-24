@@ -346,8 +346,55 @@ Fabric 的 `ScreenMouseEvents` 只有 click/release/scroll，**没有鼠标移�
 推动量恰为超出中线的距离，并夹在 `[-(行宽-视口宽), 0]`。
 这样演唱中的字始终停在中线附近；若改成按时间匀速滚，速度会与演唱脱节，更难跟。
 滚动时所有裁剪区都必须再夹一次视口，否则已唱段会画出面板、压到别的 HUD 上。
-**同色裁剪画不出中间态。** 等宽汉字无法靠整字累加表达「唱到一半」，
-必须按像素推进；交界处再叠一条多级渐变，推进端才不生硬。
+### 字内渐变：为什么最终没用裁剪
+
+前面几节记的都是「用裁剪切条带模拟渐变」的调参经验。那条路最后被整体替换了，
+原因不是参数没调好，而是**裁剪本身有量化下限**。
+
+**整像素裁剪决定了分色台阶数。** 裁剪边界只能落在整数像素上，
+而一个汉字在 9px 字号下只有 9 像素宽。因此染色前沿最多只有 9 个可停留的位置，
+实测能观察到多帧裁剪区完全相同、随后整像素跳一格——
+现象就是「先亮一列像素，然后后面的瞬间渲染完」。
+这条限制无法靠增加条带数量或调羽化宽度绕过。
+
+**改成逐顶点配色后限制消失。** 字形是四边形，
+`VertexConsumer.setColor` 是逐顶点调用的，颜色本身是浮点量。
+给左两顶点已唱色、右两顶点未唱色，GPU 逐像素插值，
+前沿就能落在字内任意亚像素位置。
+一个字只画一次，不再需要条带，也不需要为分色开裁剪。
+
+实现分三层：
+
+`GradientColorizer`（common，纯计算）决定每个字的左右端点色：
+完全在前沿左边取已唱色、完全在右边取未唱色、跨越前沿则左已唱右未唱。
+位置信息由顶点几何承载，颜色只需要表达「是否跨前沿」。
+
+`GradientGlyphWriter`（平台层）按原版几何写四个顶点。
+几何必须与 `BakedGlyph.render` 完全一致，包括斜体补偿
+`x0 += 1 - 0.25 * up`，否则斜体字的染色区会横向错位。
+UV 与位置的对应顺序也不能变，否则字形会翻转。
+
+`GlyphColors` 作为跨层值对象，让 common 层不必知道 Minecraft 类型。
+
+**用 `VarHandle` 而不是 Mixin。** 需要的只有 `u0 u1 v0 v1 left right up down`
+八个私有字段。为读字段引入 Mixin 要在 Fabric 与 NeoForge 各配一份
+`mixins.json`、各写一个 accessor、并在每次 MC 更新后复核字段名。
+`VarHandle` 只依赖字段名，且字段改名时 `available()` 转为 false，
+自动退回原版单色绘制——功能降级但不会崩。
+
+**1.21.1 和 26.1.2 的 API 完全不同，不能照抄。** 1.21.1 的 `BakedGlyph`
+是普通类，`render` 把颜色当标量接收，UV 是私有字段，只能自己写顶点。
+26.1.2 引入了 `RenderPipeline` 与 `TextRenderable`，
+后者直接把 `VertexConsumer` 和矩阵暴露出来，顶点级着色是公开能力，
+不需要任何反射。因此 26.1.2 的移植方案见「待办」一节。
+
+**阴影要自己画。** 原版是先用阴影色画一遍、再用主色在 `x - 1` 处画一遍，
+阴影色是原色 RGB 乘 0.25、alpha 不变。自己写顶点时必须复刻这个顺序与偏移，
+否则开关阴影时字会横向跳动。
+
+**加粗仍走样式符。** 字重由 `§l`/`§r` 表达，不在平台层重复绘制。
+逐顶点路径上一次只画一个字，包裹样式符不会让其他文本碎片化；
+不这么做的话，落在前沿上的那个字会变成常规字重，与同行其余字不一致。
 
 **换行只改不透明度，谁都不位移。** Salt 的当前行与非当前行是两个静止的行位，
 切换时按同一条 700ms 曲线交叉淡化。给任一方加纵向位移，都会让两行在
@@ -487,8 +534,49 @@ neoforge/build/libs/linklyric-<mc>-neoforge-<ver>.jar
 1. 灵动岛 / 侧边栏 / 物品栏三种样式（`LyricStyle` 已有预设，缺渲染实现）
 2. 歌单界面——**当前做不了**，Salt Player 插件 API 无队列访问
 3. 本地 LRC / TTML 歌词源（让 SMTC 这类无歌词数据源也能显示逐字）
-4. 26.1.2 分支的渲染层适配（类名不同，需另写）
+4. 26.1.2 分支的渲染层适配（见下节「待办：26.1.2 的渲染架构」）
 5. 配置文件（端口、样式、位置可调）
+
+## 待办：26.1.2 的渲染架构
+
+26.1.2 把文字渲染重构成了公开的管线 API，1.21.1 那套 `@Accessor` + 反射的做法
+在新版本上属于绕远路。移植时不要照搬，改用下面这条路径。
+
+**已有的公开能力。** `TextRenderable` 的签名是
+
+```java
+void render(Matrix4fc pose, VertexConsumer buffer, int packedLightCoords, boolean flat);
+```
+
+它同时提供 `textureView()`、`guiPipeline()` 与 `left/top/right/bottom()`
+也就是字形的位置边界、纹理视图与管线都是公开可读的。
+1.21.1 里要靠 `VarHandle` 撬开的 `u0/u1/v0/v1/left/right/up/down`，
+在这一版不需要了。
+
+**渲染管线也是公开可构造的。** `GlyphRenderTypes.createForIntensityTexture` 与
+`createForColorTexture` 都是 public static，返回的 record 直接带
+`RenderPipeline`。因此自建带颜色插值的管线是正常用法，不是 hack。
+
+**顶点格式要确认。** `DefaultVertexFormat.POSITION_TEX_COLOR` 含 COLOR 分量，
+这是逐顶点配色成立的前提。移植第一步应当是
+`RenderPipelines.GUI_TEXT` 的实际 `withVertexFormat` 取值——
+若该管线不带 COLOR，就不能沿用它，需要按上面的 record 自建一条。
+
+**移植后的结构可以简化。** 平台层不再需要：
+
+- 反射取字段（`GradientGlyphWriter` 的 VarHandle 部分整个删掉）
+- 手算 UV 与斜体补偿（`TextRenderable` 已给出边界）
+- 降级判定（字段不会因改名而失配）
+
+保留的是 `GradientColorizer` 与 `GlyphColors`——
+这两个在 common 层、纯计算、与 MC 版本无关，可以直接复用。
+
+**验证顺序。** 先确认 `GUI_TEXT` 的顶点格式是否含 COLOR；
+再写一个只画单个字形、左右端点色明显不同的最小用例；
+最后接入 `FloatingLyricRenderer`。
+跳过第二步会很难定位问题——颜色不对可能来自管线格式、UV 顺序或插值设置，
+三者症状相似。
+
 ## 已知待验证项
 
 - `WorkshopApi` 是否暴露**当前播放队列**，以及是否存在**按索引播放**接口；无则 `SourceProfiles.SALT_PLAYER` 需移除 `QUEUE`

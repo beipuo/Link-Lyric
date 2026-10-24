@@ -23,7 +23,15 @@ class CharLiftWaveTest {
     /** 与 FloatingLyricRenderer.LIFT_FONT_RATIO 一致。 */
     private static final float LIFT_RATIO = 0.10f;
 
-    private static final float MAX_LIFT = Math.round(FONT_PX * LIFT_RATIO);
+    /**
+     * 顶点抬升量：**不取整**。
+     *
+     * <p>曾经写成 {@code Math.round(FONT_PX * LIFT_RATIO)}，把 0.9 变成 1，
+     * 再叠加绘制端的取整，整条曲线只剩 {0,1} 两档，
+     * 一句 3 秒的歌有一半时间字完全不动——这才是「上浮僵硬」的真因。
+     * 这里保持浮点，锁住「不得再引入取整」。
+     */
+    private static final float MAX_LIFT = FONT_PX * LIFT_RATIO;
 
     private static int[] charStarts() {
         int[] starts = new int[LINE.length()];
@@ -50,13 +58,20 @@ class CharLiftWaveTest {
         return p;
     }
 
-    /** 幅度取整到 1px：9px 字号 × 0.1 = 0.9，roundToInt 后为 1。 */
+    /**
+     * 幅度是字号乘零点一，且**保留小数**。
+     *
+     * <p>9px 字号应得 0.9px 而不是 1px。这个差别不是精度洁癖：
+     * 取整会把 0.9 压成 1，再叠加绘制端取整，中间态全部丢失。
+     */
     @Test
-    void 幅度是字号乘零点一后取整() {
-        assertEquals(1f, MAX_LIFT, 0.001f,
-                "9px 字号应得 1px 幅度，实际=" + MAX_LIFT);
+    void 幅度是字号乘零点一且不取整() {
+        assertEquals(FONT_PX * LIFT_RATIO, MAX_LIFT, 0.0001f,
+                "9px 字号应得 0.9px 幅度，实际=" + MAX_LIFT);
+        assertTrue(MAX_LIFT != Math.round(MAX_LIFT),
+                "幅度必须带小数，取整会让中途态丢失实际=" + MAX_LIFT);
 
-        // 18px 字号应得 2px，验证确为比例而非固定像素
+        // 18px 字号应得 1.8px，验证确为比例而非固定像素
         float[] large = FloatingLyricRenderer.computeLifts(
                 painter(), charStarts(), LINE.length(),
                 lineWidth(), lineWidth(), 18f, progress(0f));
@@ -67,7 +82,38 @@ class CharLiftWaveTest {
                 painter(), charStarts(), LINE.length(),
                 lineWidth(), lineWidth(), 18f, progress(1f));
         assertNotNull(full);
-        assertEquals(2f, full[0], 0.001f, "18px 字号染满应得 2px 幅度");
+        assertEquals(1.8f, full[0], 0.001f, "18px 字号染满应得 1.8px 幅度");
+    }
+
+    /**
+     * 半途的抬升量必须是小数，不能落在整数台阶上。
+     *
+     * <p>这是「帧连续」的核心判据：进度取 0.1 到 0.9 时，
+     * 抬升量应各不相同且都不为整数。若出现大量相同的整数值，
+     * 说明又被量化了，动画会表现为「长时间不动、然后跳一格」。
+     */
+    @Test
+    void 中途抬升量是连续小数() {
+        float previous = -1f;
+        int distinct = 0;
+        for (int step = 1; step <= 9; step++) {
+            float t = step / 10f;
+            float[] one = FloatingLyricRenderer.computeLifts(
+                    painter(), charStarts(), LINE.length(),
+                    lineWidth(), lineWidth(), FONT_PX, progress(t));
+            assertNotNull(one);
+            float lift = one[0];
+            assertTrue(lift > 0f && lift < MAX_LIFT,
+                    "进度 " + t + " 应产生中间抬升，实际=" + lift);
+            assertTrue(lift != Math.round(lift),
+                    "进度 " + t + " 的抬升量不应是整数，实际=" + lift);
+            if (lift != previous) {
+                distinct++;
+            }
+            previous = lift;
+        }
+        assertEquals(9, distinct,
+                "九个进度档应产生九个不同抬升量，否则说明被量化了");
     }
 
     /** 一个字都没被染到，整行停在基线。 */

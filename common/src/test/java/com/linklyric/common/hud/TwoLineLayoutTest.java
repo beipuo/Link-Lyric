@@ -91,6 +91,18 @@ class TwoLineLayoutTest {
                 break;
             }
         }
+        try {
+            var sb = new StringBuilder();
+            sb.append("mainY=").append(mainY).append("\n");
+            for (int k = 0; k < painter.texts.size(); k++) {
+                sb.append("  [").append(painter.texts.get(k)).append("] y=")
+                  .append(painter.ys.get(k)).append("\n");
+            }
+            java.nio.file.Files.writeString(
+                    java.nio.file.Path.of("build", "diag-twoline2.txt"),
+                    sb.toString());
+        } catch (Exception ignored) {
+        }
         assertTrue(mainY != Integer.MIN_VALUE, "应画出主行逐字内容");
         assertTrue(yOf.containsKey("副行"), "应画出副行，实际=" + yOf);
         assertTrue(yOf.get("副行") > mainY,
@@ -126,11 +138,11 @@ class TwoLineLayoutTest {
         for (int i = 0; i < 40; i++) {
             painter.reset();
             renderer.render(painter);
-            for (int k = 0; k < painter.texts.size(); k++) {
-                if (painter.texts.get(k).contains(L2)) {
-                    mainYs.add(painter.ys.get(k));
-                    break;
-                }
+            // 主行走逐字绘制（键为单字），不能用 contains(整行) 匹配。
+            // mainLineBaseY 按「字符是否属于该行」判断，两种路径都适用。
+            int base = painter.mainLineBaseY(L2);
+            if (base != Integer.MIN_VALUE) {
+                mainYs.add(base);
             }
             sleep();
         }
@@ -334,9 +346,24 @@ class TwoLineLayoutTest {
             return text == null ? 0 : text.length() * 9;
         }
 
+        /**
+         * 三条绘制入口必须记录同样的三元组。
+         *
+         * <p>曾经四参/五参 {@code drawText} 只写 {@code texts} 而不写
+         * {@code xs}/{@code ys}，而断言按同一下标读三个表，
+         * 于是抛 {@code IndexOutOfBoundsException}——
+         * 报错位置看起来像布局算错，实际是替身记录不对齐。
+         * 现在统一走 {@link #record}。
+         */
+        private void record(String text, int x, int y) {
+            texts.add(text);
+            xs.add(x);
+            ys.add(y);
+        }
+
         @Override
         public void drawText(String text, int x, int y, int color) {
-            texts.add(text);
+            record(text, x, y);
         }
 
         /**
@@ -348,15 +375,33 @@ class TwoLineLayoutTest {
          */
         @Override
         public void drawText(String text, int x, int y, int color, boolean shadow) {
-            texts.add(text);
+            record(text, x, y);
         }
 
+        /**
+         * 记录抬升后的实际 y。
+         *
+         * <p>平台层画字时 y 会减去抬升量，替身必须复现这一点，
+         * 否则「抬升幅度」这类断言测的是未抬升的原始基线。
+         */
         @Override
         public void drawTextLifted(String text, int x, int y, float lift,
                                    int color, boolean shadow) {
-            texts.add(text);
-            xs.add(x);
-            ys.add(y);
+            record(text, x, y - Math.round(lift));
+        }
+
+        /**
+         * 字内渐变绘制也要记录。
+         *
+         * <p>现在主行的前沿字走这条路径；不记录的话
+         * 「副行在主行下方」「抬升幅度」这类断言会看不到主行文字，
+         * 断言的失败原因看起来像布局算错，实际是替身漏收。
+         */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       com.linklyric.common.style.GlyphColors colors,
+                                       boolean shadow) {
+            record(glyph, Math.round(x), y - Math.round(lift));
         }
 
         @Override

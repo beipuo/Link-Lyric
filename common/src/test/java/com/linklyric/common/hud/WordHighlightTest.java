@@ -251,10 +251,18 @@ class WordHighlightTest {
             return text == null ? 0 : text.length() * CHAR_WIDTH;
         }
 
-        /** 是否用指定颜色画过文字。 */
+        /**
+         * 是否用指定颜色画过文字。
+         *
+         * <p>要同时看左右两端：字内渐变的一对端点色里，
+         * 未唱色可能只出现在右端，只看左端会漏判。
+         */
         boolean drewColor(int color) {
             for (Call c : calls) {
-                if (sameRgb(c.color, color) && !c.text.isEmpty()) {
+                if (c.text.isEmpty()) {
+                    continue;
+                }
+                if (sameRgb(c.color, color) || sameRgb(c.rightColor, color)) {
                     return true;
                 }
             }
@@ -277,25 +285,27 @@ class WordHighlightTest {
             return 0;
         }
 
+        /**
+         * 实心已唱段的宽度。
+         *
+         * <p>改为按字形边界统计。旧实现从裁剪区反推，是因为
+         * 已唱色曾经靠裁剪限定范围；现在每个字画一次、颜色成对给出，
+         * 已唱进度体现在「左端是否为已唱色」上。
+         *
+         * <p>跨前沿的那个字左右异色，它只有在**左边缘之前**是实心的，
+         * 因此按左边缘计入，不把整个字宽算成已唱——
+         * 否则已唱宽度会虚增一个字宽，推进进度看起来提前。
+         */
         int sungClipWidth() {
             int origin = textOriginX();
-            // 只统计 alpha 最高的那一档，即实心段；羽化段 alpha 更低，
-            // 若混进来会把已唱宽度算大。
-            int peak = 0;
-            for (Call c : calls) {
-                if (sameRgb(c.color, COLOR_SUNG)) {
-                    peak = Math.max(peak, (c.color >>> 24) & 0xFF);
-                }
-            }
             int best = 0;
             for (Call c : calls) {
-                if (!sameRgb(c.color, COLOR_SUNG)) {
+                if (c.text.isEmpty() || !sameRgb(c.color, COLOR_SUNG)) {
                     continue;
                 }
-                if (((c.color >>> 24) & 0xFF) < peak) {
-                    continue;
-                }
-                int right = c.clipWidth > 0 ? c.clipX + c.clipWidth : c.x + c.width;
+                int right = c.rightColor == c.color
+                        ? c.x + c.width   // 整字已唱
+                        : c.x;            // 跨前沿：只算到左边缘
                 best = Math.max(best, right - origin);
             }
             return best;
@@ -337,7 +347,22 @@ class WordHighlightTest {
 
         @Override
         public void drawText(String text, int x, int y, int color) {
-            calls.add(new Call(text, x, y, color, textWidth(text), clipX, clipWidth));
+            calls.add(new Call(text, x, y, color, color, textWidth(text),
+                    clipX, clipWidth));
+        }
+
+        /**
+         * 记录字内渐变绘制。
+         *
+         * <p>不记录就会走默认实现（只取左端色），
+         * 未唱色整类断言都会失败——这正是这一步存在的意义。
+         */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       com.linklyric.common.style.GlyphColors colors,
+                                       boolean shadow) {
+            calls.add(new Call(glyph, Math.round(x), y, colors.left(),
+                    colors.right(), textWidth(glyph), clipX, clipWidth));
         }
 
         @Override
@@ -359,8 +384,8 @@ class WordHighlightTest {
         }
     }
 
-    private record Call(String text, int x, int y, int color, int width,
-                        int clipX, int clipWidth) {
+    private record Call(String text, int x, int y, int color, int rightColor,
+                        int width, int clipX, int clipWidth) {
     }
 
     private static final int COLOR_SUNG = FloatingLyricRenderer.COLOR_SUNG;
