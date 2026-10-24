@@ -71,7 +71,7 @@ class ShadowPlumbingTest {
                 new TestFeeds.Simple());
         renderer.setStyle(LyricStyleConfig.DEFAULT
                 .withShadow(true)
-                .withWeight(LyricStyleConfig.Weight.HEAVY));
+                .withWeight(LyricStyleConfig.Weight.BOLD));
 
         for (int i = 0; i < 5; i++) {
             painter.reset();

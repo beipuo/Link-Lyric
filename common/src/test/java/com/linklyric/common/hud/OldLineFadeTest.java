@@ -219,10 +219,10 @@ class OldLineFadeTest {
      *
      * <p>这是「旧行消失瞬间会抬升一行、后面的行错位一下」的回归测试。
      *
-     * <p>缺陷形态：{@code block} 是按当前 {@code drawableLines} 算的，
-     * {@code block.baseline()} 已经是**新主行**的位置。旧行若画在那里，
-     * 就等于和新顶上来的主行抢同一格；再叠加 {@code blockShift}
-     * 在淡出期间恒为一整行，整块会先挂在「偏移一行」的第三种状态上。
+     * <p>风险来源：{@code block} 按当前 {@code drawableLines} 计算，
+     * {@code block.baseline()} 已经是新主行的位置。旧行若画在那里，
+     * 就等于和新顶上来的主行抢同一格；{@code blockShift} 在淡出期间
+     * 恒为一整行，整块会先挂在「偏移一行」的第三种状态上。
      *
      * <p>正确性质有两条，缺一不可：
      * 旧行的 y 严格小于同一帧主行的 y；
@@ -292,12 +292,9 @@ class OldLineFadeTest {
         assertTrue(!oldYs.isEmpty(),
                 "换行后旧行应被绘制，实际一次都没有");
 
-        // 三条性质。
-        //
-        // 缺陷史：曾用 block.baseline() - blockLineStep() 推旧行位置，
-        // 而块按 drawableLines 居中，换行后行数变化让块整体重新居中，
-        // 基线本身已跳；在其上再减一行，旧行跑到上方一格闪现。
-        // 实测：主行在 213，旧行却画在 190。
+        // 旧行位置不能由 block.baseline() - blockLineStep() 推算：
+        // 块按 drawableLines 居中，换行后行数变化会让块整体重新居中，
+        // 基线本身已经跳过；在其上再减一行，旧行会跑到上方一格闪现。
         //
         // 容差 1px：位置要过 blockShift 的取整。
         for (int y : oldYs) {

@@ -1,5 +1,6 @@
 package com.linklyric.common.config;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 
 import java.util.ArrayList;
@@ -23,28 +24,29 @@ public final class LyricOptions {
     /** 一个可调项。 */
     public enum Option {
         /** 时间偏移，正数表示歌词提前。 */
-        OFFSET_MS("时间偏移", "毫秒", LyricStyleConfig.MIN_OFFSET_MS,
-                LyricStyleConfig.MAX_OFFSET_MS, 10),
+        OFFSET_MS(LangKeys.OPTION_OFFSET, LangKeys.UNIT_MS,
+                LyricStyleConfig.MIN_OFFSET_MS, LyricStyleConfig.MAX_OFFSET_MS, 10),
         /** 行切换时长。 */
-        TRANSITION_MS("切换时长", "毫秒", LyricStyleConfig.MIN_TRANSITION_MS,
-                LyricStyleConfig.MAX_TRANSITION_MS, 10),
+        TRANSITION_MS(LangKeys.OPTION_TRANSITION_MS, LangKeys.UNIT_MS,
+                LyricStyleConfig.MIN_TRANSITION_MS, LyricStyleConfig.MAX_TRANSITION_MS, 10),
         /** 字号缩放。 */
-        LINE_SCALE("字号", "倍", 100, 200, 1),
+        LINE_SCALE(LangKeys.OPTION_LINE_SCALE, LangKeys.UNIT_TIMES, 100, 200, 1),
         /** 最大宽度占比。 */
-        WIDTH_RATIO("最大宽度", "%", 30, 100, 1),
+        WIDTH_RATIO(LangKeys.OPTION_MAX_WIDTH, LangKeys.UNIT_PERCENT, 30, 100, 1),
         /** 整体不透明度，10% 到 100%。 */
-        OPACITY("不透明度", "%", Math.round(LyricStyleConfig.MIN_OPACITY * 100f),
-                100, 1);
+        OPACITY(LangKeys.OPTION_OPACITY, LangKeys.UNIT_PERCENT,
+                Math.round(LyricStyleConfig.MIN_OPACITY * 100f), 100, 1);
 
-        public final String label;
-        public final String unit;
+        /** 名称与单位的语言键。 */
+        public final String labelKey;
+        public final String unitKey;
         public final int min;
         public final int max;
         public final int step;
 
-        Option(String label, String unit, int min, int max, int step) {
-            this.label = label;
-            this.unit = unit;
+        Option(String labelKey, String unitKey, int min, int max, int step) {
+            this.labelKey = labelKey;
+            this.unitKey = unitKey;
             this.min = min;
             this.max = max;
             this.step = step;
@@ -93,22 +95,23 @@ public final class LyricOptions {
             return Math.max(min, Math.min(max, snapped));
         }
 
-        /** 供界面显示的文本，如 {@code 120 毫秒}。 */
-        public String display(LyricStyleConfig style) {
-            return readRaw(style) + " " + unit;
+        /** 数值部分，供界面与单位拼接。 */
+        public String displayValue(LyricStyleConfig style) {
+            return String.valueOf(readRaw(style));
         }
     }
 
     /** 颜色项的标识；界面据此打开对应调色板。 */
     public enum ColorTarget {
-        SUNG("已唱色"),
-        UNSUNG("未唱色"),
-        TRANSLATION("翻译色");
+        SUNG(LangKeys.COLOR_TARGET_SUNG),
+        UNSUNG(LangKeys.COLOR_TARGET_UNSUNG),
+        TRANSLATION(LangKeys.COLOR_TARGET_TRANSLATION);
 
-        public final String label;
+        /** 名称的语言键。 */
+        public final String labelKey;
 
-        ColorTarget(String label) {
-            this.label = label;
+        ColorTarget(String labelKey) {
+            this.labelKey = labelKey;
         }
 
         public int read(LyricStyleConfig style) {

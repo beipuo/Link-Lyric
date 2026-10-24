@@ -1,5 +1,6 @@
 package com.linklyric.neoforge;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.hud.LyricDragController;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -33,19 +34,19 @@ final class NeoForgeLyricCommand {
                 .then(Commands.literal("on").executes(ctx -> {
                     controller.enable();
                     ctx.getSource().sendSuccess(
-                            () -> Component.literal("歌词已开启"), false);
+                            () -> Component.translatable(LangKeys.COMMAND_ON), false);
                     return 1;
                 }))
                 .then(Commands.literal("off").executes(ctx -> {
                     controller.disable();
                     ctx.getSource().sendSuccess(
-                            () -> Component.literal("歌词已关闭"), false);
+                            () -> Component.translatable(LangKeys.COMMAND_OFF), false);
                     return 1;
                 }))
                 .then(Commands.literal("config").executes(ctx -> {
                     LinkLyricNeoForge.openConfigScreen();
                     ctx.getSource().sendSuccess(
-                            () -> Component.literal("已打开歌词配置"), false);
+                            () -> Component.translatable(LangKeys.COMMAND_OPEN_CONFIG), false);
                     return 1;
                 }))
                 .then(Commands.literal("location")
@@ -59,7 +60,7 @@ final class NeoForgeLyricCommand {
                         .then(Commands.literal("reset").executes(ctx -> {
                             controller.reset();
                             ctx.getSource().sendSuccess(
-                                    () -> Component.literal("歌词位置已复位"), false);
+                                    () -> Component.translatable(LangKeys.COMMAND_RESET), false);
                             return 1;
                         })));
         dispatcher.register(root);

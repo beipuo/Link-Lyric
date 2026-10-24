@@ -1,5 +1,6 @@
 package com.linklyric.neoforge;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
 import net.minecraft.client.Minecraft;
@@ -60,7 +61,7 @@ final class LyricLocationScreen extends Screen {
         int centerX = width / 2;
         int y = height - 34;
         addOwned(Button.builder(
-                        Component.literal("保存"),
+                        Component.translatable(LangKeys.SAVE),
                         b -> {
                             controller.commit();
                             close();
@@ -69,7 +70,7 @@ final class LyricLocationScreen extends Screen {
                         BUTTON_WIDTH, BUTTON_HEIGHT)
                 .build());
         addOwned(Button.builder(
-                        Component.literal("取消"),
+                        Component.translatable(LangKeys.CANCEL),
                         b -> {
                             controller.revert();
                             close();

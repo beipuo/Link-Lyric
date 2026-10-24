@@ -349,11 +349,9 @@ class TwoLineLayoutTest {
         /**
          * 三条绘制入口必须记录同样的三元组。
          *
-         * <p>曾经四参/五参 {@code drawText} 只写 {@code texts} 而不写
-         * {@code xs}/{@code ys}，而断言按同一下标读三个表，
-         * 于是抛 {@code IndexOutOfBoundsException}——
-         * 报错位置看起来像布局算错，实际是替身记录不对齐。
-         * 现在统一走 {@link #record}。
+         * <p>断言按同一下标读 {@code texts}/{@code xs}/{@code ys} 三个表，
+         * 任一路径漏记一个就会错位并抛 {@code IndexOutOfBoundsException}，
+         * 报错位置看起来像布局算错。因此统一走 {@link #record}。
          */
         private void record(String text, int x, int y) {
             texts.add(text);

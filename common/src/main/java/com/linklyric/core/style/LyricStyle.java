@@ -8,7 +8,7 @@ package com.linklyric.core.style;
  * 独立的 Renderer 实现。
  *
  * @param id                 样式标识，用于配置持久化
- * @param displayName        展示名
+ * @param displayName        展示名，存语言键，由平台层翻译
  * @param anchor             挂载位置
  * @param chrome             外观容器
  * @param lineHeight         行高（GUI 像素）
@@ -58,29 +58,42 @@ public record LyricStyle(
         PROGRESS_BAR
     }
 
+    /**
+     * 样式预设的展示名语言键。
+     *
+     * <p>定义在此而非 {@code common.i18n.LangKeys}，因为 {@code core} 是被
+     * {@code common} 依赖的下层，不能反向引用。{@code LangKeys} 中登记了
+     * 同一批键，测试锁住两份一致。
+     */
+    public static final String KEY_SUBTITLE = "linklyric.style.subtitle";
+    public static final String KEY_ISLAND = "linklyric.style.island";
+    public static final String KEY_SIDEBAR = "linklyric.style.sidebar";
+    public static final String KEY_HOTBAR = "linklyric.style.hotbar";
+    public static final String KEY_FLOATING = "linklyric.style.floating";
+
     /** 默认样式：底部单行字幕。默认必须是不打扰的。 */
     public static final LyricStyle SUBTITLE = new LyricStyle(
-            "subtitle", "底部字幕", Anchor.BOTTOM_CENTER, Chrome.NONE,
+            "subtitle", KEY_SUBTITLE, Anchor.BOTTOM_CENTER, Chrome.NONE,
             10f, 1.0f, 0.0f, 0L, true, false);
 
     /** 灵动岛：顶部居中横条，MC 原生风格，非圆角胶囊。 */
     public static final LyricStyle ISLAND = new LyricStyle(
-            "island", "灵动岛", Anchor.TOP_CENTER, Chrome.BOSS_BAR,
+            "island", KEY_ISLAND, Anchor.TOP_CENTER, Chrome.BOSS_BAR,
             10f, 1.05f, 0.45f, 320L, true, true);
 
     /** 侧边栏：右侧竖排多行。 */
     public static final LyricStyle SIDEBAR = new LyricStyle(
-            "sidebar", "侧边栏", Anchor.SIDE_RIGHT, Chrome.PANEL,
+            "sidebar", KEY_SIDEBAR, Anchor.SIDE_RIGHT, Chrome.PANEL,
             10f, 1.1f, 0.55f, 320L, true, true);
 
     /** 物品栏：进度条式，不做遮挡血量与饥饿度。 */
     public static final LyricStyle HOTBAR = new LyricStyle(
-            "hotbar", "物品栏", Anchor.ABOVE_HOTBAR, Chrome.PROGRESS_BAR,
+            "hotbar", KEY_HOTBAR, Anchor.ABOVE_HOTBAR, Chrome.PROGRESS_BAR,
             9f, 1.0f, 0.0f, 0L, false, false);
 
     /** 悬浮：可拖动自由定位。 */
     public static final LyricStyle FLOATING = new LyricStyle(
-            "floating", "悬浮歌词", Anchor.FLOATING, Chrome.BORDERED,
+            "floating", KEY_FLOATING, Anchor.FLOATING, Chrome.BORDERED,
             10f, 1.0f, 0.5f, 240L, true, true);
 
     public LyricStyle {

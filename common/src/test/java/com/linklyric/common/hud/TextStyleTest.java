@@ -66,22 +66,29 @@ class TextStyleTest {
         assertEquals(LyricStyleConfig.Align.CENTER, c.align());
     }
 
-    /** 字重层数必须是奇数，否则中心会偏半个像素。 */
+    /** 字重只有原版支持的两档，每档都必须有可翻译的名称。 */
     @Test
-    void 字重层数为奇数() {
+    void 字重档位完整() {
+        assertEquals(2, LyricStyleConfig.Weight.values().length,
+                "原版只有常规与加粗两档");
         for (LyricStyleConfig.Weight w : LyricStyleConfig.Weight.values()) {
-            assertEquals(1, w.layers % 2, w + " 的层数应为奇数，实际=" + w.layers);
-            assertTrue(w.layers >= 1);
+            assertNotNull(w.labelKey, w + " 必须有语言键");
+            assertFalse(w.labelKey.isEmpty());
         }
     }
 
-    /** 三档字重必须递增，否则按钮点了看不出区别。 */
+    /** 加粗必须通过样式符交给字体管线，而不是自己叠描边。 */
     @Test
-    void 字重递增() {
-        assertTrue(LyricStyleConfig.Weight.REGULAR.layers
-                < LyricStyleConfig.Weight.BOLD.layers);
-        assertTrue(LyricStyleConfig.Weight.BOLD.layers
-                < LyricStyleConfig.Weight.HEAVY.layers);
+    void 加粗由样式符表达() {
+        FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
+        r.setStyle(base().withWeight(LyricStyleConfig.Weight.BOLD));
+        CountingPainter painter = new CountingPainter();
+        r.render(painter);
+
+        assertTrue(painter.texts.stream().anyMatch(t -> t.contains("\u00a7l")),
+                "加粗应出现 §l，实际=" + painter.texts);
+        assertTrue(painter.texts.stream().anyMatch(t -> t.contains("\u00a7r")),
+                "加粗必须补 §r 复位，实际=" + painter.texts);
     }
 
     /** 字号缩放必须真的进入绘制路径。 */
@@ -112,7 +119,7 @@ class TextStyleTest {
     /**
      * 加粗不增加绘制次数，而是通过样式前缀交给原版字体管线。
      *
-     * <p>先前靠像素偏移重复绘制模拟加粗，那绕过了字体管线的度量，
+     * <p>用像素偏移重复绘制模拟加粗会绕过字体管线的度量，
      * 既不改字形也不改字距，只会得到错位副本（重影与颗粒）。
      * MC 的 {@code Style.isBold()} 会走
      * {@code glyphInfo.getBoldOffset()} 与 {@code getAdvance(bold)}，
@@ -349,6 +356,7 @@ class TextStyleTest {
 
     private static class CountingPainter implements FloatingLyricRenderer.Painter {
         int draws;
+        final java.util.List<String> texts = new java.util.ArrayList<>();
 
         @Override
         public int screenWidth() {
@@ -368,11 +376,13 @@ class TextStyleTest {
         @Override
         public void drawText(String text, int x, int y, int color) {
             draws++;
+            texts.add(text);
         }
 
         @Override
         public void drawText(String text, int x, int y, int color, boolean shadow) {
             draws++;
+            texts.add(text);
         }
 
         // 支持裁剪才能走到卡拉 OK 路径；否则渲染器退化为整单元覆盖，

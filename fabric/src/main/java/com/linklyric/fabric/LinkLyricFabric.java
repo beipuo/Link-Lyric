@@ -10,6 +10,7 @@ import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
 import net.fabricmc.loader.api.FabricLoader;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -40,6 +41,8 @@ public final class LinkLyricFabric implements ClientModInitializer {
         source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT);
         source.start();
         renderer = new FloatingLyricRenderer(source);
+        // 界面文案由游戏的语言文件提供，渲染器只持有键名。
+        renderer.setTextResolver(key -> Component.translatable(key).getString());
 
         // 位置持久化到 config 目录：换存档、换分辨率都跟着玩家走。
         LayoutConfig layout = LayoutConfig.load(

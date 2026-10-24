@@ -1,5 +1,6 @@
 package com.linklyric.fabric;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.hud.LyricDragController;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -34,19 +35,19 @@ final class FabricLyricCommand {
                 .then(literal("on").executes(ctx -> {
                     controller.enable();
                     ctx.getSource().sendFeedback(
-                            Component.literal("歌词已开启"));
+                            Component.translatable(LangKeys.COMMAND_ON));
                     return 1;
                 }))
                 .then(literal("off").executes(ctx -> {
                     controller.disable();
                     ctx.getSource().sendFeedback(
-                            Component.literal("歌词已关闭"));
+                            Component.translatable(LangKeys.COMMAND_OFF));
                     return 1;
                 }))
                 .then(literal("config").executes(ctx -> {
                     // 配置界面用原版控件，改动即时生效。
                     LinkLyricFabric.openConfigScreen();
-                    ctx.getSource().sendFeedback(Component.literal("已打开歌词配置"));
+                    ctx.getSource().sendFeedback(Component.translatable(LangKeys.COMMAND_OPEN_CONFIG));
                     return 1;
                 }))
                 .then(literal("location")
@@ -60,7 +61,7 @@ final class FabricLyricCommand {
                         .then(literal("reset").executes(ctx -> {
                             controller.reset();
                             ctx.getSource().sendFeedback(
-                                    Component.literal("歌词位置已复位"));
+                                    Component.translatable(LangKeys.COMMAND_RESET));
                             return 1;
                         })));
         dispatcher.register(root);

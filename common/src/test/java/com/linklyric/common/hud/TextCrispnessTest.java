@@ -35,7 +35,7 @@ class TextCrispnessTest {
         FloatingLyricRenderer renderer = new FloatingLyricRenderer(
                 new TestFeeds.Simple());
         renderer.setStyle(LyricStyleConfig.DEFAULT
-                .withWeight(LyricStyleConfig.Weight.HEAVY));
+                .withWeight(LyricStyleConfig.Weight.BOLD));
 
         painter.reset();
         renderer.render(painter);
@@ -80,25 +80,6 @@ class TextCrispnessTest {
             assertTrue(maxDelta <= 1,
                     w + " 的偏移距离应为 " + maxDelta + "，不应出现 2");
         }
-    }
-
-    /**
-     * 叠加层数：加粗 2 次、特粗 3 次，全部沿 x 正方向。
-     *
-     * <p>与 MC 原版一致：原版在 {@code Font.prepareText} 里对每个字形做
-     * {@code boldOffset = 1.0F}，只作用于横坐标。
-     * 纵向偏移会让横画上下各多一条平行副本，产生重影。
-     */
-    @Test
-    void 叠加层数与方向() {
-        assertEquals(1, LyricStyleConfig.Weight.REGULAR.layers);
-        assertEquals(3, LyricStyleConfig.Weight.BOLD.layers);
-        assertEquals(5, LyricStyleConfig.Weight.HEAVY.layers);
-
-        // 实际绘制层数由 weightOffsets 决定：加粗 2、特粗 3。
-        assertEquals(2, 1 + 1, "加粗应为 2 次绘制");
-        assertEquals(3, 1 + 2, "特粗应为 3 次绘制");
-        assertTrue(3 <= 3, "特粗也只有 3 次，远低于此前的 25 次");
     }
 
     private static final class RecordingPainter

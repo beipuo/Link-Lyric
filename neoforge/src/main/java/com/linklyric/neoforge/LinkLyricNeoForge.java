@@ -4,6 +4,7 @@ import com.linklyric.common.bridge.BridgePlaybackSource;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.neoforge.render.GradientPainter;
+import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -45,6 +46,8 @@ public final class LinkLyricNeoForge {
         source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT);
         source.start();
         renderer = new FloatingLyricRenderer(source);
+        // 界面文案由游戏的语言文件提供，渲染器只持有键名。
+        renderer.setTextResolver(key -> Component.translatable(key).getString());
 
         LayoutConfig layout = LayoutConfig.load(FMLPaths.CONFIGDIR.get());
         dragController = new LyricDragController(renderer, layout);

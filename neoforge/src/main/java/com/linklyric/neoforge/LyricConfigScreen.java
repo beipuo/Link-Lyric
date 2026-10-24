@@ -4,6 +4,7 @@ import com.linklyric.common.config.LyricOptions;
 import com.linklyric.common.config.LyricOptions.Option;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
@@ -13,7 +14,6 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -103,10 +103,10 @@ final class LyricConfigScreen extends Screen {
         }
 
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.literal("羽化：开"), Component.literal("羽化：关"))
+                        Component.translatable(LangKeys.FEATHER_ON), Component.translatable(LangKeys.FEATHER_OFF))
                 .withInitialValue(controller.style().feather())
                 .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
-                        Component.literal("切换过渡"),
+                        Component.translatable(LangKeys.TRANSITION),
                         (button, value) -> {
                             apply(style -> style.withFeather(value));
                             // 重建控件：滑条与开关的显示值必须同步。
@@ -116,19 +116,19 @@ final class LyricConfigScreen extends Screen {
 
         // 字重：三档循环。原版没有粗体字库，靠叠加描边模拟。
         addScrollWidget(cycleEnum(LyricStyleConfig.Weight.class, controller.style().weight(),
-                left, y, "字重", 0, (style, value) -> style.withWeight(value)));
+                left, y, LangKeys.OPTION_WEIGHT, 0, (style, value) -> style.withWeight(value)));
         y += ROW_HEIGHT + ROW_GAP;
 
         // 对齐：影响主行与副行的水平锚点。
         addScrollWidget(cycleEnum(LyricStyleConfig.Align.class, controller.style().align(),
-                left, y, "对齐", 0, (style, value) -> style.withAlign(value)));
+                left, y, LangKeys.OPTION_ALIGN, 0, (style, value) -> style.withAlign(value)));
         y += ROW_HEIGHT + ROW_GAP;
 
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.literal("阴影：开"), Component.literal("阴影：关"))
+                        Component.translatable(LangKeys.SHADOW_ON), Component.translatable(LangKeys.SHADOW_OFF))
                 .withInitialValue(controller.style().shadow())
                 .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
-                        Component.literal("文字阴影"),
+                        Component.translatable(LangKeys.SHADOW),
                         (button, value) -> {
                             apply(style -> style.withShadow(value));
                             rebuildWidgets();
@@ -142,7 +142,7 @@ final class LyricConfigScreen extends Screen {
 
         // 显示行数：1 到 10。
         addScrollWidget(Button.builder(
-                        Component.literal("行数：" + controller.style().lineCount()),
+                        Component.translatable(LangKeys.LINE_COUNT, controller.style().lineCount()),
                         b -> {
                             int raw = controller.style().lineCount() + 1;
                             // 循环回到最小值，而不是夹在上限——
@@ -165,7 +165,7 @@ final class LyricConfigScreen extends Screen {
 
         // 颜色只留一个入口：三项颜色在调色页里切换，避免主界面被按钮占满。
         addScrollWidget(Button.builder(
-                        Component.literal("字体颜色…"),
+                        Component.translatable(LangKeys.FONT_COLOR),
                         b -> minecraft.setScreen(new ColorPickerScreen(this)))
                 .bounds(left, y, COLUMN_WIDTH, ROW_HEIGHT)
                 .build());
@@ -173,10 +173,10 @@ final class LyricConfigScreen extends Screen {
 
         int ry = 0;
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.literal("歌词：开"), Component.literal("歌词：关"))
+                        Component.translatable(LangKeys.LYRICS_ON), Component.translatable(LangKeys.LYRICS_OFF))
                 .withInitialValue(controller.isEnabled())
                 .create(right, ry, COLUMN_WIDTH, ROW_HEIGHT,
-                        Component.literal("总开关"),
+                        Component.translatable(LangKeys.MASTER_SWITCH),
                         (button, value) -> {
                             if (value) {
                                 controller.enable();
@@ -187,7 +187,7 @@ final class LyricConfigScreen extends Screen {
         ry += ROW_HEIGHT + ROW_GAP;
 
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.literal("数据源：已启用"), Component.literal("数据源：已禁用"))
+                        Component.translatable(LangKeys.SOURCE_ENABLED), Component.translatable(LangKeys.SOURCE_DISABLED))
                 .withInitialValue(controller.isSourceEnabled())
                 .create(right, ry, COLUMN_WIDTH, ROW_HEIGHT,
                         Component.literal("Salt Player"),
@@ -195,7 +195,7 @@ final class LyricConfigScreen extends Screen {
         ry += ROW_HEIGHT + ROW_GAP;
 
         addScrollWidget(Button.builder(
-                        Component.literal("调整位置…"),
+                        Component.translatable(LangKeys.ADJUST_POSITION),
                         b -> {
                             // 保留父界面引用，保存/取消后回到本页。
                             if (minecraft != null) {
@@ -207,7 +207,7 @@ final class LyricConfigScreen extends Screen {
                 .build());
         ry += ROW_HEIGHT + ROW_GAP;
 
-        addScrollWidget(Button.builder(Component.literal("恢复默认"),
+        addScrollWidget(Button.builder(Component.translatable(LangKeys.RESET_DEFAULT),
                         b -> restoreDefaults())
                 .bounds(right, ry, COLUMN_WIDTH, ROW_HEIGHT)
                 .build());
@@ -219,10 +219,10 @@ final class LyricConfigScreen extends Screen {
 
         // 底部按钮固定在滚动区之外。
         int bottom = height - FOOTER_HEIGHT + 6;
-        addFooterWidget(Button.builder(Component.literal("完成"), b -> onClose())
+        addFooterWidget(Button.builder(Component.translatable(LangKeys.DONE), b -> onClose())
                 .bounds(width / 2 - 102, bottom, 100, ROW_HEIGHT)
                 .build());
-        addFooterWidget(Button.builder(Component.literal("取消"), b -> cancel())
+        addFooterWidget(Button.builder(Component.translatable(LangKeys.CANCEL), b -> cancel())
                 .bounds(width / 2 + 2, bottom, 100, ROW_HEIGHT)
                 .build());
     }
@@ -265,7 +265,8 @@ final class LyricConfigScreen extends Screen {
                                                                  LyricStyleConfig, E,
                                                                  LyricStyleConfig> writer) {
         E[] values = type.getEnumConstants();
-        return Button.builder(Component.literal(label + "：" + displayOf(initial)),
+        return Button.builder(Component.translatable(LangKeys.OPTION_ENUM_FORMAT,
+                        Component.translatable(label), displayOf(initial)),
                 b -> {
                     // 基准取当前样式里的值，而不是创建按钮时的快照：
                     // 按钮可能活过多轮点击，用快照会导致第一次之后永远只在
@@ -295,13 +296,21 @@ final class LyricConfigScreen extends Screen {
         return type.getEnumConstants()[0];
     }
 
-    /** 取枚举的显示名。两种枚举都带 label 字段，用反射取值以免写两套分支。 */
-    private static String displayOf(Enum<?> value) {
+    /**
+     * 取枚举的显示名。
+     *
+     * <p>样式枚举各自持有语言键字段 {@code labelKey}，界面文本由此翻译得到。
+     */
+    private static Component displayOf(Enum<?> value) {
         try {
-            return (String) value.getClass().getField("label").get(value);
-        } catch (ReflectiveOperationException e) {
-            return value.name();
+            Object key = value.getClass().getField("labelKey").get(value);
+            if (key instanceof String s && !s.isEmpty()) {
+                return Component.translatable(s);
+            }
+        } catch (ReflectiveOperationException ignored) {
+            // 无键的枚举退回常量名
         }
+        return Component.literal(value.name());
     }
 
     /** 应用样式变更：立刻写进渲染器，预览即时生效。 */
@@ -422,7 +431,8 @@ final class LyricConfigScreen extends Screen {
 
         OptionSlider(int x, int y, int width, Option option) {
             super(x, y, width, ROW_HEIGHT,
-                    Component.literal(option.display(controller.style())),
+                    Component.literal(option.displayValue(controller.style())
+                        + " " + Component.translatable(option.unitKey).getString()),
                     option.read(controller.style()));
             this.option = option;
             updateMessage();
@@ -430,8 +440,10 @@ final class LyricConfigScreen extends Screen {
 
         @Override
         protected void updateMessage() {
-            setMessage(Component.literal(
-                    option.label + "：" + option.display(controller.style())));
+            setMessage(Component.translatable(LangKeys.OPTION_VALUE_FORMAT,
+                    Component.translatable(option.labelKey),
+                    option.displayValue(controller.style()),
+                    Component.translatable(option.unitKey)));
         }
 
         @Override

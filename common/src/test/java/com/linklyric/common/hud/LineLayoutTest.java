@@ -1,5 +1,6 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 import org.junit.jupiter.api.Test;
 
@@ -103,13 +104,16 @@ class LineLayoutTest {
                 LyricStyleConfig.DEFAULT.withLineCount(0).lineCount());
     }
 
-    /** 间奏三档必须有正确的绘制内容。 */
+    /** 间奏三档：空白档不出画，其余两档各自持有语言键或字面量。 */
     @Test
     void 间奏样式内容() {
         assertEquals("", LyricStyleConfig.InterludeStyle.BLANK.text,
                 "空白档不应绘制任何文字");
-        assertEquals("···", LyricStyleConfig.InterludeStyle.DOTS.text);
-        assertEquals("间奏", LyricStyleConfig.InterludeStyle.TEXT.text);
+        assertEquals("···", LyricStyleConfig.InterludeStyle.DOTS.text,
+                "点号不随语言变化");
+        assertEquals(LangKeys.INTERLUDE_DEFAULT,
+                LyricStyleConfig.InterludeStyle.TEXT.text,
+                "间奏文本应由语言文件提供");
     }
 
     /** 间奏默认应保留可见提示，不能无意中变成空白。 */

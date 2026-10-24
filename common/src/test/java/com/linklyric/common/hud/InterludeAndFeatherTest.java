@@ -1,5 +1,6 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
@@ -62,7 +63,8 @@ class InterludeAndFeatherTest {
                 new FloatingLyricRenderer(new Feed(timeline, 10000L, true));
 
         assertTrue(renderer.render(painter), "间奏期应有内容可画");
-        assertTrue(painter.texts.contains("间奏"),
+        // 未注入解析器时键名原样出画，据此验证间奏提示确实被绘制。
+        assertTrue(painter.texts.contains(LangKeys.INTERLUDE_DEFAULT),
                 "应显示间奏提示，实际绘制=" + painter.texts);
         assertFalse(painter.texts.contains("第一句"),
                 "不应继续显示上一句，否则看起来像卡住");

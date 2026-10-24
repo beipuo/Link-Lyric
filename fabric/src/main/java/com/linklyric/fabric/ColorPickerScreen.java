@@ -1,5 +1,6 @@
 package com.linklyric.fabric;
 
+import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
 import com.linklyric.common.style.ColorSquare;
@@ -27,12 +28,15 @@ final class ColorPickerScreen extends Screen {
 
     /** 调整目标。 */
     private enum Slot {
-        SUNG("已唱"), UNSUNG("未唱"), TRANSLATION("翻译"), RESET("重置");
+        SUNG(LangKeys.SLOT_SUNG),
+        UNSUNG(LangKeys.SLOT_UNSUNG),
+        TRANSLATION(LangKeys.SLOT_TRANSLATION),
+        RESET(LangKeys.SLOT_RESET);
 
-        final String label;
+        final String labelKey;
 
-        Slot(String label) {
-            this.label = label;
+        Slot(String labelKey) {
+            this.labelKey = labelKey;
         }
     }
 
@@ -62,7 +66,7 @@ final class ColorPickerScreen extends Screen {
     private boolean draggingHue;
 
     ColorPickerScreen(Screen parent) {
-        super(Component.literal("字体颜色"));
+        super(Component.translatable(LangKeys.COLOR_TITLE));
         this.parent = parent;
     }
 
@@ -109,7 +113,7 @@ final class ColorPickerScreen extends Screen {
         int leftX = Math.max(12, width / 2 - 190);
         int y = PREVIEW_TOP + PREVIEW_HEIGHT + 16;
         for (Slot candidate : Slot.values()) {
-            addOwned(Button.builder(Component.literal(candidate.label), btn -> {
+            addOwned(Button.builder(Component.translatable(candidate.labelKey), btn -> {
                 if (candidate == Slot.RESET) {
                     resetColors();
                 } else {
@@ -126,13 +130,13 @@ final class ColorPickerScreen extends Screen {
         hueY = squareY + SQUARE_SIZE + GAP;
 
         hexBox = new EditBox(font, squareX, hueY + HUE_HEIGHT + GAP, 96, 18,
-                Component.literal("颜色编码"));
+                Component.translatable(LangKeys.COLOR_CODE));
         hexBox.setMaxLength(9);
         hexBox.setValue(HsvColor.format(currentColor()));
         hexBox.setResponder(this::onHexTyped);
         addOwned(hexBox);
 
-        addOwned(Button.builder(Component.literal("完成"), b -> onClose())
+        addOwned(Button.builder(Component.translatable(LangKeys.DONE), b -> onClose())
                 .bounds(width / 2 - 50, height - 32, 100, BUTTON_H).build());
     }
 
@@ -197,7 +201,8 @@ final class ColorPickerScreen extends Screen {
         }
         renderer.render(LinkLyricFabric.painterFor(graphics, client));
 
-        graphics.drawString(font, "正在调整：" + slot.label,
+        graphics.drawString(font, Component.translatable(LangKeys.COLOR_ADJUSTING,
+                    Component.translatable(slot.labelKey)).getString(),
                 squareX, squareY - 12, 0xFFFFFFFF, false);
 
         drawSquare(graphics);

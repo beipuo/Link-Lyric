@@ -1,5 +1,7 @@
 package com.linklyric.common.style;
 
+import com.linklyric.common.i18n.LangKeys;
+
 /**
  * 用户可调的歌词样式参数。
  *
@@ -41,14 +43,14 @@ public record LyricStyleConfig(
     /** 间奏提示的显示方式。 */
     public enum InterludeStyle {
         /** 完全不出画，保持空白。 */
-        BLANK("空白", ""),
+        BLANK(LangKeys.INTERLUDE_BLANK, ""),
         /** 三个点，最安静的状态说明。 */
         DOTS("···", "···"),
-        /** 直接写「间奏」。 */
-        TEXT("间奏", "间奏");
+        /** 直接写「间奏」，文案可翻译。 */
+        TEXT(LangKeys.INTERLUDE_DEFAULT, LangKeys.INTERLUDE_DEFAULT);
 
         public final String label;
-        /** 实际绘制内容；空串表示不出画。 */
+        /** 绘制内容的语言键；空串表示不出画。 */
         public final String text;
 
         InterludeStyle(String label, String text) {
@@ -64,35 +66,38 @@ public record LyricStyleConfig(
     /** 整体不透明度下限：再低就接近不可见，没有实际意义。 */
     public static final float MIN_OPACITY = 0.1f;
 
-    /** 字重。原版字体只有一种笔画粗细，这里用叠加描边模拟。 */
+    /**
+     * 字重。
+     *
+     * <p>原版字体管线只提供「常规」与「加粗」两档，{@code §l} 会在度量阶段
+     * 同时改字形与字距，因此这里只需要两档。配置文件里的旧值
+     * （例如已移除的 {@code HEAVY}）由解析器回退到默认值。
+     */
     public enum Weight {
-        /** 常规：单层绘制。 */
-        REGULAR("常规", 1),
-        /** 加粗：同位置偏移叠加，笔画变实。 */
-        BOLD("加粗", 3),
-        /** 特粗：更大偏移范围，代价是边缘略糊。 */
-        HEAVY("特粗", 5);
+        /** 常规字重。 */
+        REGULAR(LangKeys.WEIGHT_REGULAR),
+        /** 加粗，由 {@code §l} 交给字体管线处理。 */
+        BOLD(LangKeys.WEIGHT_BOLD);
 
-        public final String label;
-        /** 叠加层数，奇数保证中心对齐。 */
-        public final int layers;
+        /** 名称的语言键。 */
+        public final String labelKey;
 
-        Weight(String label, int layers) {
-            this.label = label;
-            this.layers = layers;
+        Weight(String labelKey) {
+            this.labelKey = labelKey;
         }
     }
 
     /** 水平对齐。 */
     public enum Align {
-        LEFT("左对齐"),
-        CENTER("居中"),
-        RIGHT("右对齐");
+        LEFT(LangKeys.ALIGN_LEFT),
+        CENTER(LangKeys.ALIGN_CENTER),
+        RIGHT(LangKeys.ALIGN_RIGHT);
 
-        public final String label;
+        /** 名称的语言键。 */
+        public final String labelKey;
 
-        Align(String label) {
-            this.label = label;
+        Align(String labelKey) {
+            this.labelKey = labelKey;
         }
     }
 
