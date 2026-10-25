@@ -237,6 +237,15 @@ public record LyricStyleConfig(
         // 而界面上没有「看不见」这个预期，用户会以为模组坏了。
         opacity = clampFloat(opacity, MIN_OPACITY, 1f);
         weightPercent = clamp(weightPercent, MIN_WEIGHT_PERCENT, MAX_WEIGHT_PERCENT);
+        // 下面三项此前只在对应的 with* 方法里夹取，构造器本身没有。
+        // 而 LayoutConfig.read() 是直接调构造器的（21 个参数一次填满），
+        // 于是手改配置文件把 lineGap 写成 999 就能穿透到渲染层：
+        // 行距会让歌词彼此叠印，描边宽度会让笔画糊成一团，
+        // 描边不透明度 999% 会经 strokeArgb() 溢出成 0xF3 的 alpha。
+        // 夹取必须收口在构造器，否则「哪个入口记得夹」就成了运气问题。
+        lineGapPx = clamp(lineGapPx, MIN_LINE_GAP, MAX_LINE_GAP);
+        strokePx = clamp(strokePx, MIN_STROKE_PX, MAX_STROKE_PX);
+        strokeAlphaPercent = clamp(strokeAlphaPercent, MIN_STROKE_ALPHA, MAX_STROKE_ALPHA);
     }
 
     private static int clamp(int value, int min, int max) {
@@ -355,7 +364,7 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke,
-                Math.max(MIN_STROKE_PX, Math.min(MAX_STROKE_PX, value)),
+                value,
                 strokeColor, strokeAlphaPercent);
     }
 
@@ -374,7 +383,7 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
-                Math.max(MIN_STROKE_ALPHA, Math.min(MAX_STROKE_ALPHA, value)));
+                value);
     }
 
     /**
@@ -393,7 +402,7 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow,
-                Math.max(MIN_LINE_GAP, Math.min(MAX_LINE_GAP, value)),
+                value,
                 stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
