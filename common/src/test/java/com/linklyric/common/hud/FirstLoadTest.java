@@ -75,11 +75,11 @@ class FirstLoadTest {
         LineTransition transition = new LineTransition();
         // 第一次 update 是「首次出画」，不是换行
         transition.update(0, 0L, 700L);
-        assertEquals(0, transition.blockShift(700L),
+        assertEquals(0, transition.blockShift(700L, LyricGeometry.LINE_STEP),
                 "首次出画应已就位，不得把整块歌词从下方滑上来");
         // 紧接一次真正的换行，过渡必须照常启动
         transition.update(1, 0L, 700L);
-        assertEquals(LyricGeometry.LINE_STEP, transition.blockShift(700L),
+        assertEquals(LyricGeometry.LINE_STEP, transition.blockShift(700L, LyricGeometry.LINE_STEP),
                 "换行仍应上移一整行");
     }
 

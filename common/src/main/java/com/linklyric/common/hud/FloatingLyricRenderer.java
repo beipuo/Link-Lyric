@@ -607,7 +607,10 @@ public final class FloatingLyricRenderer {
         // 行切换：其余行连续上移一行补位。旧主行直接在换行瞬间消失，
         // 理由见 {@link LineTransition} 的类注释。
         long durationMs = style.lineTransitionMs();
-        int blockShift = transition.blockShift(durationMs);
+        // 位移步长取真实行步长（行高 + 当前行距），与上面 LineLayout.compute
+        // 用的是同一个 gap。写死常量的话，改行距后收起的那一像素会以跳格收尾。
+        int lineStep = LyricGeometry.LINE_HEIGHT + this.style.lineGapPx();
+        int blockShift = transition.blockShift(durationMs, lineStep);
         int mainBaselineY = block.baseline() + blockShift;
 
         // 字号缩放：整块（主行 + 副行）一起放大缩小。

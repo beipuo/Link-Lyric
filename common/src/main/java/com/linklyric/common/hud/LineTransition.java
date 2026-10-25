@@ -77,9 +77,19 @@ final class LineTransition {
         return elapsedNanos < durationMs * 1_000_000L;
     }
 
-    /** 整行上移的位移量，单位为行步长。0 表示已就位。 */
-    int blockShift(long durationMs) {
-        return Math.round(LyricGeometry.LINE_STEP
+    /**
+     * 整行上移的位移量（像素）。0 表示已就位。
+     *
+     * @param durationMs 用户设定的切换时长
+     * @param lineStep   一行加上行距的实际步长
+     *
+     * <p>步长必须由调用方传真实值。此前这里写死 {@code LyricGeometry.LINE_STEP}，
+     * 而排版走的是用户可调的 {@code lineGapPx}。默认行距 2 时两者都是 11，看不出问题；
+     * 一旦把行距调到 12，动画会把整块往上推 11 像素，收尾再瞬间补上第 12 像素——
+     * 换行末尾出现一次一像素的跳格。行距调到 0 时则相反，会多推 2 像素再弹回。
+     */
+    int blockShift(long durationMs, int lineStep) {
+        return Math.round(Math.max(0, lineStep)
                 * (1f - LyricEasing.ease(risePart(durationMs))));
     }
 
