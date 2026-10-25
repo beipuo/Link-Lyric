@@ -104,4 +104,5 @@
   "linklyric.tip.weight": "笔画加粗百分比，0 为不加粗",
   "linklyric.tip.strokePx": "描边宽度。9px 的字上 1 像素刚好能压住轮廓，再宽笔画会粘连",
   "linklyric.tip.strokeAlpha": "描边的不透明度。和颜色分开调，改浓度不会把选好的颜色冲掉",
+  "linklyric.color.slot.stroke": "描边"
 }

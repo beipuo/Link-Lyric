@@ -104,4 +104,5 @@
   "linklyric.tip.weight": "Stroke weight percentage; 0 means no extra weight",
   "linklyric.tip.strokePx": "Outline width. One pixel caps the contour on 9px glyphs; wider smears strokes together",
   "linklyric.tip.strokeAlpha": "Outline opacity. Separate from colour so changing density keeps your pick",
+  "linklyric.color.slot.stroke": "Outline"
 }

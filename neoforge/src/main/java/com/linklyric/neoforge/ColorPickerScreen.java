@@ -31,6 +31,8 @@ final class ColorPickerScreen extends Screen {
         SUNG(LangKeys.SLOT_SUNG),
         UNSUNG(LangKeys.SLOT_UNSUNG),
         TRANSLATION(LangKeys.SLOT_TRANSLATION),
+        /** 描边颜色。描边有自己的浓度滑条，这里的 alpha 通道同样有效。 */
+        STROKE(LangKeys.SLOT_STROKE),
         RESET(LangKeys.SLOT_RESET);
 
         final String labelKey;
@@ -79,6 +81,7 @@ final class ColorPickerScreen extends Screen {
             case SUNG -> controller().style().sungColor();
             case UNSUNG -> controller().style().unsungColor();
             case TRANSLATION -> controller().style().translationColor();
+            case STROKE -> controller().style().strokeColor();
             case RESET -> controller().style().sungColor();
         };
     }
@@ -93,6 +96,7 @@ final class ColorPickerScreen extends Screen {
             case SUNG -> s.withSungColor(argb);
             case UNSUNG -> s.withUnsungColor(argb);
             case TRANSLATION -> s.withTranslationColor(argb);
+            case STROKE -> s.withStrokeColor(argb);
             case RESET -> s;
         };
         controller().setStyle(next);

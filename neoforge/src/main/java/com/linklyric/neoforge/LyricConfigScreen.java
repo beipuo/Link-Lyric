@@ -52,7 +52,7 @@ final class LyricConfigScreen extends Screen {
 
     LyricConfigScreen(FloatingLyricRenderer renderer,
                       LyricDragController controller, Screen parent) {
-        super(Component.literal("Link Lyric 配置"));
+        super(Component.translatable(LangKeys.CONFIG_TITLE));
         this.renderer = renderer;
         this.controller = controller;
         this.parent = parent;
@@ -103,20 +103,15 @@ final class LyricConfigScreen extends Screen {
         }
 
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.FEATHER_ON), Component.translatable(LangKeys.FEATHER_OFF))
+                        Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF))
                 .withInitialValue(controller.style().feather())
                 .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
-                        Component.translatable(LangKeys.TRANSITION),
+                        Component.translatable(LangKeys.FEATHER),
                         (button, value) -> {
                             apply(style -> style.withFeather(value));
                             // 重建控件：滑条与开关的显示值必须同步。
                             rebuildWidgets();
                         }));
-        y += ROW_HEIGHT + ROW_GAP;
-
-        // 字重：三档循环。原版没有粗体字库，靠叠加描边模拟。
-        addScrollWidget(cycleEnum(LyricStyleConfig.Weight.class, controller.style().weight(),
-                left, y, LangKeys.OPTION_WEIGHT, 0, (style, value) -> style.withWeight(value)));
         y += ROW_HEIGHT + ROW_GAP;
 
         // 上浮曲线：两档切换。余弦是默认，形状来自 Salt Player。
@@ -130,7 +125,7 @@ final class LyricConfigScreen extends Screen {
         y += ROW_HEIGHT + ROW_GAP;
 
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.SHADOW_ON), Component.translatable(LangKeys.SHADOW_OFF))
+                        Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF))
                 .withInitialValue(controller.style().shadow())
                 .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
                         Component.translatable(LangKeys.SHADOW),
@@ -142,7 +137,7 @@ final class LyricConfigScreen extends Screen {
 
         // 软阴影：SDF 把边缘过渡拉宽做出柔边投影，关闭则退回硬边。
         addScrollWidget(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.SHADOW_ON), Component.translatable(LangKeys.SHADOW_OFF))
+                        Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF))
                 .withInitialValue(controller.style().softShadow())
                 .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
                         Component.translatable(LangKeys.SHADOW_SOFT),
@@ -176,8 +171,28 @@ final class LyricConfigScreen extends Screen {
 
         // 间奏提示：空白 / ··· / 间奏。
         addScrollWidget(cycleEnum(LyricStyleConfig.InterludeStyle.class,
-                controller.style().interlude(), left, y, "间奏", 0,
+                controller.style().interlude(), left, y, LangKeys.OPTION_INTERLUDE, 0,
                 (style, value) -> style.withInterlude(value)));
+        y += ROW_HEIGHT + ROW_GAP;
+
+        // 描边：开关 + 颜色。宽度与浓度已在 Option 滑条里，
+        // 这里只补上「开不开」与「什么颜色」两件滑条表达不了的事。
+        addScrollWidget(CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF))
+                .withInitialValue(controller.style().stroke())
+                .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
+                        Component.translatable(LangKeys.STROKE),
+                        (button, value) -> {
+                            apply(style -> style.withStroke(value));
+                            rebuildWidgets();
+                        }));
+        y += ROW_HEIGHT + ROW_GAP;
+
+        addScrollWidget(Button.builder(
+                        Component.translatable(LangKeys.STROKE_COLOR),
+                        b -> minecraft.setScreen(new ColorPickerScreen(this)))
+                .bounds(left, y, COLUMN_WIDTH, ROW_HEIGHT)
+                .build());
         y += ROW_HEIGHT + ROW_GAP;
 
         // 颜色只留一个入口：三项颜色在调色页里切换，避免主界面被按钮占满。

@@ -84,6 +84,7 @@ public final class LangKeys {
     public static final String COLOR_ADJUSTING = "linklyric.color.adjusting";
 
     /** 调色板的编辑目标。 */
+    public static final String SLOT_STROKE = "linklyric.color.slot.stroke";
     public static final String SLOT_SUNG = "linklyric.color.slot.sung";
     public static final String SLOT_UNSUNG = "linklyric.color.slot.unsung";
     public static final String SLOT_TRANSLATION = "linklyric.color.slot.translation";
