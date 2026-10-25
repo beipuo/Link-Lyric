@@ -1,7 +1,6 @@
 package com.linklyric.neoforge.render.sdf;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.neoforged.neoforge.client.event.RegisterShadersEvent;
 
@@ -29,14 +28,21 @@ public final class SdfShaderRegistration {
             SdfGlyphProvider.reset();
             ShaderInstance shader = new ShaderInstance(event.getResourceProvider(),
                     "linklyric_sdf_text", DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+            // 必须先 install 再 close 旧的，顺序不能反。
+            //
+            // 若省掉这次 install、只靠 registerShader 的回调，那么下面
+            // old.close() 关掉的正是 SdfRenderType.shader 此刻指向的对象，
+            // 而回调要等编译完成才执行——中间这段时间字段指向已关闭的实例，
+            // 就是一棵 use-after-close。
             SdfRenderType.install(shader);
-            event.registerShader(shader, s -> SdfRenderType.install(s));
-            if (old != null) {
+            // 回调是「编译完成」通知，参数是真正生效的 program，可能与
+            // 传入的实例不是同一个，因此仍需再 install 一次覆盖。
+            event.registerShader(shader, SdfRenderType::install);
+            if (old != null && old != shader) {
                 old.close();
             }
         } catch (IOException | RuntimeException e) {
             SdfRenderType.install(null);
-            Minecraft.getInstance();
             org.slf4j.LoggerFactory.getLogger("linklyric")
                     .warn("[Link Lyric] SDF 着色器装载失败，退回原版字形", e);
         }
