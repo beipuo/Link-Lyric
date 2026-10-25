@@ -11,6 +11,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
@@ -77,6 +78,9 @@ public final class LinkLyricNeoForge {
         if (client == null || client.font == null) {
             return;
         }
+        // 待打开的界面必须在 hideGui 判断**之前**处理，理由见 flushPendingScreen。
+        // 按着 F1 时发指令，界面照样要打开——它属于 UI 状态，不是 HUD 内容。
+        flushPendingScreen(client);
         if (client.options != null && client.options.hideGui) {
             return;
         }
@@ -110,7 +114,7 @@ public final class LinkLyricNeoForge {
         // 配置期间强制预览，并确保总开关为开，否则调样式看不见效果。
         current.renderer.setPreviewForced(true);
         current.dragController.enable();
-        client.setScreen(new LyricConfigScreen(
+        openNextFrame(new LyricConfigScreen(
                 current.renderer, current.dragController, null));
     }
 
@@ -122,8 +126,38 @@ public final class LinkLyricNeoForge {
         }
         // 进入前先确保歌词可见，否则调位置时是一片空白。
         current.dragController.enable();
-        client.setScreen(new LyricLocationScreen(
+        openNextFrame(new LyricLocationScreen(
                 current.renderer, current.dragController, null));
+    }
+
+    /**
+     * 待打开的界面。下一帧的 HUD 回调里真正装上。
+     *
+     * <p>**不能立刻 {@code setScreen}。** 与 Fabric 端同理：
+     * 指令是从聊天栏发出的，原版 {@code ChatScreen.keyPressed} 在回车分支里
+     * 先执行 {@code handleChatInput}（指令在这里跑，我们会 setScreen），
+     * 紧接着 {@code minecraft.setScreen(null)} 把聊天栏关掉——
+     * 第二条会把刚装上的界面顶掉，表现为「提示出来了，界面却没出现」。
+     *
+     * <p>NeoForge 端曾经直接 setScreen，于是 {@code /linklyric config}
+     * 与 {@code /linklyric location} 在这边只能靠运气生效。
+     * 那条路径不会报错，只是界面偶尔不出现，最难归因。
+     */
+    private static Screen pendingScreen;
+
+    /** 在下一帧打开界面；覆盖式赋值，连发两次只有最后一次生效。 */
+    private static void openNextFrame(Screen screen) {
+        pendingScreen = screen;
+    }
+
+    /** 装上待打开的界面。在游戏线程上执行，因此可以安全 setScreen。 */
+    private static void flushPendingScreen(Minecraft client) {
+        if (pendingScreen == null) {
+            return;
+        }
+        Screen next = pendingScreen;
+        pendingScreen = null;
+        client.setScreen(next);
     }
 
     /** 最近一次构造的实例，供静态入口取用。 */
@@ -221,6 +255,10 @@ public final class LinkLyricNeoForge {
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
                                     GlyphSpan[] spans, int originX, boolean shadow) {
             syncSdfStyle();
+            // 清零：发光与描边都是全局状态，若上一个字设置过而不复位，
+            // 这一个不需要特效的字会连带被点亮、或继承那圈轮廓。
+            SdfRenderType.setGlow(0f, 0f);
+            SdfRenderType.clearStroke();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift,
                         spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
@@ -239,26 +277,121 @@ public final class LinkLyricNeoForge {
                     spans, originX, shadow);
         }
 
+        /** 不描边的发光版本；Fabric 侧有显式实现，此前这里靠接口默认实现退化成无发光。 */
+        @Override
+        public void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                    GlyphSpan[] spans, int originX, boolean shadow,
+                                    float glowRadius, float glowAlpha) {
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift,
+                        spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                        spans, originX, shadow, glowRadius, glowAlpha);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                    spans, originX, shadow, glowRadius, glowAlpha);
+        }
+
+        /**
+         * 带外发光与描边的按段绘制。
+         *
+         * <p>此前这里直接转调不带特效的版本，把两个参数**静默丢弃**：
+         * 接口的默认实现至少会退一步保住发光，而这里连发光都没了。
+         * 结果是在 NeoForge 上描边与发光整体失效，且不会报错、
+         * 也不会退回原版字形——只是那两项目特效凭空不出现。
+         */
         @Override
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
                                     GlyphSpan[] spans, int originX, boolean shadow,
                                     float glowRadius, float glowAlpha,
                                     float strokeWidth, int strokeArgb) {
-            drawGlyphSpans(glyph, x, y, lift, spans, originX, shadow);
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift,
+                        spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                        spans, originX, shadow, glowRadius, glowAlpha,
+                        strokeWidth, strokeArgb);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                    spans, originX, shadow, glowRadius, glowAlpha,
+                    strokeWidth, strokeArgb);
         }
 
+        /** 带外发光与描边的单字形绘制；理由同按段版本，此前参数被静默丢弃。 */
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow,
                                        float glowRadius, float glowAlpha,
                                        float strokeWidth, int strokeArgb) {
-            drawGlyphGradient(glyph, x, y, lift, colors, shadow);
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.draw(graphics, client.font, glyph, x, y,
+                        colors, shadow, glowRadius, glowAlpha, strokeWidth, strokeArgb);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.draw(graphics, client.font, glyph, x, y,
+                    colors, shadow, glowRadius, glowAlpha, strokeWidth, strokeArgb);
+        }
+
+        /** 不描边的发光版本；此前同样缺实现，发光在 NeoForge 上整体失效。 */
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       GlyphColors colors, boolean shadow,
+                                       float glowRadius, float glowAlpha) {
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.draw(graphics, client.font, glyph, x, y,
+                        colors, shadow, glowRadius, glowAlpha);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.draw(graphics, client.font, glyph, x, y,
+                    colors, shadow, glowRadius, glowAlpha);
         }
 
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {
             syncSdfStyle();
+            SdfRenderType.setGlow(0f, 0f);
+            SdfRenderType.clearStroke();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
                 return;

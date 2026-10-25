@@ -228,6 +228,97 @@ val verifyLangKeys = tasks.register("verifyLangKeys") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 两端 Painter 适配一致性
+//
+// GuiPainter 是两个平台各自手写的一份适配层，不受 verifyMirroredRender 保护
+// （它在平台包里，不是 render/ 下的副本）。它实现的是同一套 Painter 接口，
+// 而接口里带发光/描边的方法都有 **default 降级实现**——
+// 于是某端漏写一个重载，编译通过、运行正常，只是那几项特效凭空消失。
+//
+// 已经踩过：NeoForge 把带特效的重载实现成转调无特效版本，
+// 描边与发光在那边整体失效，既不报错也不退回原版字形。
+// 这里把「两端实现的方法集合必须相同」变成构建检查。
+// ---------------------------------------------------------------------------
+val painterAdapters = listOf(
+    "fabric" to File(
+        rootDir,
+        "fabric/src/main/java/com/linklyric/fabric/LinkLyricFabric.java"
+    ),
+    "neoforge" to File(
+        rootDir,
+        "neoforge/src/main/java/com/linklyric/neoforge/LinkLyricNeoForge.java"
+    ),
+)
+
+/** 引导入口与平台特有回调，按平台本就不同，比较时排除。 */
+val platformSpecificMethods = setOf(
+    "onInitializeClient",
+    "onResourceManagerReload",
+)
+
+/** 抽出 public 方法签名「名(参数类型,...)」。参数只取类型，忽略形参名。 */
+fun publicMethodSignatures(file: File): Set<String> =
+    Regex("""public\s+(?:int|void|boolean|float|FloatingLyricRenderer\.Pose2D)\s+(\w+)\s*\(([^)]*)\)""")
+        .findAll(file.readText())
+        .map { m ->
+            val params = m.groupValues[2]
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotEmpty() }
+                .map { it.split(Regex("""\s+""")).dropLast(1).joinToString(" ") }
+            m.groupValues[1] + "(" + params.joinToString(",") + ")"
+        }
+        .filterNot { sig -> platformSpecificMethods.any { sig.startsWith(it + "(") } }
+        .toSet()
+
+val verifyPainterParity = tasks.register("verifyPainterParity") {
+    group = "verification"
+    description = "校验两端的 Painter 适配层实现了同一组方法"
+
+    doLast {
+        val problems = mutableListOf<String>()
+        val byName = painterAdapters.map { (name, file) ->
+            if (!file.isFile) {
+                problems += name + ": 找不到源文件 " + file.path
+            }
+            name to publicMethodSignatures(file)
+        }.toMap()
+
+        val fab = byName["fabric"].orEmpty()
+        val neo = byName["neoforge"].orEmpty()
+
+        if (fab.isEmpty() || neo.isEmpty()) {
+            problems += "没有解析出方法签名，正则可能已失效"
+        }
+
+        // 只比 Painter 接口里的方法：其余是各自的辅助方法，允许不同。
+        val paintMethods = fab.filter { it.startsWith("draw") || it in setOf(
+            "screenWidth()", "screenHeight()", "textWidth(String)",
+            "textWidthScaled(String,float)", "charWidth(char)",
+            "lineHeight()", "pose()", "fillRect(int,int,int,int,int)",
+            "supportsScissor()", "enableScissor(int,int,int,int)",
+            "disableScissor()",
+        ) }
+
+        for (sig in (fab - neo).sorted()) {
+            problems += "neoforge 缺少实现: " + sig
+        }
+        for (sig in (neo - fab).sorted()) {
+            problems += "fabric 缺少实现: " + sig
+        }
+
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "两端 Painter 适配层必须实现同一组方法：\n" + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle(
+            "两端适配一致：" + paintMethods.size + " 个绘制方法 × 2 端"
+        )
+    }
+}
+
 tasks.named("check") {
-    dependsOn(verifyMirroredRender, verifyLangKeys)
+    dependsOn(verifyMirroredRender, verifyLangKeys, verifyPainterParity)
 }

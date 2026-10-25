@@ -125,13 +125,18 @@ public final class LinkLyricFabric implements ClientModInitializer {
         if (client == null || client.font == null) {
             return;
         }
+        // 待打开的界面必须在 hideGui 判断**之前**处理。
+        //
+        // 曾经放在后面，于是玩家按着 F1 时发 /linklyric config：
+        // 请求被记录下来，但每一帧都在这里早退，界面始终不出现，
+        // 直到玩家自己按回 F1 才「突然」弹出来——看起来像指令丢了一半。
+        // 界面属于 UI 状态而非 HUD 内容，不受 F1 影响。
+        flushPendingScreen(client);
+
         // F1 隐藏界面、或打开了 GUI 时不绘制
         if (client.options != null && client.options.hideGui) {
             return;
         }
-        // 先处理待打开的界面：这一步必须在渲染之前，
-        // 否则新界面装上的那一帧还会多画一次旧 HUD。
-        flushPendingScreen(client);
 
         if (renderer == null) {
             return;
