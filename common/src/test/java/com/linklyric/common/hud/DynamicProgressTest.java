@@ -87,10 +87,16 @@ class DynamicProgressTest {
 
         // 位置恒为 0（模拟上报未更新），只观测推进过程的前半段：
         // 一旦已经唱完，后续帧必然“停滞”，那是正常终态，不能算作停顿。
+        // 观测窗口按「行宽是否已推进」收敛，而不是固定帧数。
+        //
+        // 固定 24 帧 × 50ms = 1.2 秒，在本机空闲时够用，但全套测试并行跑时
+        // 单帧可能被拖到几百毫秒，一帧都没推进就被判成「应有推进」失败。
+        // 这里改为：要么推进到行宽过半，要么最多等 8 秒，二者取先到者。
         int stalls = 0;
         int previous = -1;
         int lineWidth = painter.textWidth(wide);
-        for (int frame = 0; frame < 24; frame++) {
+        long deadline = System.nanoTime() + 8_000_000_000L;
+        while (System.nanoTime() < deadline) {
             Thread.sleep(50L);
             painter.reset();
             renderer.render(painter);
@@ -99,6 +105,9 @@ class DynamicProgressTest {
                 stalls++;
             }
             previous = width;
+            if (previous > lineWidth / 2) {
+                break;
+            }
         }
 
         System.out.println("末次宽度=" + previous + " 行宽=" + painter.textWidth(wide)
