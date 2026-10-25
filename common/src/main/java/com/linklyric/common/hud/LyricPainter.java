@@ -55,6 +55,33 @@ final class LyricPainter {
     /** 动画强度下限：空间再紧也保留一点动感。 */
     private static final float MIN_STRENGTH = 0.2f;
 
+    /**
+     * 单字字符串缓存。
+     *
+     * <p>绘制原语收的是 {@code String}，而逐字循环手上只有 {@code char}。
+     * 若每帧每字 {@code substring(i, i+1)}，一句 30 字在 60fps 下就是
+     * 每秒 1800 个短命字符串，全部产生在渲染热路径上。
+     *
+     * <p>ASCII 走定长数组（覆盖绝大多数正文），其余码点按需建并入表。
+     * 歌词用字高度收敛，实际条目数很少，缓存不会无限增长。
+     */
+    private static final String[] ASCII_GLYPHS = new String[128];
+
+    private static final java.util.Map<Character, String> OTHER_GLYPHS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static String glyphOf(char c) {
+        if (c < 128) {
+            String cached = ASCII_GLYPHS[c];
+            if (cached == null) {
+                cached = String.valueOf(c);
+                ASCII_GLYPHS[c] = cached;
+            }
+            return cached;
+        }
+        return OTHER_GLYPHS.computeIfAbsent(c, String::valueOf);
+    }
+
     private final FloatingLyricRenderer.Painter painter;
     private final Weight weight;
     private final boolean shadow;
@@ -128,9 +155,11 @@ final class LyricPainter {
         int wordCursor = 0;
         int currentWord = -1;
         for (int i = 0; i < visible.length(); i++) {
-            String ch = visible.substring(i, i + 1);
+            char codeUnit = visible.charAt(i);
+            String ch = glyphOf(codeUnit);
             int charX = textX + cursor;
-            int charWidth = painter.textWidth(ch);
+            // 用单字步进而不是重新度量整段前缀；结果与 textWidth(ch) 等价。
+            int charWidth = painter.charWidth(codeUnit);
             cursor += charWidth;
             int charRight = charX + charWidth;
 
@@ -162,8 +191,8 @@ final class LyricPainter {
             // 转成字形局部坐标由绘制层负责，这里额外给出行锚点。
             GlyphSpan[] spans = GradientColorizer.spansForChar(
                     charX, charRight, edge, sung, unsung, lineWidth, feather);
-            glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
-                    spans, transform.dx, transform.bloom,
+            glyph(ch, charWidth, charX, textY, lifts[i] + transform.dy,
+                    viewportLeft, viewRight, spans, transform.dx, transform.bloom,
                     transform.glowRadius, transform.glowAlpha);
         }
     }
@@ -188,10 +217,9 @@ final class LyricPainter {
      *
      * <p>位移由特效给出，渐变由染色给出：前者动字形，后者动颜色，两者互不干扰。
      */
-    private void glyph(String ch, int charX, int textY, float lift,
+    private void glyph(String ch, int charWidth, int charX, int textY, float lift,
                        int viewportLeft, int viewRight, GlyphSpan[] spans,
                        float dx, float bloomLevel, float glowRadius, float glowAlpha) {
-        int charWidth = painter.textWidth(ch);
         // 保留浮点坐标，不取整。
         //
         // 9px 位图字形在非整数位置会糊，所以过去这里必须 Math.round；
