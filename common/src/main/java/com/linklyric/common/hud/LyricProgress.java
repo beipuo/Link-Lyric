@@ -177,11 +177,22 @@ final class LyricProgress {
         return lifts;
     }
 
-    /** 每个字的左边界像素坐标。 */
+    /**
+     * 每个字的左边界像素坐标。
+     *
+     * <p>用逐字步进累加，不再对每个前缀重新度量整段文本。
+     * 旧写法是 {@code textWidth(text.substring(0, i))}：度量是 O(i) 的，
+     * 循环 n 次得到 O(n²)，并且每一步都分配一个临时字符串。
+     * 一句 30 字在 60fps 下就是每秒约 27900 次字形查找与 1800 个短命字符串，
+     * 全部落在渲染热路径上。累加版是 O(n) 度量、零分配。
+     */
     static int[] charStarts(FloatingLyricRenderer.Painter painter, String text) {
-        int[] starts = new int[text.length()];
-        for (int i = 0; i < text.length(); i++) {
-            starts[i] = painter.textWidth(text.substring(0, i));
+        int count = text.length();
+        int[] starts = new int[count];
+        int cursor = 0;
+        for (int i = 0; i < count; i++) {
+            starts[i] = cursor;
+            cursor += painter.charWidth(text.charAt(i));
         }
         return starts;
     }

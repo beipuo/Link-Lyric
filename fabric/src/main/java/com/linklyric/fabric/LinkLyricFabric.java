@@ -255,6 +255,18 @@ public final class LinkLyricFabric implements ClientModInitializer {
             return client.font.width(text);
         }
 
+        /**
+         * 单字步进。逐字排版靠它做增量累加，避免对每个前缀重新度量整段文本。
+         *
+         * <p>{@code Font.width(String)} 内部走的是码点遍历 + 逐字 advance 求和，
+         * 这里对一个字调用一次，成本与旧代码量一个字完全相同，但它让调用方
+         * 从 O(n²) 降到 O(n)。
+         */
+        @Override
+        public int charWidth(char c) {
+            return client.font.width(String.valueOf(c));
+        }
+
         @Override
         public void drawText(String text, int x, int y, int color) {
             drawText(text, x, y, color, true);

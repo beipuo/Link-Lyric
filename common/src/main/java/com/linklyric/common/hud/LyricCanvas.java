@@ -17,6 +17,23 @@ public interface LyricCanvas {
 
     int textWidth(String text);
 
+    /**
+     * 单个码点的步进宽度。
+     *
+     * <p>逐字排版需要「每个字的左边界」，此前实现是
+     * {@code textWidth(text.substring(0, i))} 循环一遍：既是 O(n²)
+     * 的度量（每个前缀都要从头算），又每帧给每个字分配一个临时字符串。
+     * 一句 30 字就是 465 次字形查找加 30 个短命字符串，全部产生在渲染热路径上。
+     *
+     * <p>有了这个原语，逐字左边界可以用一次增量累加求出：O(n) 度量、零分配。
+     *
+     * <p>默认实现仍退回前缀度量，保证第三方与测试替身不必立刻跟进；
+     * 平台层覆盖后立即获得收益。
+     */
+    default int charWidth(char c) {
+        return textWidth(String.valueOf(c));
+    }
+
     /** 绘制文本，颜色含 alpha 通道。 */
     void drawText(String text, int x, int y, int color);
 

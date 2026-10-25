@@ -158,6 +158,12 @@ public final class LinkLyricNeoForge {
             return client.font.width(text);
         }
 
+        /** 单字步进；与 Fabric 侧同义，供逐字排版增量累加。 */
+        @Override
+        public int charWidth(char c) {
+            return client.font.width(String.valueOf(c));
+        }
+
         @Override
         public void drawText(String text, int x, int y, int color) {
             drawText(text, x, y, color, true);
