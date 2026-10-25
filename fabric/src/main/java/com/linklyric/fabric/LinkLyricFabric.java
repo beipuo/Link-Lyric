@@ -5,6 +5,7 @@ import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.fabric.render.GradientPainter;
+import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.fabric.render.sdf.SdfGlyphProvider;
 import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.common.config.LayoutConfig;
@@ -183,6 +184,23 @@ public final class LinkLyricFabric implements ClientModInitializer {
     private record GuiPainter(GuiGraphics graphics, Minecraft client)
             implements FloatingLyricRenderer.Painter {
 
+        /**
+         * 把当前样式里的字重与软阴影同步给 SDF 渲染层。
+         *
+         * <p>uniform 在每批 setup 时读取，而 setup 发生在攒批之后的刷批
+         * 时刻，不在配置回调里。因此这里每帧同步一次，而不是只在
+         * 配置变更时写一次——否则刷新界面后要等下一帧才生效，
+         * 拖动滑条时还会看到一两帧的滞后。
+         */
+        private static void syncSdfStyle() {
+            FloatingLyricRenderer r = renderer;
+            if (r == null) {
+                return;
+            }
+            SdfRenderType.setWeightPercent(r.style().weightPercent());
+            SdfRenderType.setSoftShadow(r.style().softShadow());
+        }
+
         @Override
         public int screenWidth() {
             return graphics.guiWidth();
@@ -255,6 +273,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         @Override
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
                                     GlyphSpan[] spans, int originX, boolean shadow) {
+            syncSdfStyle();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift,
                         spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
@@ -276,6 +295,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {
+            syncSdfStyle();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
                 return;

@@ -5,6 +5,7 @@ import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.neoforge.render.GradientPainter;
+import com.linklyric.neoforge.render.sdf.SdfRenderType;
 import com.linklyric.neoforge.render.sdf.SdfShaderRegistration;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
@@ -132,6 +133,16 @@ public final class LinkLyricNeoForge {
     private record GuiPainter(GuiGraphics graphics, Minecraft client)
             implements FloatingLyricRenderer.Painter {
 
+        /** 每帧把字重与软阴影同步给 SDF 层，理由同 Fabric 端。 */
+        private static void syncSdfStyle() {
+            FloatingLyricRenderer r = renderer();
+            if (r == null) {
+                return;
+            }
+            SdfRenderType.setWeightPercent(r.style().weightPercent());
+            SdfRenderType.setSoftShadow(r.style().softShadow());
+        }
+
         @Override
         public int screenWidth() {
             return graphics.guiWidth();
@@ -203,6 +214,7 @@ public final class LinkLyricNeoForge {
         @Override
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
                                     GlyphSpan[] spans, int originX, boolean shadow) {
+            syncSdfStyle();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift,
                         spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
@@ -224,6 +236,7 @@ public final class LinkLyricNeoForge {
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {
+            syncSdfStyle();
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
                 return;

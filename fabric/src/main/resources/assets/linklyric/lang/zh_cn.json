@@ -1,4 +1,5 @@
 {
+  "linklyric.config.shadow.soft": "柔和阴影",
   "linklyric.config.lift_curve": "上浮曲线",
   "linklyric.config.lift_curve.linear": "线性",
   "linklyric.config.lift_curve.cosine": "余弦",

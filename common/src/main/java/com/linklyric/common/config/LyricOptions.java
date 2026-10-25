@@ -35,7 +35,11 @@ public final class LyricOptions {
         WIDTH_RATIO(LangKeys.OPTION_MAX_WIDTH, LangKeys.UNIT_PERCENT, 30, 100, 1),
         /** 整体不透明度，10% 到 100%。 */
         OPACITY(LangKeys.OPTION_OPACITY, LangKeys.UNIT_PERCENT,
-                Math.round(LyricStyleConfig.MIN_OPACITY * 100f), 100, 1);
+                Math.round(LyricStyleConfig.MIN_OPACITY * 100f), 100, 1),
+        /** 笔画加粗百分比。0 为不加粗。 */
+        WEIGHT_PERCENT(LangKeys.OPTION_WEIGHT, LangKeys.UNIT_PERCENT,
+                LyricStyleConfig.MIN_WEIGHT_PERCENT,
+                LyricStyleConfig.MAX_WEIGHT_PERCENT, 1);
 
         /** 名称与单位的语言键。 */
         public final String labelKey;
@@ -71,6 +75,7 @@ public final class LyricOptions {
                 case LINE_SCALE -> Math.round(style.lineScale() * 100f);
                 case WIDTH_RATIO -> Math.round(style.maxWidthRatio() * 100f);
                 case OPACITY -> Math.round(style.opacity() * 100f);
+                case WEIGHT_PERCENT -> style.weightPercent();
             };
         }
 
@@ -84,6 +89,7 @@ public final class LyricOptions {
                 case LINE_SCALE -> style.withLineScale(raw / 100f);
                 case WIDTH_RATIO -> style.withMaxWidthRatio(raw / 100f);
                 case OPACITY -> style.withOpacity(raw / 100f);
+                case WEIGHT_PERCENT -> style.withWeightPercent(raw);
             };
         }
 

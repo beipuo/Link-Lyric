@@ -5,6 +5,7 @@ import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.neoforge.render.sdf.SdfAtlas;
 import com.linklyric.neoforge.render.sdf.SdfGlyphProvider;
 import com.linklyric.neoforge.render.sdf.SdfGlyphWriter;
+import com.linklyric.neoforge.render.sdf.SdfRenderType;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -69,11 +70,12 @@ public final class GradientPainter {
         }
         int cp = glyph.codePointAt(0);
 
-        // 优先走 SDF：任意缩放都锐利，顶点色渐变照旧生效。
+        // 优先走 SDF：任意缩放都锐利，且顶点色渐变照旧生效。
         SdfAtlas.Slot slot = SdfGlyphProvider.slot(cp);
         if (slot != null) {
             return drawSdf(graphics, slot, cp, x, y, colors, shadow);
         }
+        // 退回原版字形：功能降级但不崩。
         BakedGlyph baked = GlyphLookup.glyph(font, cp);
         if (baked == null) {
             return false;
@@ -100,11 +102,42 @@ public final class GradientPainter {
         return true;
     }
 
+    /** SDF 路径的单色字形。 */
+    private static boolean drawSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
+                                   float x, float y, GlyphColors colors, boolean shadow) {
+        float[] box = SdfGlyphProvider.box(cp);
+        if (box == null) {
+            return false;
+        }
+        Matrix4f pose = graphics.pose().last().pose();
+        int light = 0xF000F0;
+
+        // 整块字形就是一个段；锚点取 x，与段坐标同一坐标系。
+        GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
+        if (shadow) {
+            // 阴影层独立一个 RenderType：它的柔化与字重和正文不同，
+            // 混在同一批里只能有一份 uniform 生效。
+            RenderType shadowType = SdfRenderType.shadow(slot.page());
+            GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
+                    shadowOf(colors.left()), shadowOf(colors.right()));
+            SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(shadowType),
+                    pose, slot, box, x + SdfRenderType.shadowOffset(), y,
+                    new GlyphSpan[]{shadowSpan}, x, light);
+        }
+        RenderType bodyType = SdfRenderType.body(slot.page());
+        return SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(bodyType),
+                pose, slot, box, x, y, new GlyphSpan[]{main}, x, light);
+    }
+
     /**
      * 按段绘制一个字形。
      *
-     * <p>段边界落在前沿函数的折点上，因此每段内两端颜色插值即精确。
-     * 阴影同样按段绘制，保持与主色一致的形状。
+     * <p>与 {@link #draw} 的区别只在顶点写入方式：这里按调用方给出的
+     * 段边界切分四边形，段处在前沿函数的折点上，因此每段内
+     * 两端颜色插值即精确。
+     *
+     * <p>阴影同样按段绘制，保持与主色一致的形状——否则阴影只有单色
+     * 轮廓，会在染色边界处露出不符合渐变的硬边。
      */
     public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
@@ -114,7 +147,8 @@ public final class GradientPainter {
         }
         int cp = glyph.codePointAt(0);
 
-        // 优先走 SDF。段切分逻辑与原版路径一致，颜色仍逐顶点写入。
+        // 优先走 SDF。段切分逻辑与原版路径完全一致——
+        // 区别只在几何来源，颜色仍是逐顶点写入，所以渐变不受影响。
         SdfAtlas.Slot slot = SdfGlyphProvider.slot(cp);
         if (slot != null) {
             return drawSpansSdf(graphics, slot, cp, x, y, spans, originX, shadow);
@@ -140,37 +174,11 @@ public final class GradientPainter {
                 shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
                         shadowOf(s.startColor()), shadowOf(s.endColor()));
             }
-            // 阴影几何左移一格，但段坐标的基准不变。
+            // 阴影几何左移一格，但段坐标的基准不变（originX 仍是主色的行锚点）。
             GradientGlyphWriter.writeSpans(consumer, pose, baked,
                     x + SHADOW_OFFSET, y, shadowSpans, originX, light);
         }
         return GradientGlyphWriter.writeSpans(consumer, pose, baked, x, y, spans, originX, light);
-    }
-
-    /** SDF 路径的单色字形。 */
-    private static boolean drawSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
-                                   float x, float y, GlyphColors colors, boolean shadow) {
-        float[] box = SdfGlyphProvider.box(cp);
-        if (box == null) {
-            return false;
-        }
-        RenderType type = SdfGlyphWriter.renderType(slot);
-        if (type == null) {
-            return false;
-        }
-        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
-        Matrix4f pose = graphics.pose().last().pose();
-        int light = 0xF000F0;
-
-        GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
-        GlyphSpan[] mainSpans = new GlyphSpan[]{main};
-        if (shadow) {
-            GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
-                    shadowOf(colors.left()), shadowOf(colors.right()));
-            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
-                    x + SHADOW_OFFSET, y, new GlyphSpan[]{shadowSpan}, x, light);
-        }
-        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, mainSpans, x, light);
     }
 
     /** SDF 路径的按段字形。 */
@@ -181,11 +189,6 @@ public final class GradientPainter {
         if (box == null) {
             return false;
         }
-        RenderType type = SdfGlyphWriter.renderType(slot);
-        if (type == null) {
-            return false;
-        }
-        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
         Matrix4f pose = graphics.pose().last().pose();
         int light = 0xF000F0;
 
@@ -196,11 +199,16 @@ public final class GradientPainter {
                 shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
                         shadowOf(s.startColor()), shadowOf(s.endColor()));
             }
-            // originX 仍取主色的行锚点，否则阴影偏移会被段坐标平移抵消。
-            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
-                    x + SHADOW_OFFSET, y, shadowSpans, originX, light);
+            // 阴影几何右移一格，但 originX 仍取主色的行锚点，
+            // 否则阴影偏移会被段坐标的平移抵消，画回主色上。
+            RenderType shadowType = SdfRenderType.shadow(slot.page());
+            SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(shadowType),
+                    pose, slot, box, x + SdfRenderType.shadowOffset(), y,
+                    shadowSpans, originX, light);
         }
-        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, spans, originX, light);
+        RenderType bodyType = SdfRenderType.body(slot.page());
+        return SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(bodyType),
+                pose, slot, box, x, y, spans, originX, light);
     }
 
     /**

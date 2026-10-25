@@ -5,6 +5,7 @@ import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.fabric.render.sdf.SdfAtlas;
 import com.linklyric.fabric.render.sdf.SdfGlyphProvider;
 import com.linklyric.fabric.render.sdf.SdfGlyphWriter;
+import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -108,24 +109,24 @@ public final class GradientPainter {
         if (box == null) {
             return false;
         }
-        RenderType type = SdfGlyphWriter.renderType(slot);
-        if (type == null) {
-            return false;
-        }
-        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
         Matrix4f pose = graphics.pose().last().pose();
         int light = 0xF000F0;
 
         // 整块字形就是一个段；锚点取 x，与段坐标同一坐标系。
         GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
-        GlyphSpan[] mainSpans = new GlyphSpan[]{main};
         if (shadow) {
+            // 阴影层独立一个 RenderType：它的柔化与字重和正文不同，
+            // 混在同一批里只能有一份 uniform 生效。
+            RenderType shadowType = SdfRenderType.shadow(slot.page());
             GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
                     shadowOf(colors.left()), shadowOf(colors.right()));
-            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
-                    x + SHADOW_OFFSET, y, new GlyphSpan[]{shadowSpan}, x, light);
+            SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(shadowType),
+                    pose, slot, box, x + SdfRenderType.shadowOffset(), y,
+                    new GlyphSpan[]{shadowSpan}, x, light);
         }
-        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, mainSpans, x, light);
+        RenderType bodyType = SdfRenderType.body(slot.page());
+        return SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(bodyType),
+                pose, slot, box, x, y, new GlyphSpan[]{main}, x, light);
     }
 
     /**
@@ -188,11 +189,6 @@ public final class GradientPainter {
         if (box == null) {
             return false;
         }
-        RenderType type = SdfGlyphWriter.renderType(slot);
-        if (type == null) {
-            return false;
-        }
-        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
         Matrix4f pose = graphics.pose().last().pose();
         int light = 0xF000F0;
 
@@ -203,12 +199,16 @@ public final class GradientPainter {
                 shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
                         shadowOf(s.startColor()), shadowOf(s.endColor()));
             }
-            // 阴影几何左移一格，但 originX 仍取主色的行锚点，
+            // 阴影几何右移一格，但 originX 仍取主色的行锚点，
             // 否则阴影偏移会被段坐标的平移抵消，画回主色上。
-            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
-                    x + SHADOW_OFFSET, y, shadowSpans, originX, light);
+            RenderType shadowType = SdfRenderType.shadow(slot.page());
+            SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(shadowType),
+                    pose, slot, box, x + SdfRenderType.shadowOffset(), y,
+                    shadowSpans, originX, light);
         }
-        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, spans, originX, light);
+        RenderType bodyType = SdfRenderType.body(slot.page());
+        return SdfGlyphWriter.writeSpans(graphics.bufferSource().getBuffer(bodyType),
+                pose, slot, box, x, y, spans, originX, light);
     }
 
     /**

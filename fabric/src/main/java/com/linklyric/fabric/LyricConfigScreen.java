@@ -140,6 +140,18 @@ final class LyricConfigScreen extends Screen {
                         }));
         y += ROW_HEIGHT + ROW_GAP;
 
+        // 软阴影：SDF 把边缘过渡拉宽做出柔边投影，关闭则退回硬边。
+        addScrollWidget(CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.SHADOW_ON), Component.translatable(LangKeys.SHADOW_OFF))
+                .withInitialValue(controller.style().softShadow())
+                .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
+                        Component.translatable(LangKeys.SHADOW_SOFT),
+                        (button, value) -> {
+                            apply(style -> style.withSoftShadow(value));
+                            rebuildWidgets();
+                        }));
+        y += ROW_HEIGHT + ROW_GAP;
+
         // 整体不透明度：10% 到 100%。
         addScrollWidget(new OptionSlider(left, y, COLUMN_WIDTH,
                 LyricOptions.Option.OPACITY));

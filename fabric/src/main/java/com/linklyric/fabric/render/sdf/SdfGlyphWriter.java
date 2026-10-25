@@ -114,6 +114,6 @@ public final class SdfGlyphWriter {
 
     /** 取图集页对应的 RenderType。 */
     public static RenderType renderType(SdfAtlas.Slot slot) {
-        return SdfRenderType.get(slot.page());
+        return SdfRenderType.body(slot.page());
     }
 }

@@ -41,6 +41,8 @@ public final class LayoutConfig {
     private static final String KEY_INTERLUDE = "interlude";
     private static final String KEY_OPACITY = "opacity";
     private static final String KEY_LIFT_CURVE = "liftCurve";
+    private static final String KEY_WEIGHT_PERCENT = "weightPercent";
+    private static final String KEY_SOFT_SHADOW = "softShadow";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -105,7 +107,10 @@ public final class LayoutConfig {
                         props.getProperty(KEY_INTERLUDE), d.interlude()),
                 parseFloat(props.getProperty(KEY_OPACITY), d.opacity()),
                 parseEnum(LyricStyleConfig.LiftCurve.class,
-                        props.getProperty(KEY_LIFT_CURVE), d.liftCurve()));
+                        props.getProperty(KEY_LIFT_CURVE), d.liftCurve()),
+                parseInt(props.getProperty(KEY_WEIGHT_PERCENT), d.weightPercent()),
+                !"false".equalsIgnoreCase(
+                        props.getProperty(KEY_SOFT_SHADOW, "true").trim()));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -236,6 +241,8 @@ public final class LayoutConfig {
         props.setProperty(KEY_INTERLUDE, style.interlude().name());
         props.setProperty(KEY_OPACITY, Float.toString(style.opacity()));
         props.setProperty(KEY_LIFT_CURVE, style.liftCurve().name());
+        props.setProperty(KEY_WEIGHT_PERCENT, Integer.toString(style.weightPercent()));
+        props.setProperty(KEY_SOFT_SHADOW, Boolean.toString(style.softShadow()));
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();

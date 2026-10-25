@@ -79,6 +79,9 @@ public final class LangKeys {
     public static final String OPTION_WEIGHT = "linklyric.option.weight";
 
     /** 上浮曲线切换。 */
+    public static final String SHADOW_SOFT = "linklyric.config.shadow.soft";
+
+    /** 上浮曲线切换。 */
     public static final String LIFT_CURVE = "linklyric.config.lift_curve";
     public static final String LIFT_CURVE_LINEAR = "linklyric.config.lift_curve.linear";
     public static final String LIFT_CURVE_COSINE = "linklyric.config.lift_curve.cosine";
