@@ -125,6 +125,9 @@ final class LyricPainter {
 
             // 传入整行宽度：过渡宽度按行宽比例推算，
             // 使长句与短句的羽化观感一致。
+            // 段坐标保持**绝对**（相对行首）：染色计算必须用统一坐标系，
+            // 否则每个字各自归零会让前沿函数在每个字边界处跳变。
+            // 转成字形局部坐标由绘制层负责，这里额外给出行锚点。
             GlyphSpan[] spans = GradientColorizer.spansForChar(
                     charX, charRight, edge, sung, unsung, lineWidth);
             glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
@@ -181,7 +184,12 @@ final class LyricPainter {
                     shown[0].startColor(), shadow);
         } else {
             // 段边界落在前沿函数的折点上，段内插值即精确。
-            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, shadow);
+            //
+            // originX 必须传 charX：spans 是以 charX 为原点生成的
+            // （spansForChar(charX, charRight, ...)），减去它正好得到
+            // 字形局部坐标。若改传 textX（行首），每个字会多偏移
+            // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
+            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, charX, shadow);
         }
 
         if (!full) {

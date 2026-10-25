@@ -103,7 +103,7 @@ public final class GradientPainter {
      */
     public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
-                                     boolean shadow) {
+                                     float originX, boolean shadow) {
         if (glyph.isEmpty() || spans == null || spans.length == 0) {
             return true;
         }
@@ -128,10 +128,11 @@ public final class GradientPainter {
                 shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
                         shadowOf(s.startColor()), shadowOf(s.endColor()));
             }
+            // 阴影几何左移一格，但段坐标的基准不变（originX 仍是主色的行锚点）。
             GradientGlyphWriter.writeSpans(consumer, pose, baked,
-                    x + SHADOW_OFFSET, y, shadowSpans, light);
+                    x + SHADOW_OFFSET, y, shadowSpans, originX, light);
         }
-        return GradientGlyphWriter.writeSpans(consumer, pose, baked, x, y, spans, light);
+        return GradientGlyphWriter.writeSpans(consumer, pose, baked, x, y, spans, originX, light);
     }
 
     /**

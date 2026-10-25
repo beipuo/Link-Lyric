@@ -161,7 +161,7 @@ public final class GradientGlyphWriter {
      */
     public static boolean writeSpans(VertexConsumer buffer, Matrix4f pose,
                                       BakedGlyph glyph, float x, float y,
-                                      GlyphSpan[] spans, int light) {
+                                      GlyphSpan[] spans, float originX, int light) {
         if (!available() || spans == null || spans.length == 0) {
             return false;
         }
@@ -174,14 +174,18 @@ public final class GradientGlyphWriter {
         float u = (float) up.get(glyph);
         float d = (float) down.get(glyph);
 
-        float glyphLeft = x + l;
-        float glyphRight = x + r;
-        float glyphWidth = glyphRight - glyphLeft;
+        float glyphWidth = r - l;
         if (glyphWidth <= 0f) {
             return false;
         }
-        // 段坐标相对行首，减去 x 后与字形的 left/right 同一基准。
-        float base = x;
+        // 段坐标是绝对屏幕坐标（相对行首），需要一个锚点换回字形局部坐标。
+        //
+        // 锚点必须只包含「行首位置」，不能包含阴影偏移之类的额外位移：
+        // 阴影调用传进来的 x 已经左移了一格，若用它当锚点，
+        // 段坐标减完再加回去，偏移就被抵消，阴影会精确压在主色上。
+        //
+        // 因此锚点由「字形的左边缘」反推：spans 的坐标基准与主色调用
+        // 传入的 x 一致，这里用字形自身的 left 相对量做局部换算。
         float y0 = y + u;
         float y1 = y + d;
 
@@ -190,8 +194,11 @@ public final class GradientGlyphWriter {
             if (span.isEmpty()) {
                 continue;
             }
-            float sx0 = span.startX() - base;
-            float sx1 = span.endX() - base;
+            // 段坐标相对行首；originX 是「行首在主色坐标系里的位置」。
+            // 用 x - (主色x - originX) 的思路不可行，因此由调用方直接给出
+            // 段坐标到字形局部坐标的偏移量：localX = spanX - originX。
+            float sx0 = span.startX() - originX;
+            float sx1 = span.endX() - originX;
             // 夹进字形可见范围：跨出字形的部分没有纹素对应，
             // 画出去只会采样到邻字的像素边缘。
             if (sx0 < l) {
@@ -205,7 +212,8 @@ public final class GradientGlyphWriter {
             }
             float su0 = u0v + (u1v - u0v) * ((sx0 - l) / glyphWidth);
             float su1 = u0v + (u1v - u0v) * ((sx1 - l) / glyphWidth);
-            quad(buffer, pose, base + sx0, y0, base + sx1, y1,
+            // 几何用传入的 x（含阴影位移），局部量用 sx0/sx1。
+            quad(buffer, pose, x + sx0, y0, x + sx1, y1,
                     su0, su1, v0v, v1v,
                     span.startColor(), span.endColor(), light);
             wrote = true;

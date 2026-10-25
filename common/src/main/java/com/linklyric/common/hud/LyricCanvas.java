@@ -87,10 +87,11 @@ public interface LyricCanvas {
      * 因此每段内两端颜色插值即精确，不需要更多顶点。
      * 默认实现退化为「取首尾颜色画一次」，仅保证不崩。
      *
-     * @param spans 段列表，{@code startX}/{@code endX} 与 {@code x} 同一坐标系
+     * @param spans   段列表，{@code startX}/{@code endX} 是相对行首的绝对坐标
+     * @param originX 行首在屏幕上的横坐标，用于把段坐标换算成字形局部坐标
      */
     default void drawGlyphSpans(String glyph, float x, int y, float lift,
-                                GlyphSpan[] spans, boolean shadow) {
+                                GlyphSpan[] spans, int originX, boolean shadow) {
         if (spans == null || spans.length == 0) {
             return;
         }

@@ -21,9 +21,6 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
     /** 提亮强度相对 blur 的比例。 */
     private static final float BLOOM_SCALE = 1.6f;
 
-    /** 左右展开系数，相对字号。 */
-    private static final float SPREAD_FACTOR = 0.03f;
-
     /** 上浮系数，相对字号。 */
     private static final float LIFT_FACTOR = 0.025f;
 
@@ -56,12 +53,15 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
         // 原版字体是位图图集，缩放会让字形按非整数倍采样而发糊，
         // 9px 的字尤其明显。因此这里不做缩放，改用上浮与提亮表达强调。
 
-        // 向两侧展开：离组中心越远的字位移越大，方向由所在侧决定。
-        // 上游写作 (n/2 - i) 并配负号；这里的 dx 约定向右为正，故取 i - n/2。
-        // 幅度按字号换算后再取整交给绘制层，保证字落在整像素上。
-        float spread = unit.emphasisCharIndex - (group.charCount - 1) / 2f;
-        out.dx += eased * SPREAD_FACTOR * group.amount * spread * param.textSize;
-
+        // 不再做左右展开。
+        //
+        // 上游的横向展开依赖矢量字形：位移由平滑值驱动，渲染器按浮点
+        // 定位，1px 级差异在几十像素的字号上只是细微的疏密变化。
+        // 本项目是 9px 位图字形，坐标必须取整，位移幅度也只有约 1px
+        // （0.03 × amount 1.92 × spread 2 × 9px），
+        // 于是取整结果在动画中途整根笔画瞬移一格，观感就是字在乱跳；
+        // 而这点幅度又不足以让人看出「展开」。
+        // 付出 1px 抖动、换不到任何可感知效果，故整段移除。
         out.dy += eased * LIFT_FACTOR * group.amount * param.textSize;
 
         // 提亮：像素不动，只把颜色推向白色。边缘仍是图集里的抗锯齿值，

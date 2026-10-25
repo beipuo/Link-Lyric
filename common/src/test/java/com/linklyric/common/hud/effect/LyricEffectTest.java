@@ -140,28 +140,48 @@ class LyricEffectTest {
         assertEquals(0f, out.bloom, 1e-6f);
     }
 
+    /**
+     * 强调动画不产生任何水平位移。
+     *
+     * <p>这是「歌词左右乱动」的回归测试。
+     *
+     * <p>上游的左右展开是为矢量字形设计的：位移由平滑值驱动、
+     * 渲染器按浮点定位，1px 级差异在几十像素的字号上只表现为疏密。
+     * 本项目是 9px 位图字形，坐标必须取整，位移幅度也只有约 1px，
+     * 于是取整结果在动画中途整根笔画瞬移一格，观感就是字在乱跳；
+     * 而这点幅度又不足以让人看出「展开」。
+     */
     @Test
-    void 组内边缘字比中心字位移更大() {
+    void 强调动画不产生水平位移() {
         EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
         EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
 
-        // 取中点，令缓动处于峰值。
-        long peak = group.durationMs / 2;
+        // 扫过整个动画过程：任何时刻都不允许出现水平位移。
+        for (long t = 0; t <= group.durationMs * 2; t += Math.max(1L, group.durationMs / 16)) {
+            for (int index = 0; index < 4; index++) {
+                EffectUnit u = unit(0, 500, "字");
+                u.emphasisGroup = group;
+                u.emphasisCharIndex = index;
+                UnitTransform out = new UnitTransform();
+                effect.apply(u, param(t), out);
+                assertEquals(0f, out.dx, 1e-6f,
+                        "强调动画不得产生水平位移，t=" + t + " index=" + index);
+            }
+        }
+    }
 
-        EffectUnit center = unit(0, 500, "字");
-        center.emphasisGroup = group;
-        center.emphasisCharIndex = 2;
-        UnitTransform centerOut = new UnitTransform();
-        effect.apply(center, param(peak), centerOut);
-
-        EffectUnit edge = unit(0, 500, "字");
-        edge.emphasisGroup = group;
-        edge.emphasisCharIndex = 0;
-        UnitTransform edgeOut = new UnitTransform();
-        effect.apply(edge, param(peak), edgeOut);
-
-        assertTrue(Math.abs(edgeOut.dx) > Math.abs(centerOut.dx),
-                "离组中心越远，展开位移越大");
+    /** 上浮仍然保留：强调的「顶起来」观感靠它。 */
+    @Test
+    void 强调动画仍有上浮() {
+        EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
+        EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
+        EffectUnit u = unit(0, 500, "字");
+        u.emphasisGroup = group;
+        u.emphasisCharIndex = 0;
+        UnitTransform out = new UnitTransform();
+        effect.apply(u, param(group.durationMs / 2), out);
+        // dy 是「抬起量」：加到 lifts 上再传给绘制层，正值表示上浮。
+        assertTrue(out.dy > 0f, "应有上浮（dy 为正表示抬起），实际=" + out.dy);
     }
 
     @Test

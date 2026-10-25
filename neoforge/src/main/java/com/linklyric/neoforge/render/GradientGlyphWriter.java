@@ -154,11 +154,12 @@ public final class GradientGlyphWriter {
      * </pre>
      * 因此段边界处的 u 直接按比例求出，不需要知道图集里这个字的具体位置。
      *
-     * @param spans 段列表，坐标与 {@code x} 同一坐标系
+     * @param spans   段列表，{@code startX}/{@code endX} 是相对行首的绝对坐标
+     * @param originX 行首在屏幕上的横坐标，用于把段坐标换算成字形局部坐标
      */
     public static boolean writeSpans(VertexConsumer buffer, Matrix4f pose,
                                       BakedGlyph glyph, float x, float y,
-                                      GlyphSpan[] spans, int light) {
+                                      GlyphSpan[] spans, float originX, int light) {
         if (!available() || spans == null || spans.length == 0) {
             return false;
         }
@@ -175,7 +176,6 @@ public final class GradientGlyphWriter {
         if (glyphWidth <= 0f) {
             return false;
         }
-        float base = x;
         float y0 = y + u;
         float y1 = y + d;
 
@@ -184,8 +184,13 @@ public final class GradientGlyphWriter {
             if (span.isEmpty()) {
                 continue;
             }
-            float sx0 = span.startX() - base;
-            float sx1 = span.endX() - base;
+            // 段坐标减去行锚点得到字形局部坐标。
+            //
+            // 不能用传入的 x 当锚点：阴影调用传的 x 已经左移一格，
+            // 减完再加回去会把偏移抵消，阴影就会精确压在主色上，
+            // 表现为「正在上色的字被盖住」。
+            float sx0 = span.startX() - originX;
+            float sx1 = span.endX() - originX;
             // 夹进字形可见范围：跨出字形的部分没有纹素对应，
             // 画出去只会采样到邻字的像素边缘。
             if (sx0 < l) {
@@ -199,7 +204,8 @@ public final class GradientGlyphWriter {
             }
             float su0 = u0v + (u1v - u0v) * ((sx0 - l) / glyphWidth);
             float su1 = u0v + (u1v - u0v) * ((sx1 - l) / glyphWidth);
-            quad(buffer, pose, base + sx0, y0, base + sx1, y1,
+            // 几何用传入的 x（含阴影位移），局部量用 sx0/sx1。
+            quad(buffer, pose, x + sx0, y0, x + sx1, y1,
                     su0, su1, v0v, v1v,
                     span.startColor(), span.endColor(), light);
             wrote = true;

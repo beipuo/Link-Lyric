@@ -198,7 +198,7 @@ public final class LinkLyricNeoForge {
          */
         @Override
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
-                                    GlyphSpan[] spans, boolean shadow) {
+                                    GlyphSpan[] spans, int originX, boolean shadow) {
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift,
                         spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
@@ -208,11 +208,13 @@ public final class LinkLyricNeoForge {
                 var pose = graphics.pose();
                 pose.pushPose();
                 pose.translate(0f, -lift, 0f);
-                GradientPainter.drawSpans(graphics, client.font, glyph, x, y, spans, shadow);
+                GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                        spans, originX, shadow);
                 pose.popPose();
                 return;
             }
-            GradientPainter.drawSpans(graphics, client.font, glyph, x, y, spans, shadow);
+            GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                    spans, originX, shadow);
         }
 
         @Override
