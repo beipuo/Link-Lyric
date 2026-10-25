@@ -30,6 +30,18 @@ final class LyricPainter {
     private static final int LIFT_HEADROOM = 2;
     private static final int SHADOW_HEADROOM = 4;
 
+    /** 阴影相对正文的水平偏移，与 SDF 渲染侧一致。 */
+    private static final float SHADOW_OFFSET_PX = 1f;
+
+    /**
+     * 裁剪判定的容差（像素）。
+     *
+     * <p>特效给出的位移是亚像素的，字形右缘因此可能比视口多出不到 1 像素。
+     * 若不容忍这一丁点，那个字会被当成越界而裁剪，
+     * 裁掉的正是它自己向外偏移的阴影。
+     */
+    private static final float CLIP_TOLERANCE = 1f;
+
     /** 未唱文字的透明度。 */
     private static final float UNSUNG_ALPHA = 0.38f;
 
@@ -184,9 +196,24 @@ final class LyricPainter {
             return;
         }
 
-        boolean full = drawX >= viewportLeft && drawX + charWidth <= viewRight;
+        // 「这个字完整在视口内吗」的判定必须带容差。
+        //
+        // 实测故障：每句的**最后一个字**没有阴影，倒数第二个正常。
+        // 原因是末字坐标带着特效的亚像素位移（实测 468.10135），
+        // 右缘 477.10135 比整数 viewRight=477 大了 0.1 像素，
+        // 于是只有它被判为越界而进入裁剪分支；又因为阴影是向右偏
+        // 1 像素画的，裁剪框右边界一压，被切掉的正好是阴影。
+        //
+        // 0.1 像素不是「越界」，是取整与浮动位移的噪声。留 1 像素容差
+        // 即可覆盖亚像素位移，同时不影响真正越界的字被裁掉。
+        boolean full = drawX >= viewportLeft - CLIP_TOLERANCE
+                && drawX + charWidth <= viewRight + CLIP_TOLERANCE;
         if (!full) {
-            enableScissor(left, textY, right - left);
+            // 真正越界的字仍要裁，但裁剪框要含住向外伸出的墨迹，
+            // 否则滚动时边缘那圈阴影与描边会被切成直边。
+            int margin = (int) Math.ceil(outwardMargin());
+            enableScissor(Math.max(left - margin, viewportLeft), textY,
+                    right - left + margin);
         }
 
         // 一律按常规字重绘制。
@@ -348,6 +375,24 @@ final class LyricPainter {
     /** 按缩放比例绘制文本，用于副行。 */
     void textScaled(String text, int x, int y, float scale, int color) {
         painter.drawTextScaled(styled(text), x, y, scale, color, shadow);
+    }
+
+    /**
+     * 字形向文本盒之外伸出的最大距离（像素）。
+     *
+     * <p>取阴影偏移、描边宽度、光晕半径三者之和：它们各自向外扩，
+     * 没有互相包含的关系，所以要相加而不是取最大。
+     */
+    private float outwardMargin() {
+        float m = SHADOW_OFFSET_PX;
+        if (strokeWidth > 0f) {
+            m += strokeWidth;
+        }
+        // 光晕半径属于特效的瞬时状态，不在这里体现：
+        // 它每帧都变，而字形的裁剪决策若跟着闪变，
+        // 滚动时边缘会一帧裁一帧不裁。宁可边缘光晕被裁掉一点，
+        // 也不要让裁剪框本身抖动。
+        return m;
     }
 
     private void enableScissor(int left, int textY, int width) {
