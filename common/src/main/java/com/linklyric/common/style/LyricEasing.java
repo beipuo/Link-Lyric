@@ -1,18 +1,24 @@
 package com.linklyric.common.style;
 
 /**
- * 歌词动画的统一缓动。
+ * 歌词动画的统一缓动：固定控制点 {@code (0.25, 0, 0.2, 1)}。
  *
- * <h2>为什么需要统一</h2>
+ * <h2>谁在用这条曲线</h2>
  *
- * <p>行切换、逐字上浮、染色、旧行淡出必须同步推进。若各用一条曲线，
- * 同一时间点上的位移与颜色会脱节：眼睛看到的是「字先窜上去，
- * 颜色慢慢追」，即使每一帧都在更新也会被感受为卡顿。
+ * <p>行切换的推入与逐字上浮。两者都是<b>位移</b>，
+ * 共用一条曲线才不会出现「字先窜上去、颜色慢慢追」的脱节感。
+ *
+ * <h2>谁不用</h2>
+ *
+ * <p>染色前沿<b>不</b>用这条曲线。前沿表达「唱到哪了」，是事实，
+ * 必须与音频时间严格成正比；曲线非匀速会让口型脱节、
+ * 行尾永远差一点染不满。那侧走线性加一次 smoothstep 收边。
+ *
+ * <p>强调特效也不走这里：它需要分段的两组控制点，见 {@code EmpEasing}。
  *
  * <h2>参数与形状</h2>
  *
- * <p>控制点 {@code (0.25, 0, 0.2, 1)} 是此处唯一的曲线参数，
- * 三条动画共用，不得单独调参。
+ * <p>控制点是此处唯一可调的东西，由 {@link CubicBezier} 求解。
  *
  * <p>输出（见 {@code LyricEasingTest}）：
  * <pre>
@@ -53,76 +59,6 @@ public final class LyricEasing {
         if (t >= 1f) {
             return 1f;
         }
-        return y(solveT(t));
-    }
-
-    /**
-     * 由 x 反解贝塞尔参数 t。
-     *
-     * <p>{@code x} 与参数 {@code t} 不是同一个量：必须先解 {@code x(t) = 目标x}，
-     * 才能取 {@code y(t)}。
-     *
-     * <p>用牛顿迭代加速、二分兜底。曲线在 {@code x1 = 0.25} 处导数可能接近 0，
-     * 纯牛顿会在该区间来回振荡，因此导数过小时直接转二分。
-     */
-    private static float solveT(float x) {
-        float t = x;
-        for (int i = 0; i < 8; i++) {
-            float dx = cx(t) - x;
-            if (Math.abs(dx) < 1e-5f) {
-                return t;
-            }
-            float slope = dcx(t);
-            if (Math.abs(slope) < 1e-6f) {
-                break;
-            }
-            t -= dx / slope;
-            if (t < 0f || t > 1f) {
-                break;
-            }
-        }
-        float lo = 0f;
-        float hi = 1f;
-        t = x;
-        for (int i = 0; i < 20; i++) {
-            float mid = (lo + hi) * 0.5f;
-            if (cx(mid) < x) {
-                lo = mid;
-            } else {
-                hi = mid;
-            }
-            t = mid;
-        }
-        return t;
-    }
-
-    /** 控制点 x 坐标的三次贝塞尔求值。 */
-    private static float cx(float t) {
-        return cubic(t, X1, X2);
-    }
-
-    /** 控制点 y 坐标的三次贝塞尔求值。 */
-    private static float y(float t) {
-        return cubic(t, Y1, Y2);
-    }
-
-    /** cx 对 t 的导数，供牛顿迭代使用。 */
-    private static float dcx(float t) {
-        float inv = 1f - t;
-        return 3f * inv * inv * X1
-                + 6f * inv * t * (X2 - X1)
-                + 3f * t * t * (1f - X2);
-    }
-
-    /**
-     * 一维三阶贝塞尔：端点固定为 0 与 1，只由两个控制点决定形状。
-     *
-     * @param t  参数 0..1
-     * @param p1 第一个控制点
-     * @param p2 第二个控制点
-     */
-    private static float cubic(float t, float p1, float p2) {
-        float inv = 1f - t;
-        return 3f * inv * inv * t * p1 + 3f * inv * t * t * p2 + t * t * t;
+        return CubicBezier.eval(t, X1, Y1, X2, Y2);
     }
 }

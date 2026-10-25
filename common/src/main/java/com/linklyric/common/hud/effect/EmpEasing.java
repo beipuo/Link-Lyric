@@ -8,6 +8,8 @@
  */
 package com.linklyric.common.hud.effect;
 
+import com.linklyric.common.style.CubicBezier;
+
 /**
  * 强调动画的分段缓动。
  *
