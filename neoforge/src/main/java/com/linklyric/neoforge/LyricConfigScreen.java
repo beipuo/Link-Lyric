@@ -119,6 +119,11 @@ final class LyricConfigScreen extends Screen {
                 left, y, LangKeys.OPTION_WEIGHT, 0, (style, value) -> style.withWeight(value)));
         y += ROW_HEIGHT + ROW_GAP;
 
+        // 上浮曲线：两档切换。余弦是默认，形状来自 Salt Player。
+        addScrollWidget(cycleEnum(LyricStyleConfig.LiftCurve.class, controller.style().liftCurve(),
+                left, y, LangKeys.LIFT_CURVE, 0, (style, value) -> style.withLiftCurve(value)));
+        y += ROW_HEIGHT + ROW_GAP;
+
         // 对齐：影响主行与副行的水平锚点。
         addScrollWidget(cycleEnum(LyricStyleConfig.Align.class, controller.style().align(),
                 left, y, LangKeys.OPTION_ALIGN, 0, (style, value) -> style.withAlign(value)));

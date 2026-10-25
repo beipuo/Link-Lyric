@@ -1,4 +1,7 @@
 {
+  "linklyric.config.lift_curve": "上浮曲线",
+  "linklyric.config.lift_curve.linear": "线性",
+  "linklyric.config.lift_curve.cosine": "余弦",
   "linklyric.config.title": "Link Lyric 配置",
   "linklyric.config.feather": "切换过渡",
   "linklyric.config.feather.on": "羽化：开",

@@ -708,9 +708,7 @@ public final class FloatingLyricRenderer {
         // 若只让高亮层带偏移，唱到的字会从白色原字上方落下来，
         // 看起来像两个独立的字在打架，而不是同一个字变色并上浮。
         float[] lifts = clampedSung >= 0.5f && canScroll
-                ? LyricProgress.lifts(visible.length(),
-                        LyricProgress.fontSizeOf(primaryWidth, visible.length()),
-                        LyricProgress.charProgress(line, visible, positionMs))
+                ? buildLifts(painter, visible, primaryWidth, clampedSung, line, positionMs)
                 : null;
 
         // 整体不透明度作用于主行、后续行与间奏，统一在这里相乘一次。
@@ -839,6 +837,30 @@ public final class FloatingLyricRenderer {
     }
 
     /** 由行宽与字数估出字号；中文字宽约等于字号，故比值为良好近似。 */
+    /**
+     * 按当前设置的上浮曲线算出逐字偏移。
+     *
+     * <p>线性曲线让每个字各自随自身进度升起；余弦曲线把整行当成一条
+     * 横跨的斜坡。两者都必须给底色层与高亮层共用同一份偏移，
+     * 否则唱到的字会从原字上方落下来，看着像两个独立的字。
+     */
+    private float[] buildLifts(FloatingLyricRenderer.Painter painter, String visible,
+                               int primaryWidth, float sungWidth,
+                               com.linklyric.core.lyric.LyricLine line, long positionMs) {
+        float fontSize = LyricProgress.fontSizeOf(primaryWidth, visible.length());
+        if (style.liftCurve() == com.linklyric.common.style.LyricStyleConfig.LiftCurve.LINEAR) {
+            return LyricProgress.lifts(visible.length(), fontSize,
+                    LyricProgress.charProgress(line, visible, positionMs));
+        }
+        int[] starts = LyricProgress.charStarts(painter, visible);
+        int[] widths = new int[starts.length];
+        for (int i = 0; i < starts.length; i++) {
+            int next = i + 1 < starts.length ? starts[i + 1] : primaryWidth;
+            widths[i] = Math.max(1, next - starts[i]);
+        }
+        return LyricProgress.cosineLifts(starts, widths, sungWidth, fontSize);
+    }
+
     private static float fontSizeOf(int lineWidth, int charCount) {
         return LyricProgress.fontSizeOf(lineWidth, charCount);
     }

@@ -77,6 +77,11 @@ public final class LangKeys {
     public static final String OPTION_OPACITY = "linklyric.option.opacity";
     public static final String OPTION_ALIGN = "linklyric.option.align";
     public static final String OPTION_WEIGHT = "linklyric.option.weight";
+
+    /** 上浮曲线切换。 */
+    public static final String LIFT_CURVE = "linklyric.config.lift_curve";
+    public static final String LIFT_CURVE_LINEAR = "linklyric.config.lift_curve.linear";
+    public static final String LIFT_CURVE_COSINE = "linklyric.config.lift_curve.cosine";
     public static final String OPTION_INTERLUDE = "linklyric.option.interlude";
     public static final String OPTION_OFFSET = "linklyric.option.offset";
 

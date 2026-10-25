@@ -1,4 +1,7 @@
 {
+  "linklyric.config.lift_curve": "Lift Curve",
+  "linklyric.config.lift_curve.linear": "Linear",
+  "linklyric.config.lift_curve.cosine": "Cosine",
   "linklyric.config.title": "Link Lyric Settings",
   "linklyric.config.feather": "Transition",
   "linklyric.config.feather.on": "Feather: On",
