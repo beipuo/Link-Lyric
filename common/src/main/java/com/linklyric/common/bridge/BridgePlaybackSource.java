@@ -3,7 +3,6 @@ package com.linklyric.common.bridge;
 import com.linklyric.core.capability.CapabilitySet;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.protocol.Protocol;
-import com.linklyric.core.source.PlaybackSource;
 import com.linklyric.core.sync.PlayerSnapshot;
 import com.linklyric.core.sync.TrackIdentity;
 
@@ -25,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * <p>断连语义：连续失败达到阈值才判定为不可用并清空显示，
  * 避免插件重载那几百毫秒里歌词闪烁消失。
  */
-public final class BridgePlaybackSource implements PlaybackSource, com.linklyric.common.hud.LyricFeed {
+public final class BridgePlaybackSource implements com.linklyric.common.hud.LyricFeed {
 
     public static final String SOURCE_ID = "salt-player";
 
@@ -76,7 +75,7 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
         return displayName;
     }
 
-    @Override
+    /** 本次会话的能力声明；由握手快照解析得出，渲染层按此决定显示哪些元素。 */
     public CapabilitySet capabilities() {
         return capabilities.get();
     }

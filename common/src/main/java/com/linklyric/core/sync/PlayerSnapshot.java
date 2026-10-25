@@ -6,7 +6,7 @@ import com.linklyric.core.capability.CapabilitySet;
  * 一次播放状态的完整快照，对应数据源的一次「曲目变更」事件。
  *
  * <p>只承载事实，不承载推导结果：当前行索引、逐字进度等一律由
- * {@link PlaybackClock} 与 {@code LyricTimeline} 在本地算出，避免两份真相。
+ * {@code PositionTracker} 与 {@code LyricTimeline} 在本地算出，避免两份真相。
  *
  * @param sourceId     产生该快照的数据源标识，用于配置归属与问题定位
  * @param track        曲目身份，歌词匹配的唯一依据
