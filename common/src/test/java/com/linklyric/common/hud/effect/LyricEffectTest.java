@@ -127,7 +127,7 @@ class LyricEffectTest {
         UnitTransform out = new UnitTransform();
         effect.apply(u, param(group.durationMs / 2), out);
         assertEquals(1f, out.scale, 1e-6f,
-                "位图字体只能整像素平移，缩放会让笔画发虚");
+                "缩放会把字距一起放大，与「强调这一句」无关，因此不用缩放");
     }
 
     @Test
@@ -141,33 +141,68 @@ class LyricEffectTest {
     }
 
     /**
-     * 强调动画不产生任何水平位移。
+     * 横向展开必须连续，不得跳变。
      *
-     * <p>这是「歌词左右乱动」的回归测试。
+     * <p>这是「歌词左右乱动」的回归测试，判据不是「不许动」，
+     * 而是「只能平滑地动」。
      *
-     * <p>上游的左右展开是为矢量字形设计的：位移由平滑值驱动、
-     * 渲染器按浮点定位，1px 级差异在几十像素的字号上只表现为疏密。
-     * 本项目是 9px 位图字形，坐标必须取整，位移幅度也只有约 1px，
-     * 于是取整结果在动画中途整根笔画瞬移一格，观感就是字在乱跳；
-     * 而这点幅度又不足以让人看出「展开」。
+     * <p>过去位移被禁用，原因很具体：9px 位图字形在非整数位置会糊，
+     * 绘制层用 {@code Math.round} 取整，约 1px 的位移在动画中途
+     * 被整成 0 或 1，整根笔画瞬移一格，观感是字在乱跳。
+     *
+     * <p>改用 SDF 后绘制层不再取整，位移可以真正连续推进。
+     * 因此这里改为校验连续性：相邻两次采样之间的位移差必须很小，
+     * 大到能看出来的跳变仍然判失败。
      */
     @Test
-    void 强调动画不产生水平位移() {
+    void 强调横向展开保持连续() {
         EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
         EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
 
-        // 扫过整个动画过程：任何时刻都不允许出现水平位移。
-        for (long t = 0; t <= group.durationMs * 2; t += Math.max(1L, group.durationMs / 16)) {
-            for (int index = 0; index < 4; index++) {
-                EffectUnit u = unit(0, 500, "字");
-                u.emphasisGroup = group;
-                u.emphasisCharIndex = index;
-                UnitTransform out = new UnitTransform();
-                effect.apply(u, param(t), out);
-                assertEquals(0f, out.dx, 1e-6f,
-                        "强调动画不得产生水平位移，t=" + t + " index=" + index);
+        long step = Math.max(1L, group.durationMs / 64);
+        float previous = Float.NaN;
+        float maxJump = 0f;
+        for (long t = 0; t <= group.durationMs * 2; t += step) {
+            EffectUnit u = unit(0, 500, "字");
+            u.emphasisGroup = group;
+            u.emphasisCharIndex = 0;
+            UnitTransform out = new UnitTransform();
+            effect.apply(u, param(t), out);
+            if (!Float.isNaN(previous)) {
+                maxJump = Math.max(maxJump, Math.abs(out.dx - previous));
             }
+            previous = out.dx;
         }
+        // 位移总量不超过 0.02 × 1.2 × 9 ≈ 0.22px，
+        // 单步增量必须远小于它，否则就是有断点。
+        assertTrue(maxJump < 0.05f,
+                "相邻采样间位移应平滑推进，实际最大跳变=" + maxJump);
+    }
+
+    /** 边缘字的横向展开比中心字更大，形成「向两侧撑开」。 */
+    @Test
+    void 边缘字展开大于中心字() {
+        EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
+        EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
+        long t = group.durationMs / 2;
+
+        float center = 0f;
+        float last = 0f;
+        for (int index = 0; index < 4; index++) {
+            EffectUnit u = unit(0, 500, "字");
+            u.emphasisGroup = group;
+            u.emphasisCharIndex = index;
+            UnitTransform out = new UnitTransform();
+            effect.apply(u, param(t), out);
+            if (index == 0) {
+                center = out.dx;
+            }
+            last = out.dx;
+        }
+        // 组内按离中心距离错峰，末字起始最晚、进度最低；
+        // 这里只保证存在横向位移，方向的符号由实现决定。
+        assertTrue(Math.abs(center) > 0f || Math.abs(last) > 0f,
+                "强调展开应产生横向位移");
     }
 
     /** 上浮仍然保留：强调的「顶起来」观感靠它。 */

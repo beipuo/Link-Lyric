@@ -5,18 +5,29 @@ import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.fabric.render.GradientPainter;
+import com.linklyric.fabric.render.sdf.SdfGlyphProvider;
+import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.common.config.LayoutConfig;
 import com.linklyric.common.hud.LyricDragController;
+import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
+import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.packs.PackType;
+import net.minecraft.server.packs.resources.ResourceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
 
 /**
  * Fabric 客户端入口。
@@ -57,12 +68,55 @@ public final class LinkLyricFabric implements ClientModInitializer {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registry) ->
                 FabricLyricCommand.register(dispatcher, dragController));
 
+        // SDF 着色器必须等资源加载完才能编译，而资源可以在游戏内重载。
+        // 挂在资源重载完成事件上，顺便覆盖第一次加载。
+        ResourceManagerHelper.get(PackType.CLIENT_RESOURCES)
+                .registerReloadListener(new SimpleSynchronousResourceReloadListener() {
+                    @Override
+                    public ResourceLocation getFabricId() {
+                        return ResourceLocation.fromNamespaceAndPath(MOD_ID, "sdf_shader");
+                    }
+
+                    @Override
+                    public void onResourceManagerReload(ResourceManager manager) {
+                        loadSdfShader(manager);
+                    }
+                });
+
         // 关闭游戏时停掉轮询线程，避免守护线程持有连接
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (source != null) {
                 source.stop();
             }
         }, "link-lyric-shutdown"));
+    }
+
+    /**
+     * 装载 SDF 文字着色器。
+     *
+     * <p>失败不致命：{@code SdfRenderType} 保持不可用，
+     * 绘制自动退回原版字形，只是没有高清边缘。
+     *
+     * <p>重载时先释放旧实例再接新的，否则会漏掉一个着色器程序。
+     */
+    private static void loadSdfShader(ResourceManager manager) {
+        // 顺序有讲究：先释放图集（它绑着旧纹理 id），再贴新着色器。
+        // 反过来的话，install 清空了 RenderType 缓存，但旧图集还在，
+        // 下一次绘制会重新建 RenderType 指向仍存活的旧页，
+        // 之后 reset 才关掉它——留下悬空的纹理引用。
+        SdfGlyphProvider.reset();
+        ShaderInstance old = SdfRenderType.current();
+        try {
+            ShaderInstance shader = new ShaderInstance(manager, "linklyric_sdf_text",
+                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
+            SdfRenderType.install(shader);
+            if (old != null) {
+                old.close();
+            }
+        } catch (IOException | RuntimeException e) {
+            SdfRenderType.install(null);
+            LOGGER.warn("[Link Lyric] SDF 着色器装载失败，退回原版字形", e);
+        }
     }
 
     private static void onHudRender(GuiGraphics graphics, DeltaTracker deltaTracker) {

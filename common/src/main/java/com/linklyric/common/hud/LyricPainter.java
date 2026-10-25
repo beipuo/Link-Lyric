@@ -159,14 +159,20 @@ final class LyricPainter {
                        int viewportLeft, int viewRight, GlyphSpan[] spans,
                        float dx, float bloomLevel) {
         int charWidth = painter.textWidth(ch);
-        int drawX = Math.round(charX + dx);
-        int left = Math.max(drawX, viewportLeft);
-        int right = Math.min(drawX + charWidth, viewRight);
+        // 保留浮点坐标，不取整。
+        //
+        // 9px 位图字形在非整数位置会糊，所以过去这里必须 Math.round；
+        // 代价是 1px 以内的位移会被整成 0 或 1，动画看起来一跳一跳。
+        // 改用 SDF 后字形在任意小数位置都锐利，取整只带来跳变，因此去掉。
+        // 整数平移仍由下面的 scissor 判断保证不越界。
+        float drawX = charX + dx;
+        int left = Math.max((int) Math.floor(drawX), viewportLeft);
+        int right = Math.min((int) Math.ceil(drawX + charWidth), viewRight);
         if (right - left <= 0) {
             return;
         }
 
-        boolean full = left <= drawX && right >= drawX + charWidth;
+        boolean full = drawX >= viewportLeft && drawX + charWidth <= viewRight;
         if (!full) {
             enableScissor(left, textY, right - left);
         }
@@ -180,8 +186,9 @@ final class LyricPainter {
         GlyphSpan[] shown = bloom(spans, bloomLevel);
         if (shown.length == 1 && shown[0].isSolid()) {
             // 单色：走平台原有的整字绘制，省掉逐顶点写入。
-            painter.drawTextLifted(ch, drawX, textY, lift,
-                    shown[0].startColor(), shadow);
+            // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
+            painter.drawGlyphGradient(ch, drawX, textY, lift,
+                    new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow);
         } else {
             // 段边界落在前沿函数的折点上，段内插值即精确。
             //
@@ -189,7 +196,7 @@ final class LyricPainter {
             // （spansForChar(charX, charRight, ...)），减去它正好得到
             // 字形局部坐标。若改传 textX（行首），每个字会多偏移
             // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
-            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, charX, shadow);
+            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX), shadow);
         }
 
         if (!full) {

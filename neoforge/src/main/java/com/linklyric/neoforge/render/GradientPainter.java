@@ -2,6 +2,9 @@ package com.linklyric.neoforge.render;
 
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
+import com.linklyric.neoforge.render.sdf.SdfAtlas;
+import com.linklyric.neoforge.render.sdf.SdfGlyphProvider;
+import com.linklyric.neoforge.render.sdf.SdfGlyphWriter;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -65,6 +68,12 @@ public final class GradientPainter {
             return true;
         }
         int cp = glyph.codePointAt(0);
+
+        // 优先走 SDF：任意缩放都锐利，顶点色渐变照旧生效。
+        SdfAtlas.Slot slot = SdfGlyphProvider.slot(cp);
+        if (slot != null) {
+            return drawSdf(graphics, slot, cp, x, y, colors, shadow);
+        }
         BakedGlyph baked = GlyphLookup.glyph(font, cp);
         if (baked == null) {
             return false;
@@ -104,6 +113,13 @@ public final class GradientPainter {
             return true;
         }
         int cp = glyph.codePointAt(0);
+
+        // 优先走 SDF。段切分逻辑与原版路径一致，颜色仍逐顶点写入。
+        SdfAtlas.Slot slot = SdfGlyphProvider.slot(cp);
+        if (slot != null) {
+            return drawSpansSdf(graphics, slot, cp, x, y, spans, originX, shadow);
+        }
+
         BakedGlyph baked = GlyphLookup.glyph(font, cp);
         if (baked == null) {
             return false;
@@ -129,6 +145,62 @@ public final class GradientPainter {
                     x + SHADOW_OFFSET, y, shadowSpans, originX, light);
         }
         return GradientGlyphWriter.writeSpans(consumer, pose, baked, x, y, spans, originX, light);
+    }
+
+    /** SDF 路径的单色字形。 */
+    private static boolean drawSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
+                                   float x, float y, GlyphColors colors, boolean shadow) {
+        float[] box = SdfGlyphProvider.box(cp);
+        if (box == null) {
+            return false;
+        }
+        RenderType type = SdfGlyphWriter.renderType(slot);
+        if (type == null) {
+            return false;
+        }
+        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
+        Matrix4f pose = graphics.pose().last().pose();
+        int light = 0xF000F0;
+
+        GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
+        GlyphSpan[] mainSpans = new GlyphSpan[]{main};
+        if (shadow) {
+            GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
+                    shadowOf(colors.left()), shadowOf(colors.right()));
+            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
+                    x + SHADOW_OFFSET, y, new GlyphSpan[]{shadowSpan}, x, light);
+        }
+        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, mainSpans, x, light);
+    }
+
+    /** SDF 路径的按段字形。 */
+    private static boolean drawSpansSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
+                                        float x, float y, GlyphSpan[] spans,
+                                        float originX, boolean shadow) {
+        float[] box = SdfGlyphProvider.box(cp);
+        if (box == null) {
+            return false;
+        }
+        RenderType type = SdfGlyphWriter.renderType(slot);
+        if (type == null) {
+            return false;
+        }
+        VertexConsumer consumer = graphics.bufferSource().getBuffer(type);
+        Matrix4f pose = graphics.pose().last().pose();
+        int light = 0xF000F0;
+
+        if (shadow) {
+            GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
+            for (int i = 0; i < spans.length; i++) {
+                GlyphSpan s = spans[i];
+                shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
+                        shadowOf(s.startColor()), shadowOf(s.endColor()));
+            }
+            // originX 仍取主色的行锚点，否则阴影偏移会被段坐标平移抵消。
+            SdfGlyphWriter.writeSpans(consumer, pose, slot, box,
+                    x + SHADOW_OFFSET, y, shadowSpans, originX, light);
+        }
+        return SdfGlyphWriter.writeSpans(consumer, pose, slot, box, x, y, spans, originX, light);
     }
 
     /**

@@ -5,6 +5,7 @@ import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.neoforge.render.GradientPainter;
+import com.linklyric.neoforge.render.sdf.SdfShaderRegistration;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
@@ -53,6 +54,9 @@ public final class LinkLyricNeoForge {
         LayoutConfig layout = LayoutConfig.load(FMLPaths.CONFIGDIR.get());
         dragController = new LyricDragController(renderer, layout);
         LOGGER.info("[Link Lyric] 数据源已启动，目标 127.0.0.1:{}", BRIDGE_PORT);
+
+        // 着色器必须在编译前登记，走 mod 总线
+        modEventBus.addListener(SdfShaderRegistration::onRegisterShaders);
 
         // 渲染是游戏总线事件，不是 mod 总线
         NeoForge.EVENT_BUS.addListener(this::onRenderGui);

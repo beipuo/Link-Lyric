@@ -57,12 +57,23 @@ class ScrollTextTest {
         assertEquals(centerX - viewWidth / 2, early.textXs.get(0),
                 "高亮未过半时不应滚动");
 
-        // 位置过半：高亮超过中线，文本应左移
+        // 位置过半：高亮超过中线，文本应左移。
+        //
+        // 滚动量按 SMOOTH_TAU_SECONDS 平滑逼近目标值，帧数不足时尚未收敛。
+        // 用「连续两帧最左坐标不变」作为收敛判据，而不是固定循环次数：
+        // 后者在高负载机器上会因 sleep 拉长而提前退出，导致偶发失败。
         RecordingPainter late = new RecordingPainter();
         FloatingLyricRenderer r2 = new FloatingLyricRenderer(new Feed(timeline, 40_000L, true));
-        for (int i = 0; i < 12; i++) {
+        int previousMin = Integer.MIN_VALUE;
+        for (int i = 0; i < 200; i++) {
             late.reset();
             r2.render(late);
+            int currentMin = late.textXs.stream().mapToInt(Integer::intValue).min()
+                    .orElse(Integer.MAX_VALUE);
+            if (currentMin == previousMin) {
+                break;
+            }
+            previousMin = currentMin;
             sleep();
         }
         // 滚动生效的证据不是「某个绘制坐标小于视口左边界」——

@@ -9,7 +9,10 @@
 package com.linklyric.common.hud.effect;
 
 /**
- * 强调特效：够长的词组被唱到时整体放大、上浮、向两侧展开，并泛起辉光。
+ * 强调特效：够长的词组被唱到时上浮、向两侧展开，并泛起辉光。
+ *
+ * <p>不只做缩放：缩放会把字距一起放大，与「强调这一句」的语义无关，
+ * 反而让整行抖动。位移只作用在字形上，字距保持不变。
  *
  * <p>组内逐字错峰：首字立即开始，其余按离组中心的距离依次跟上，
  * 于是观感是「一组字被逐个点亮」而不是整块齐动。
@@ -23,6 +26,14 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
 
     /** 上浮系数，相对字号。 */
     private static final float LIFT_FACTOR = 0.025f;
+
+    /**
+     * 横向展开系数，相对字号。
+     *
+     * <p>比上浮略小：横向位移会改变字与字的间距，幅度过大会让整行
+     * 看起来在抖动；纵向位移不影响相邻字，可以稍大。
+     */
+    private static final float SPREAD_FACTOR = 0.02f;
 
     /** 动画尚未开始时的第一帧进度，与上游的 fill:both 行为一致。 */
     private static final float FIRST_FRAME_X = 1f / 32f;
@@ -50,18 +61,19 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
         }
         float eased = EmpEasing.at(x) * param.strength;
 
-        // 原版字体是位图图集，缩放会让字形按非整数倍采样而发糊，
-        // 9px 的字尤其明显。因此这里不做缩放，改用上浮与提亮表达强调。
+        // 仍不做缩放：缩放会把字距一起放大，
+        // 与「强调这一句」的语义无关，反而让整行抖动。
 
-        // 不再做左右展开。
+        // 横向展开恢复。
         //
-        // 上游的横向展开依赖矢量字形：位移由平滑值驱动，渲染器按浮点
-        // 定位，1px 级差异在几十像素的字号上只是细微的疏密变化。
-        // 本项目是 9px 位图字形，坐标必须取整，位移幅度也只有约 1px
-        // （0.03 × amount 1.92 × spread 2 × 9px），
-        // 于是取整结果在动画中途整根笔画瞬移一格，观感就是字在乱跳；
-        // 而这点幅度又不足以让人看出「展开」。
-        // 付出 1px 抖动、换不到任何可感知效果，故整段移除。
+        // 上游依赖矢量字形，而本项目过去是 9px 位图字形、坐标必须取整，
+        // 约 1px 的位移会被整成 0 或 1，动画中途整根笔画瞬移一格，
+        // 观感就是字在乱跳，因此曾经整段移除。
+        //
+        // 改用 SDF 后字形在任意小数位置都锐利，绘制路径不再取整，
+        // 位移可以真正连续推进，这点幅度才有意义。
+        out.dx += eased * SPREAD_FACTOR * group.amount * param.textSize;
+
         out.dy += eased * LIFT_FACTOR * group.amount * param.textSize;
 
         // 提亮：像素不动，只把颜色推向白色。边缘仍是图集里的抗锯齿值，

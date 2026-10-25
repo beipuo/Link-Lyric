@@ -620,11 +620,10 @@ public final class FloatingLyricRenderer {
         LineLayout.Block block = LineLayout.compute(centerTextY, drawableLines, 0,
                 LyricGeometry.LINE_HEIGHT, LyricGeometry.LINE_GAP, SUB_TEXT_FONT_SCALE);
 
-        // 行切换：旧主行在其原位淡出，其余行同时连续上移一行补位。
-        // 两者并行，块内不会出现「整体偏移一行」的中间态。
+        // 行切换：其余行连续上移一行补位。旧主行直接在换行瞬间消失，
+        // 理由见 {@link LineTransition} 的类注释。
         long durationMs = style.lineTransitionMs();
         int blockShift = transition.blockShift(durationMs);
-        int oldLineAlpha = Math.round(255f * transition.oldAlpha(durationMs));
         int mainBaselineY = block.baseline() + blockShift;
 
         // 字号缩放：整块（主行 + 副行）一起放大缩小。
@@ -717,36 +716,13 @@ public final class FloatingLyricRenderer {
         // 整体不透明度作用于主行、后续行与间奏，统一在这里相乘一次。
         float opacity = this.style.opacity();
 
-        // 旧行画在它换行前最后一帧所在的位置，原地淡出。
-        // 位置在换行瞬间由 LineTransition 冻结，不随当前块几何变化。
-        int oldBaselineY = transition.oldBaselineY();
-        if (transition.drawsOld(style.lineTransitionMs())) {
-            String old = clip(painter, transition.oldText(), maxWidth);
-            int oldWidth = painter.textWidth(old);
-            int oldX = layoutLeft(this.style.align(), centerX, maxWidth, oldWidth);
-            // 用旧行最后呈现的配色淡出：已唱段满色、未唱段压淡，
-            // 分界沿用换行瞬间的已唱宽度。
-            float oldOpacity = (oldLineAlpha / 255f) * opacity;
-            int oldSung = withAlpha(sungColor(), Math.round(255f * oldOpacity));
-            int oldUnsung = withAlpha(unsungColor(),
-                    Math.round(255f * oldOpacity * UNSUNG_ALPHA));
-            int boundary = Math.max(0,
-                    Math.min((int) transition.oldSungWidth(), oldWidth));
-
-            if (boundary > 0 && boundary < oldWidth && !painter.supportsScissor()) {
-                // 不能裁剪时无法分区上色，退回已唱色单色。
-                painter.drawText(old, oldX, oldBaselineY, oldSung);
-            } else {
-                painter.drawText(old, oldX, oldBaselineY, oldUnsung);
-                if (boundary > 0) {
-                    painter.enableScissor(oldX, oldBaselineY - LIFT_HEADROOM,
-                            boundary, painter.lineHeight() + LIFT_HEADROOM
-                                    + SHADOW_HEADROOM);
-                    painter.drawText(old, oldX, oldBaselineY, oldSung);
-                    painter.disableScissor();
-                }
-            }
-        }
+        // 旧主行不再淡出重画，换行瞬间直接消失。
+        //
+        // 淡出必须把旧句重新画一遍，而整句绘制只有单一颜色：
+        // 逐字抬升、逐顶点染色、强调提亮三样全无。
+        // 已唱完的主句因此会在原位以「最基础的文字样式」闪一帧，
+        // 与它停留时的样子判若两句。句末本已唱完，直接消失更干净。
+        // 块上移补位不受影响，各行仍然连续移动。
 
         // 主行越出块顶就不画：这是上移到底后旧行彻底让出位置的落点。
         boolean mainVisible = mainBaselineY >= blockTop - 1;
@@ -797,8 +773,6 @@ public final class FloatingLyricRenderer {
         if (scaling) {
             painter.pose().popPose();
         }
-        // 记录本帧主行的实际绘制位置与已唱宽度，供下次换行时冻结旧句。
-        transition.recordMain(fullText, mainBaselineY, clampedSung);
         lastLineWidth = primaryWidth;
         return true;
     }

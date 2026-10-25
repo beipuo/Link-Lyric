@@ -62,17 +62,20 @@ class TransitionCurveTest {
         assertEquals(0, transition.blockShift(700L), "过渡结束应完全就位");
     }
 
+    /**
+     * 换行后不保留任何旧句快照。
+     *
+     * <p>旧行淡出已移除：整句重画只有单一颜色，会让唱完的主句
+     * 在消失前退化成「最基础的文字样式」闪一帧。
+     * 状态机因此不再持有旧句内容与位置。
+     */
     @Test
-    void 旧行淡出在固定窗口内完成() {
+    void 换行不再冻结旧句() {
         LineTransition transition = new LineTransition();
-        transition.recordMain("旧句", 100, 40f);
         transition.update(1, 0L, 700L);
-        assertEquals("旧句", transition.oldText(), "换行瞬间应冻结旧句");
-        assertEquals(100, transition.oldBaselineY(), "旧行位置应冻结在换行前");
-
-        transition.update(1, 60_000_000L, 700L);
-        assertTrue(transition.oldAlpha(700L) > 0f, "60ms 时旧行应仍在淡出");
-        transition.update(1, 60_000_000L, 700L);
-        assertEquals(0f, transition.oldAlpha(700L), 1e-4f, "淡出窗口结束后应完全消失");
+        // 换行瞬间即进入位移过渡，但没有任何「旧行还可绘制」的状态。
+        assertTrue(transition.active(700L), "换行后应处于上移过渡中");
+        assertEquals(LyricGeometry.LINE_STEP, transition.blockShift(700L),
+                "过渡起点应偏整整一行");
     }
 }
