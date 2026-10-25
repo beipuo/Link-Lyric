@@ -37,6 +37,41 @@ public final class LangKeys {
     public static final String CANCEL = "linklyric.config.cancel";
     public static final String SAVE = "linklyric.config.save";
 
+    /** 配置界面的分组标题。 */
+    public static final String GROUP_DISPLAY = "linklyric.config.group.display";
+    public static final String GROUP_APPEARANCE = "linklyric.config.group.appearance";
+    public static final String GROUP_LAYOUT = "linklyric.config.group.layout";
+    public static final String GROUP_ACTION = "linklyric.config.group.action";
+
+    /** 选项悬浮说明。此前是硬编码中文字面量，英文界面会露出中文。 */
+    public static final String TIP_LINE_COUNT = "linklyric.tip.lineCount";
+    public static final String TIP_LINE_GAP = "linklyric.tip.lineGap";
+    public static final String TIP_OPACITY = "linklyric.tip.opacity";
+    public static final String TIP_LINE_SCALE = "linklyric.tip.lineScale";
+    public static final String TIP_MAX_WIDTH = "linklyric.tip.maxWidth";
+    public static final String TIP_TRANSITION = "linklyric.tip.transition";
+    public static final String TIP_OFFSET = "linklyric.tip.offset";
+    public static final String TIP_WEIGHT = "linklyric.tip.weight";
+    public static final String TIP_STROKE_PX = "linklyric.tip.strokePx";
+    public static final String TIP_STROKE_ALPHA = "linklyric.tip.strokeAlpha";
+
+    /**
+     * 通用开关文案。
+     *
+     * <p>此前所有开关都借用 {@code SHADOW_ON/OFF}，于是「描边」开关的下标
+     * 显示成「阴影：开」，「羽化」开关则直接用了 {@code TRANSITION}
+     * （「切换」）作为标签——标签与所控制的项完全对不上。
+     */
+    public static final String GENERIC_ON = "linklyric.config.on";
+    public static final String GENERIC_OFF = "linklyric.config.off";
+
+    /** 描边预设色名。 */
+    public static final String PRESET_BLACK = "linklyric.preset.black";
+    public static final String PRESET_WHITE = "linklyric.preset.white";
+    public static final String PRESET_DARK_GRAY = "linklyric.preset.darkGray";
+    public static final String PRESET_DARK_BLUE = "linklyric.preset.darkBlue";
+    public static final String PRESET_DARK_BROWN = "linklyric.preset.darkBrown";
+
     /** 颜色选择界面。 */
     public static final String COLOR_TITLE = "linklyric.color.title";
     public static final String COLOR_HUE = "linklyric.color.hue";

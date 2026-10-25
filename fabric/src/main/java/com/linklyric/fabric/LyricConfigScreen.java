@@ -56,15 +56,15 @@ final class LyricConfigScreen extends OptionsSubScreen {
      * 再为它开一个二级界面。要精确颜色仍可去调色页——那里管的是
      * 歌词本体。
      */
-    private record StrokePreset(String name, int argb) {
+    private record StrokePreset(String nameKey, int argb) {
     }
 
     private static final StrokePreset[] STROKE_PRESETS = {
-            new StrokePreset("黑", 0xFF000000),
-            new StrokePreset("白", 0xFFFFFFFF),
-            new StrokePreset("深灰", 0xFF404040),
-            new StrokePreset("深蓝", 0xFF102040),
-            new StrokePreset("深棕", 0xFF3A2410),
+            new StrokePreset(LangKeys.PRESET_BLACK, 0xFF000000),
+            new StrokePreset(LangKeys.PRESET_WHITE, 0xFFFFFFFF),
+            new StrokePreset(LangKeys.PRESET_DARK_GRAY, 0xFF404040),
+            new StrokePreset(LangKeys.PRESET_DARK_BLUE, 0xFF102040),
+            new StrokePreset(LangKeys.PRESET_DARK_BROWN, 0xFF3A2410),
     };
 
     /** 当前颜色对应哪个预设；不在预设里时退回第一个。 */
@@ -105,7 +105,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
         previewAnchor = hidden();
         list.addSmall(previewAnchor, null);
 
-        section("显示");
+        section(LangKeys.GROUP_DISPLAY);
 
         pair(CycleButton.booleanBuilder(
                         Component.translatable(LangKeys.LYRICS_ON),
@@ -132,45 +132,45 @@ final class LyricConfigScreen extends OptionsSubScreen {
                 LyricStyleConfig.MIN_LINES, LyricStyleConfig.MAX_LINES,
                 LyricStyleConfig::lineCount,
                 LyricStyleConfig::withLineCount,
-                "同时显示几行歌词"));
+                LangKeys.TIP_LINE_COUNT));
 
         single(integer(LangKeys.OPTION_LINE_GAP,
                 LyricStyleConfig.MIN_LINE_GAP, LyricStyleConfig.MAX_LINE_GAP,
                 LyricStyleConfig::lineGapPx,
                 LyricStyleConfig::withLineGapPx,
-                "主行与次行之间的空白，单位像素"));
+                LangKeys.TIP_LINE_GAP));
 
         single(integer(LangKeys.OPTION_OPACITY,
                 Math.round(LyricStyleConfig.MIN_OPACITY * 100f), 100,
                 s -> Math.round(s.opacity() * 100f),
                 (s, v) -> s.withOpacity(v / 100f),
-                "整行歌词的不透明度"));
+                LangKeys.TIP_OPACITY));
 
-        section("排版");
+        section(LangKeys.GROUP_LAYOUT);
 
         single(integer(LangKeys.OPTION_LINE_SCALE,
                 100, 200,
                 s -> Math.round(s.lineScale() * 100f),
                 (s, v) -> s.withLineScale(v / 100f),
-                "当前行的字号缩放，100% 为原大小"));
+                LangKeys.TIP_LINE_SCALE));
 
         single(integer(LangKeys.OPTION_MAX_WIDTH,
                 30, 100,
                 s -> Math.round(s.maxWidthRatio() * 100f),
                 (s, v) -> s.withMaxWidthRatio(v / 100f),
-                "歌词最宽占屏幕宽度的比例"));
+                LangKeys.TIP_MAX_WIDTH));
 
         single(integer(LangKeys.OPTION_TRANSITION_MS,
                 LyricStyleConfig.MIN_TRANSITION_MS, LyricStyleConfig.MAX_TRANSITION_MS,
                 LyricStyleConfig::lineTransitionMs,
                 LyricStyleConfig::withLineTransitionMs,
-                "两句之间过渡的时长"));
+                LangKeys.TIP_TRANSITION));
 
         single(integer(LangKeys.OPTION_OFFSET,
                 LyricStyleConfig.MIN_OFFSET_MS, LyricStyleConfig.MAX_OFFSET_MS,
                 LyricStyleConfig::offsetMs,
                 LyricStyleConfig::withOffsetMs,
-                "歌词时间偏移，正数表示提前显示"));
+                LangKeys.TIP_OFFSET));
 
         // 对齐是枚举，用原版 CycleButton 的原生多值切换。
         single(CycleButton.builder(
@@ -181,20 +181,20 @@ final class LyricConfigScreen extends OptionsSubScreen {
                         Component.translatable(LangKeys.OPTION_ALIGN),
                         (b, v) -> apply(s -> s.withAlign(v))));
 
-        section("外观");
+        section(LangKeys.GROUP_APPEARANCE);
 
         single(integer(LangKeys.OPTION_WEIGHT,
                 LyricStyleConfig.MIN_WEIGHT_PERCENT, LyricStyleConfig.MAX_WEIGHT_PERCENT,
                 LyricStyleConfig::weightPercent,
                 LyricStyleConfig::withWeightPercent,
-                "笔画加粗百分比，0 为不加粗"));
+                LangKeys.TIP_WEIGHT));
 
         pair(onOff(LangKeys.SHADOW, controller.style().shadow(),
                         (s, v) -> s.withShadow(v)),
                 onOff(LangKeys.SHADOW_SOFT, controller.style().softShadow(),
                         (s, v) -> s.withSoftShadow(v)));
 
-        pair(onOff(LangKeys.TRANSITION, controller.style().feather(),
+        pair(onOff(LangKeys.FEATHER, controller.style().feather(),
                         (s, v) -> s.withFeather(v)),
                 CycleButton.builder(
                                 (LyricStyleConfig.LiftCurve c) ->
@@ -210,11 +210,11 @@ final class LyricConfigScreen extends OptionsSubScreen {
         // 单开一组，因为描边是「开关 + 两个连续量」的组合：
         // 关掉时那两个滑条仍然有意义（下次打开就是这套值），
         // 所以不联动禁用，避免掉进「关掉了就调不了」的死角。
-        section("描边");
+        section(LangKeys.GROUP_STROKE);
 
         single(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.SHADOW_ON),
-                        Component.translatable(LangKeys.SHADOW_OFF))
+                        Component.translatable(LangKeys.GENERIC_ON),
+                        Component.translatable(LangKeys.GENERIC_OFF))
                 .withInitialValue(controller.style().stroke())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.STROKE),
@@ -224,17 +224,18 @@ final class LyricConfigScreen extends OptionsSubScreen {
                 LyricStyleConfig.MIN_STROKE_PX, LyricStyleConfig.MAX_STROKE_PX,
                 LyricStyleConfig::strokePx,
                 LyricStyleConfig::withStrokePx,
-                "描边宽度。9px 的字上 1 像素刚好能压住轮廓，再宽笔画会粘连"));
+                LangKeys.TIP_STROKE_PX));
 
         single(integer(LangKeys.OPTION_STROKE_ALPHA,
                 LyricStyleConfig.MIN_STROKE_ALPHA, LyricStyleConfig.MAX_STROKE_ALPHA,
                 LyricStyleConfig::strokeAlphaPercent,
                 LyricStyleConfig::withStrokeAlphaPercent,
-                "描边的不透明度。和颜色分开调，改浓度不会把选好的颜色冲掉"));
+                LangKeys.TIP_STROKE_ALPHA));
 
         single(CycleButton.builder(
                         (Integer v) -> Component.translatable(LangKeys.STROKE_COLOR)
-                                .append(Component.literal(": " + STROKE_PRESETS[v].name)))
+                                .append(Component.literal(": "))
+                                .append(Component.translatable(STROKE_PRESETS[v].nameKey)))
                 .withValues(java.util.stream.IntStream.range(0, STROKE_PRESETS.length)
                         .boxed().toList())
                 .withInitialValue(strokePresetIndex())
@@ -255,7 +256,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
                 Component.translatable(LangKeys.FONT_COLOR),
                 b -> minecraft.setScreen(new ColorPickerScreen(this))).build());
 
-        section("操作");
+        section(LangKeys.GROUP_ACTION);
 
         single(new Button.Builder(
                 Component.translatable(LangKeys.ADJUST_POSITION),
@@ -288,9 +289,9 @@ final class LyricConfigScreen extends OptionsSubScreen {
         list.addSmall(left, right);
     }
 
-    /** 分组标题。 */
-    private void section(String text) {
-        list.addSmall(new StringWidget(Component.literal(text), font), null);
+    /** 分组标题。传语言键而不是字面量，中英文才能各走各的 lang 文件。 */
+    private void section(String langKey) {
+        list.addSmall(new StringWidget(Component.translatable(langKey), font), null);
     }
 
     /** 开关：原版 CycleButton 的双值形态。 */
@@ -298,8 +299,8 @@ final class LyricConfigScreen extends OptionsSubScreen {
                                        BiFunction<LyricStyleConfig, Boolean,
                                                LyricStyleConfig> writer) {
         return CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.SHADOW_ON),
-                        Component.translatable(LangKeys.SHADOW_OFF))
+                        Component.translatable(LangKeys.GENERIC_ON),
+                        Component.translatable(LangKeys.GENERIC_OFF))
                 .withInitialValue(initial)
                 .create(0, 0, 150, 20, Component.translatable(labelKey),
                         (b, v) -> apply(s -> writer.apply(s, v)));
@@ -327,7 +328,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
                 value -> apply(s -> writer.apply(s, value)));
         AbstractWidget widget = option.createButton(minecraft.options);
         if (tooltip != null) {
-            widget.setTooltip(Tooltip.create(Component.literal(tooltip)));
+            widget.setTooltip(Tooltip.create(Component.translatable(tooltip)));
         }
         return widget;
     }
