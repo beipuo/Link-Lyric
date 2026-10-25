@@ -55,16 +55,6 @@ repositories {
 
 dependencies {
     implementation(project(":common"))
-
-    // ModernUI：提供高分辨率字体与文本排版。仅 NeoForge 且仅 1.21.x 有官方构建，
-    // 因此不放进 :common，也不进 :fabric。
-    //
-    // 该制品已在本地核对过：只含 META-INF/neoforge.mods.toml（无 fabric.mod.json），
-    // modLoader="javafml"，minecraft versionRange="[1.21, 1.21.2)"。
-    // 它是已编译模组，dev 环境由 moddev 负责把它放进运行时 classpath。
-    // 文件 ID 写在 gradle.properties，与 Fabric 用同一套约定。
-//    compileOnly("curse.maven:modern-ui-352491:${providers.gradleProperty("modernui_neoforge_file").get()}")
-//    runtimeOnly("curse.maven:modern-ui-352491:${providers.gradleProperty("modernui_neoforge_file").get()}")
 }
 
 /**

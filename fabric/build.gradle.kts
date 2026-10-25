@@ -35,11 +35,6 @@ dependencies {
     modImplementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
     modImplementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
 
-    // Modern UI：高分辨率字体与文本排版。Fabric 制品是已编译模组，
-    // 必须走 modImplementation 才能在 dev 环境正确重映射并加入运行时。
-    // 文件 ID 写在 gradle.properties，换 MC 版本时只改那一处。
-//    modImplementation("curse.maven:modern-ui-352491:${providers.gradleProperty("modernui_fabric_file").get()}")
-
     // common 是纯 Java、零 Minecraft 依赖，不能被重映射。
     implementation(project(":common"))
 }
