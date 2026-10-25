@@ -63,15 +63,8 @@ public final class FloatingLyricRenderer {
      */
     private static final float SNAP_EPSILON_PX = 0.05f;
 
-    /**
-     * 未唱文字的透明度。
-     *
-     * <p>「没唱到」用透明度表达，而不是换一个灰色。
-     * 灰色是第二种颜色，会和用户选定的已唱色产生色相冲突；
-     * 透明度只减弱同一颜色的存在感，唱到与没唱到始终是同一个色系。
-     * 非主行用同一个值，于是「未生效」在全场景下是统一的一种视觉语言。
-     */
-    private static final float UNSUNG_ALPHA = 0.38f;
+    /** 未唱文字的透明度；与逐字路径共用同一常量，见 {@link LyricGeometry#UNSUNG_ALPHA}。 */
+    private static final float UNSUNG_ALPHA = LyricGeometry.UNSUNG_ALPHA;
 
     /**
      * 副行字号相对主行的比例。
@@ -82,15 +75,11 @@ public final class FloatingLyricRenderer {
      */
     private static final float SUB_TEXT_FONT_SCALE = 0.8f;
 
-    /** 抬升需要额外预留的垂直空间，覆盖位移与抗锯齿余量。 */
-    private static final int LIFT_HEADROOM = 2;
-    /**
-     * 阴影与字重叠加的额外余量。
-     *
-     * <p>原版阴影偏移 1 像素，加粗最多再向外 2 像素，取 4 已足够；
-     * 留小了中文阴影会被裁剪，留大了只是多画几个透明像素。
-     */
-    private static final int SHADOW_HEADROOM = 4;
+    /** 抬升预留空间；与裁剪框共用同一常量，见 {@link LyricGeometry#LIFT_HEADROOM}。 */
+    private static final int LIFT_HEADROOM = LyricGeometry.LIFT_HEADROOM;
+
+    /** 阴影与字重余量；与裁剪框共用同一常量，见 {@link LyricGeometry#SHADOW_HEADROOM}。 */
+    private static final int SHADOW_HEADROOM = LyricGeometry.SHADOW_HEADROOM;
 
     /** 逐字绘制的最多字数，超过则退回整段绘制以控制绘制调用数。 */
     private static final int MAX_LIFT_CHARS = LyricProgress.MAX_LIFT_CHARS;

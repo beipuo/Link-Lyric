@@ -26,9 +26,14 @@ import java.util.List;
  */
 final class LyricPainter {
 
-    /** 抬升与阴影所需的裁剪余量。 */
-    private static final int LIFT_HEADROOM = 2;
-    private static final int SHADOW_HEADROOM = 4;
+    /**
+     * 抬升与阴影所需的裁剪余量。
+     *
+     * <p>引用共享常量而非各写一份：底板留白（渲染器）与这里的裁剪框
+     * 必须用同一个值，否则抬起的字顶部会被裁掉一块。
+     */
+    private static final int LIFT_HEADROOM = LyricGeometry.LIFT_HEADROOM;
+    private static final int SHADOW_HEADROOM = LyricGeometry.SHADOW_HEADROOM;
 
     /** 阴影相对正文的水平偏移，与 SDF 渲染侧一致。 */
     private static final float SHADOW_OFFSET_PX = 1f;
@@ -42,8 +47,13 @@ final class LyricPainter {
      */
     private static final float CLIP_TOLERANCE = 1f;
 
-    /** 未唱文字的透明度。 */
-    private static final float UNSUNG_ALPHA = 0.38f;
+    /**
+     * 未唱文字的透明度。
+     *
+     * <p>引用共享常量：整段路径（渲染器）与本类必须一致，
+     * 否则同一帧里「未唱」会出现两种浓度。
+     */
+    private static final float UNSUNG_ALPHA = LyricGeometry.UNSUNG_ALPHA;
 
     /**
      * 强调上浮幅度，相对字号。

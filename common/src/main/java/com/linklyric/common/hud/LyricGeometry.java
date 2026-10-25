@@ -53,6 +53,36 @@ public final class LyricGeometry {
     /** 歌词块左右留白。 */
     public static final int PAD_X = 6;
 
+    /**
+     * 未唱文字的透明度。
+     *
+     * <p>「没唱到」用透明度表达，而不是换一个灰色。
+     * 灰色是第二种颜色，会和用户选定的已唱色产生色相冲突；
+     * 透明度只减弱同一颜色的存在感，唱到与没唱到始终是同一个色系。
+     * 非主行用同一个值，于是「未生效」在全场景下是统一的一种视觉语言。
+     *
+     * <p>定义在此而非各自类里：逐字路径（{@code LyricPainter}）与整段路径
+     * （{@code FloatingLyricRenderer}）都要用它。此前两处各写一份 0.38，
+     * 改一边就会让「未唱」在同一帧里出现两种浓度。
+     */
+    public static final float UNSUNG_ALPHA = 0.38f;
+
+    /**
+     * 抬升需要额外预留的垂直空间，覆盖位移与抗锯齿余量。
+     *
+     * <p>同上：底板留白（渲染器）与裁剪框（绘制器）必须用同一个值，
+     * 否则抬起的字顶部会被裁掉一块。
+     */
+    public static final int LIFT_HEADROOM = 2;
+
+    /**
+     * 阴影与字重叠加的额外余量。
+     *
+     * <p>原版阴影偏移 1 像素，加粗最多再向外 2 像素，取 4 已足够；
+     * 留小了中文阴影会被裁剪，留大了只是多画几个透明像素。
+     */
+    public static final int SHADOW_HEADROOM = 4;
+
     private LyricGeometry() {
     }
 
