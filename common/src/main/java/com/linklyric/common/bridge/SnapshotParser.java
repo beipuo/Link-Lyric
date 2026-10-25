@@ -46,7 +46,8 @@ public final class SnapshotParser {
                             stringAt(trackJson, "album"),
                             longAt(trackJson, "durationMs"));
 
-            String lyricJson = objectAt(json, "lyric");
+            // 歌词不走这里：它体积远大于快照且只在换曲时变化，
+            // 由 parseLyric 单独取一次，避免每 200ms 复制一遍整份时间轴。
             CapabilitySet capabilities = parseCapabilities(arrayAt(json, "capabilities"));
 
             return new PlayerSnapshot(

@@ -16,10 +16,17 @@ public final class Protocol {
      */
     public static final int VERSION = 2;
 
-    /** 默认回环监听端口。模组起服务端，适配器作为客户端接入。 */
+    /** 默认回环监听端口。适配器起服务端，模组作为客户端轮询。 */
     public static final int DEFAULT_PORT = 35400;
 
-    /** WebSocket 路径。刻意与具体播放器无关。 */
+    /**
+     * 轮询路径。刻意与具体播放器无关。
+     *
+     * <p>名字里的 {@code WS} 是历史遗留：早期设计走 WebSocket 推送，
+     * 实际实现是 HTTP 轮询（{@code BridgePlaybackSource} 每 200ms 拉一次）。
+     * 常量名暂不改，避免与适配器侧已发布的字符串产生无谓的版本差异；
+     * 但不要据此以为这里有长连接。
+     */
     public static final String WS_PATH = "/lyric";
 
     /** 单次载荷允许的最大字符数，防止畸形数据撑爆渲染层。 */

@@ -122,13 +122,30 @@ class GlyphClipTest {
         };
         FloatingLyricRenderer r = new FloatingLyricRenderer(feed);
         Rec rec = new Rec(maxWidth);
-        for (int i = 0; i < 10; i++) {
+        // 渲染到稳定为止，而不是固定跑 N 帧。
+        //
+        // 滚动位置与抬升都经过一阶平滑（SMOOTH_TAU_SECONDS = 0.05），
+        // 收敛到稳态需要约 5τ = 250ms。此前固定 10 帧 × 16ms = 160ms，
+        // 只走到 3.2τ，本来就停在收敛曲线上——机器快时勉强过，
+        // 一旦并行编译抢占 CPU、真实帧间隔拉长，断言就会在
+        // 「本例应该产生右端越界的字」上随机失败。
+        //
+        // 判据用「连续两帧调用序列完全相同」：稳态下坐标不再变化。
+        // 上限 300 帧只是防死循环，正常几帧就退出，反而比固定 sleep 更快。
+        String previous = null;
+        for (int i = 0; i < 300; i++) {
             rec.calls.clear();
             r.render(rec);
+            String current = rec.signature();
+            if (current.equals(previous)) {
+                break;
+            }
+            previous = current;
             try {
-                Thread.sleep(16);
+                Thread.sleep(4);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
+                break;
             }
         }
         return rec;
@@ -174,6 +191,17 @@ class GlyphClipTest {
 
         boolean anyClipped() {
             return !clipped().isEmpty();
+        }
+
+        /** 本帧全部绘制调用的指纹，用于判断是否已收敛到稳态。 */
+        String signature() {
+            StringBuilder sb = new StringBuilder(calls.size() * 24);
+            for (Call c : calls) {
+                sb.append(c.text).append('|').append(c.x).append('|')
+                        .append(c.shadow).append('|').append(c.clipX).append('|')
+                        .append(c.clipW).append(';');
+            }
+            return sb.toString();
         }
 
         List<Call> clipped() {

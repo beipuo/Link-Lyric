@@ -27,7 +27,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>判据很直接：换行之后不应再出现任何「整串绘制」的旧句，
  * 只允许逐字路径绘制当前主行。
  */
-class OldLineFadeTest {
+class LineHandoverTest {
 
     private static final String L1 = "春江潮水连海平";
     private static final String L2 = "海上明月共潮生";
