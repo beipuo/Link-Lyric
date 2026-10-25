@@ -65,15 +65,38 @@ public final class GradientPainter {
     public static boolean draw(GuiGraphics graphics, Font font, String glyph,
                                 float x, float y, GlyphColors colors,
                                 boolean shadow) {
+        return draw(graphics, font, glyph, x, y, colors, shadow, 0f, 0f);
+    }
+
+    /**
+     * 带外发光的单字形绘制。
+     *
+     * <p>光晕由着色器从距离场算出，因此这里只是把半径与强度交给
+     * {@link SdfRenderType}——分批决策也在那里：有光晕时用带发光的
+     * RenderType，避免同批里出现「该发光」与「不该发光」的字。
+     */
+    public static boolean draw(GuiGraphics graphics, Font font, String glyph,
+                                float x, float y, GlyphColors colors,
+                                boolean shadow, float glowRadius, float glowAlpha) {
         if (glyph.isEmpty()) {
             return true;
         }
+        SdfRenderType.setGlow(glowRadius, glowAlpha);
         int cp = glyph.codePointAt(0);
 
         // 优先走 SDF：任意缩放都锐利，且顶点色渐变照旧生效。
         SdfAtlas.Slot slot = SdfGlyphProvider.slot(cp);
         if (slot != null) {
             return drawSdf(graphics, slot, cp, x, y, colors, shadow);
+        }
+        // 空白字符直接成功返回：它没有墨迹，不需要任何绘制。
+        //
+        // 过去这里落到下面的原版字形分支，会因为原版字体图集的
+        // 纹理 location 为空（FontSet 重载后尚未上传图集时就是空的）
+        // 而去读 assets/minecraft 目录，抛 AccessDeniedException。
+        // 每行歌词都含空格，因此这条错误在正常播放时必然反复出现。
+        if (isBlank(cp)) {
+            return true;
         }
         // 退回原版字形：功能降级但不崩。
         BakedGlyph baked = GlyphLookup.glyph(font, cp);
@@ -111,6 +134,9 @@ public final class GradientPainter {
         }
         Matrix4f pose = graphics.pose().last().pose();
         int light = 0xF000F0;
+        // 留白是逐字形的：unifont 与位图的留白不同，同一行里会混。
+        // 必须在取 RenderType 之前设好，因为分批决策要用到它。
+        SdfRenderType.setGlowLimit(SdfGlyphProvider.glowSpace(cp));
 
         // 整块字形就是一个段；锚点取 x，与段坐标同一坐标系。
         GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
@@ -142,9 +168,22 @@ public final class GradientPainter {
     public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
                                      float originX, boolean shadow) {
+        return drawSpans(graphics, font, glyph, x, y, spans, originX, shadow, 0f, 0f);
+    }
+
+    /**
+     * 带外发光的按段绘制。
+     *
+     * <p>光晕作用在字形轮廓上，与颜色分段无关，所以只接受一份半径与强度。
+     */
+    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+                                     float x, float y, GlyphSpan[] spans,
+                                     float originX, boolean shadow,
+                                     float glowRadius, float glowAlpha) {
         if (glyph.isEmpty() || spans == null || spans.length == 0) {
             return true;
         }
+        SdfRenderType.setGlow(glowRadius, glowAlpha);
         int cp = glyph.codePointAt(0);
 
         // 优先走 SDF。段切分逻辑与原版路径完全一致——
@@ -191,6 +230,8 @@ public final class GradientPainter {
         }
         Matrix4f pose = graphics.pose().last().pose();
         int light = 0xF000F0;
+        // 留白逐字形不同，必须在取 RenderType 之前设好。
+        SdfRenderType.setGlowLimit(SdfGlyphProvider.glowSpace(cp));
 
         if (shadow) {
             GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
@@ -240,6 +281,12 @@ public final class GradientPainter {
     }
 
     /** 便捷判断：当前环境能否做字内渐变。 */
+    /** 该码点是否没有墨迹、无需绘制。 */
+    private static boolean isBlank(int cp) {
+        return cp == ' ' || cp == '\t' || cp == '\u00A0'
+                || Character.isWhitespace(cp);
+    }
+
     public static boolean usable() {
         return GradientGlyphWriter.available() && GlyphLookup.available();
     }

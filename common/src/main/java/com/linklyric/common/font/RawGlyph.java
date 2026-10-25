@@ -23,21 +23,31 @@ package com.linklyric.common.font;
  * @param advance      笔位步进（设计空间）
  * @param boldOffset   伪粗体重画的偏移
  * @param shadowOffset 阴影偏移
+ * @param glowSpace    轮廓外还能走多远（设计空间），即图集留白
  */
 public record RawGlyph(byte[] data, int width, int height,
                        float left, float top, float right, float bottom,
-                       float advance, float boldOffset, float shadowOffset) {
+                       float advance, float boldOffset, float shadowOffset,
+                       float glowSpace) {
 
     public static RawGlyph of(byte[] data, int width, int height,
                               float left, float top, float right, float bottom,
                               float advance) {
         return new RawGlyph(data, width, height, left, top, right, bottom,
-                advance, 1f, 1f);
+                advance, 1f, 1f, 0f);
+    }
+
+    /** 带留白信息的版本。 */
+    public static RawGlyph of(byte[] data, int width, int height,
+                              float left, float top, float right, float bottom,
+                              float advance, float glowSpace) {
+        return new RawGlyph(data, width, height, left, top, right, bottom,
+                advance, 1f, 1f, glowSpace);
     }
 
     /** 只有步进、没有位图的字形，用于空格与空白字符。 */
     public static RawGlyph space(float advance) {
-        return new RawGlyph(null, 0, 0, 0f, 0f, 0f, 0f, advance, 1f, 1f);
+        return new RawGlyph(null, 0, 0, 0f, 0f, 0f, 0f, advance, 1f, 1f, 0f);
     }
 
     public boolean hasBitmap() {

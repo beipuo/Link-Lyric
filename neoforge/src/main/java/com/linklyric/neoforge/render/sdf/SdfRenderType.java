@@ -53,7 +53,7 @@ public final class SdfRenderType {
      *
      * @param body  true 为正文，false 为阴影
      */
-    private record Key(SdfAtlas.Page page, boolean body) {
+    private record Key(SdfAtlas.Page page, boolean body, boolean glow) {
     }
 
     private static final Map<Key, RenderType> CACHE = new HashMap<>();
@@ -101,6 +101,34 @@ public final class SdfRenderType {
     /** 设置阴影是否柔和。 */
     public static void setSoftShadow(boolean value) {
         softShadow = value;
+    }
+
+    /**
+     * 当前帧的外发光半径与强度。
+     *
+     * <p>和字重一样是每批 setup 时读取的全局状态。半径参与分批决策，
+     * 强度只是在 setup 时设进 uniform。
+     */
+    private static volatile float glowRadius;
+    private static volatile float glowAlpha;
+
+    /**
+     * 当前字形可用的光晕距离（设计空间）。
+     *
+     * <p>由烘焙留白算出，绘制层在设置光晕半径时一并给出。
+     * 着色器据此封顶，避免光晕在纹理边界被截断成描边。
+     */
+    private static volatile float glowLimit = 2f;
+
+    /** 设置当前帧的外发光参数。 */
+    public static void setGlow(float radius, float alpha) {
+        glowRadius = Math.max(0f, radius);
+        glowAlpha = Math.max(0f, Math.min(1f, alpha));
+    }
+
+    /** 设置当前字形可用的光晕距离（设计空间，非屏幕像素）。 */
+    public static void setGlowLimit(float distance) {
+        glowLimit = Math.max(0f, distance);
     }
 
     private SdfRenderType() {
@@ -157,15 +185,19 @@ public final class SdfRenderType {
 
     /** 取正文层的 RenderType。 */
     public static RenderType body(SdfAtlas.Page page) {
-        return CACHE.computeIfAbsent(new Key(page, true), k -> create(k.page(), true));
+        boolean glow = glowRadius > 0f && glowAlpha > 0f;
+        return CACHE.computeIfAbsent(new Key(page, true, glow),
+                k -> create(k.page(), true, k.glow()));
     }
 
     /** 取阴影层的 RenderType。 */
     public static RenderType shadow(SdfAtlas.Page page) {
-        return CACHE.computeIfAbsent(new Key(page, false), k -> create(k.page(), false));
+        boolean glow = glowRadius > 0f && glowAlpha > 0f;
+        return CACHE.computeIfAbsent(new Key(page, false, glow),
+                k -> create(k.page(), false, k.glow()));
     }
 
-    private static RenderType create(SdfAtlas.Page page, boolean body) {
+    private static RenderType create(SdfAtlas.Page page, boolean body, boolean glowEnabled) {
         Supplier<ShaderInstance> supplier = () -> shader;
         // 顶点格式含 LIGHTMAP 属性，就必须配 setLightmapState：
         // 状态不全的 RenderType 在 prepare 阶段拿不到完整绑定，
@@ -189,6 +221,14 @@ public final class SdfRenderType {
                         instance.safeGetUniform("Softness")
                                 .set(body ? BODY_SOFTNESS
                                         : (softShadow ? SHADOW_SOFTNESS : BODY_SOFTNESS));
+                        // 光晕只给正文层：阴影层本就是一圈糊掉的影子，
+                        // 再叠发光会变成两团混在一起，边界全失。
+                        boolean glowOn = body && glowEnabled;
+                        instance.safeGetUniform("GlowRadius").set(glowOn ? glowRadius : 0f);
+                        instance.safeGetUniform("GlowAlpha").set(glowOn ? glowAlpha : 0f);
+                        // 留白距离在设计空间，着色器里的 pixelsOut 也是同一空间
+                        // （坐标系来自纹理 UV 求导），因此直接传设计空间值。
+                        instance.safeGetUniform("GlowLimit").set(glowLimit);
                     }
                 })
                 .setTextureState(new BoundTextureState(page))
@@ -197,7 +237,8 @@ public final class SdfRenderType {
                 .setWriteMaskState(new RenderStateShard.WriteMaskStateShard(true, false))
                 .createCompositeState(false);
         return RenderType.create(
-                "linklyric_sdf_text_" + (body ? "body" : "shadow"),
+                "linklyric_sdf_text_" + (body ? "body" : "shadow")
+                        + (glowEnabled ? "_glow" : ""),
                 DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                 VertexFormat.Mode.QUADS,
                 256,

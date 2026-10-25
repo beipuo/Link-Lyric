@@ -58,6 +58,17 @@ public final class SdfGlyphProvider {
     /** 码点 -> 绘制盒 {@code [left, top, right, bottom, advance]}，设计空间。 */
     private static final Map<Integer, float[]> BOXES = new HashMap<>();
 
+    /**
+     * 码点 -> 轮廓外可用的距离（设计空间）。
+     *
+     * <p>光晕半径的物理上限：图集留白只铺了这么远，再往外采到的是
+     * CLAMP 的边界像素，衰减被截断成硬边。绘制层据此封顶，
+     * 因此换留白、换字体、换展开倍数都会自动跟着变。
+     */
+    private static final Map<Integer, Float> GLOW_SPACE = new HashMap<>();
+
+
+
     private static SdfAtlas atlas;
 
     private static boolean initialised;
@@ -193,6 +204,7 @@ public final class SdfGlyphProvider {
     public static synchronized void reset() {
         SLOTS.clear();
         BOXES.clear();
+        GLOW_SPACE.clear();
         SdfRenderType.invalidate();
         if (atlas != null) {
             atlas.close();
@@ -241,11 +253,15 @@ public final class SdfGlyphProvider {
             // 这些数值取自原版 UnihexProvider 的实现（LDLib2 同样如此），
             // 换成 info.getAdvance() 会让中文字距与位置全错。
             float advance = pixels.width() / 2f + 1f;
+            // padding 必须不小于 spread，否则场在留白边缘还没降满量程，
+            // 梯度被截断、轮廓外的半边缺失。这里取 4/4 使两者相等，
+            // 同时把留白抬到 2 个设计像素，与位图分支一致。
             RawGlyph glyph = SdfGlyphBaker.bake(pixels.coverage(), pixels.width(),
                     pixels.height(), 0.5f, 16f, advance,
-                    2, 2, 4f);
+                    2, 4, 4f);
             BOXES.put(codepoint, new float[]{glyph.left(), glyph.top(), glyph.right(),
                     glyph.bottom(), glyph.advance()});
+            GLOW_SPACE.put(codepoint, glyph.glowSpace());
             return glyph;
         }
 
@@ -266,7 +282,19 @@ public final class SdfGlyphProvider {
                 pixels.height(), pixelScale, ascentPixels, info.getAdvance());
         BOXES.put(codepoint, new float[]{glyph.left(), glyph.top(), glyph.right(),
                 glyph.bottom(), glyph.advance()});
+        GLOW_SPACE.put(codepoint, glyph.glowSpace());
         return glyph;
+    }
+
+    /**
+     * 该码点轮廓外可用的距离（设计空间）。未烘焙时为 0。
+     *
+     * <p>0 表示没有可用留白，绘制层应完全跳过光晕——否则光晕会在
+     * 纹理边界当场截断。
+     */
+    public static float glowSpace(int codepoint) {
+        Float v = GLOW_SPACE.get(codepoint);
+        return v == null ? 0f : v;
     }
 
     /**

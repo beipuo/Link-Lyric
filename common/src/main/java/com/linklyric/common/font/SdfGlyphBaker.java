@@ -66,9 +66,21 @@ public final class SdfGlyphBaker {
         float top = 7f - ascent;
         float right = cellWidth * scale;
         float bottom = top + cellHeight * scale;
+
+        // 留白有多少真正可用，取决于它能装下的距离。
+        //
+        // 场值在留白边缘就断了：纹理之外是 CLAMP 的边界像素，衰减会在
+        // 那里被硬生生截断。若光晕半径超过这段距离，外圈会变成一道硬边，
+        // 观感是给字套了描边而不是散开。
+        //
+        // 可用距离 = min(留白宽度, spread)：spread 描述「多远映射满量程」，
+        // 留白宽度描述「场向轮廓外铺了多远」，两者取小才是有效范围。
+        // 这里按设计空间给出，绘制层再按实际缩放换算成屏幕像素。
+        float glowSpace = Math.min(designPadding, spread * scale / upscale);
+
         return RawGlyph.of(sdf, upWidth + padding * 2, upHeight + padding * 2,
                 -designPadding, top - designPadding,
-                right + designPadding, bottom + designPadding, advance);
+                right + designPadding, bottom + designPadding, advance, glowSpace);
     }
 
     /** 使用默认参数的版本。 */

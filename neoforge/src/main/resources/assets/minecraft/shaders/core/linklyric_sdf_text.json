@@ -87,6 +87,30 @@
       "values": [
         1
       ]
+    },
+    {
+      "name": "GlowRadius",
+      "type": "float",
+      "count": 1,
+      "values": [
+        0
+      ]
+    },
+    {
+      "name": "GlowAlpha",
+      "type": "float",
+      "count": 1,
+      "values": [
+        0
+      ]
+    },
+    {
+      "name": "GlowLimit",
+      "type": "float",
+      "count": 1,
+      "values": [
+        2
+      ]
     }
   ]
 }

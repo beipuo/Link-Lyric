@@ -71,6 +71,32 @@ public interface LyricCanvas {
     }
 
     /**
+     * 带外发光的单字形绘制。
+     *
+     * <p>光晕由 SDF 的距离场在着色器里算出，不需要额外的绘制批次。
+     * 默认实现忽略光晕、退回普通绘制，保证不支持 SDF 的平台仍可工作。
+     *
+     * @param glowRadius 光晕半径，屏幕像素
+     * @param glowAlpha  光晕强度，0..1
+     */
+    default void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                   GlyphColors colors, boolean shadow,
+                                   float glowRadius, float glowAlpha) {
+        drawGlyphGradient(glyph, x, y, lift, colors, shadow);
+    }
+
+    /**
+     * 带外发光的按段绘制。
+     *
+     * <p>光晕作用在字形轮廓上，与颜色分段无关，因此只接受一份半径与强度。
+     */
+    default void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                GlyphSpan[] spans, int originX, boolean shadow,
+                                float glowRadius, float glowAlpha) {
+        drawGlyphSpans(glyph, x, y, lift, spans, originX, shadow);
+    }
+
+    /**
      * 带字重参数的版本，{@code bold} 已不再生效。
      *
      * <p>保留签名以免破坏调用点；实际绘制一律按常规字重。

@@ -24,6 +24,22 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
     /** 提亮强度相对 blur 的比例。 */
     private static final float BLOOM_SCALE = 1.6f;
 
+    /**
+     * 光晕半径上限，相对字号。
+     *
+     * <p>与上游的 {@code GLOW_RADIUS_MAX} 一致（0.3 em）。
+     * 这条上限是必需的：SDF 图集每边只留了 2 个设计像素的 padding，
+     * 光晕超过这个范围会采到相邻字形，表现为字周围出现别人的笔画。
+     * 9px 字号下 0.3 em 约 2.7px，仍在留白之内。
+     */
+    private static final float GLOW_RADIUS_MAX = 0.3f;
+
+    /** 光晕半径相对 blur 的比例。与上游一致。 */
+    private static final float GLOW_RADIUS_SCALE = 0.3f;
+
+    /** 低于该强度的光晕肉眼不可见，跳过绘制。 */
+    private static final float GLOW_ALPHA_THRESHOLD = 0.01f;
+
     /** 上浮系数，相对字号。 */
     private static final float LIFT_FACTOR = 0.025f;
 
@@ -79,5 +95,18 @@ public final class EmphasizeGlowEffect implements LyricUnitEffect {
         // 提亮：像素不动，只把颜色推向白色。边缘仍是图集里的抗锯齿值，
         // 因此观感是字被点亮，而不是糊成一团光。
         out.bloom = Math.min(1f, out.bloom + eased * group.blur * BLOOM_SCALE);
+
+        // 外发光：半径恒定、强度随动画推进。
+        //
+        // 上游用的是 Canvas 的 shadowLayer，那是把字形整体做一次高斯模糊，
+        // 逐字时是主要的绘制开销。SDF 只需要在同一个片元里多算一次
+        // 距离衰减，没有额外批次，也没有模糊采样。
+        float glowLevel = eased * group.blur;
+        if (glowLevel > GLOW_ALPHA_THRESHOLD) {
+            out.glowRadius = Math.max(out.glowRadius,
+                    Math.min(GLOW_RADIUS_MAX, group.blur * GLOW_RADIUS_SCALE)
+                            * param.textSize);
+            out.glowAlpha = Math.min(1f, out.glowAlpha + glowLevel);
+        }
     }
 }

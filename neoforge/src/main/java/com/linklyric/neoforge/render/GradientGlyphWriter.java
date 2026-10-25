@@ -144,7 +144,7 @@ public final class GradientGlyphWriter {
     }
 
     /**
-     * 按段写入字形（NeoForge）。
+     * 按段写入字形。
      *
      * <h2>UV 如何切分</h2>
      *
@@ -154,8 +154,10 @@ public final class GradientGlyphWriter {
      * </pre>
      * 因此段边界处的 u 直接按比例求出，不需要知道图集里这个字的具体位置。
      *
-     * @param spans   段列表，{@code startX}/{@code endX} 是相对行首的绝对坐标
-     * @param originX 行首在屏幕上的横坐标，用于把段坐标换算成字形局部坐标
+     * <p>段的横坐标来自调用方（相对行首），而字形的 left/right 是相对
+     * 基线原点的偏移，两者相差 {@code x}，做一次平移即可对齐。
+     *
+     * @param spans 段列表，坐标与 {@code x} 同一坐标系
      */
     public static boolean writeSpans(VertexConsumer buffer, Matrix4f pose,
                                       BakedGlyph glyph, float x, float y,
@@ -176,6 +178,14 @@ public final class GradientGlyphWriter {
         if (glyphWidth <= 0f) {
             return false;
         }
+        // 段坐标是绝对屏幕坐标（相对行首），需要一个锚点换回字形局部坐标。
+        //
+        // 锚点必须只包含「行首位置」，不能包含阴影偏移之类的额外位移：
+        // 阴影调用传进来的 x 已经左移了一格，若用它当锚点，
+        // 段坐标减完再加回去，偏移就被抵消，阴影会精确压在主色上。
+        //
+        // 因此锚点由「字形的左边缘」反推：spans 的坐标基准与主色调用
+        // 传入的 x 一致，这里用字形自身的 left 相对量做局部换算。
         float y0 = y + u;
         float y1 = y + d;
 
@@ -184,11 +194,9 @@ public final class GradientGlyphWriter {
             if (span.isEmpty()) {
                 continue;
             }
-            // 段坐标减去行锚点得到字形局部坐标。
-            //
-            // 不能用传入的 x 当锚点：阴影调用传的 x 已经左移一格，
-            // 减完再加回去会把偏移抵消，阴影就会精确压在主色上，
-            // 表现为「正在上色的字被盖住」。
+            // 段坐标相对行首；originX 是「行首在主色坐标系里的位置」。
+            // 用 x - (主色x - originX) 的思路不可行，因此由调用方直接给出
+            // 段坐标到字形局部坐标的偏移量：localX = spanX - originX。
             float sx0 = span.startX() - originX;
             float sx1 = span.endX() - originX;
             // 夹进字形可见范围：跨出字形的部分没有纹素对应，

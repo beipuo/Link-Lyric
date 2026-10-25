@@ -131,7 +131,8 @@ final class LyricPainter {
             GlyphSpan[] spans = GradientColorizer.spansForChar(
                     charX, charRight, edge, sung, unsung, lineWidth);
             glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
-                    spans, transform.dx, transform.bloom);
+                    spans, transform.dx, transform.bloom,
+                    transform.glowRadius, transform.glowAlpha);
         }
     }
 
@@ -157,7 +158,7 @@ final class LyricPainter {
      */
     private void glyph(String ch, int charX, int textY, float lift,
                        int viewportLeft, int viewRight, GlyphSpan[] spans,
-                       float dx, float bloomLevel) {
+                       float dx, float bloomLevel, float glowRadius, float glowAlpha) {
         int charWidth = painter.textWidth(ch);
         // 保留浮点坐标，不取整。
         //
@@ -188,7 +189,8 @@ final class LyricPainter {
             // 单色：走平台原有的整字绘制，省掉逐顶点写入。
             // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
             painter.drawGlyphGradient(ch, drawX, textY, lift,
-                    new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow);
+                    new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow,
+                    glowRadius, glowAlpha);
         } else {
             // 段边界落在前沿函数的折点上，段内插值即精确。
             //
@@ -196,7 +198,8 @@ final class LyricPainter {
             // （spansForChar(charX, charRight, ...)），减去它正好得到
             // 字形局部坐标。若改传 textX（行首），每个字会多偏移
             // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
-            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX), shadow);
+            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX),
+                    shadow, glowRadius, glowAlpha);
         }
 
         if (!full) {
@@ -207,9 +210,11 @@ final class LyricPainter {
     /**
      * 把颜色朝白色提亮。
      *
-     * <p>强调动画的「发光」用提亮而不是光晕：位图字体不能被位移或缩放，
-     * 但颜色可以自由改。提亮沿 RGB 三通道向 255 插值、保留原 alpha，
+     * <p>提亮只作用于字形本身的颜色：沿 RGB 三通道向 255 插值、保留原 alpha，
      * 字形边缘仍取自图集，所以字始终清晰。
+     *
+     * <p>它与外发光分工不同：提亮让<b>笔画变白</b>，光晕让<b>轮廓外散开一圈</b>。
+     * 只有提亮时看起来像字被漂白，配上光晕才是被点亮。
      */
     private static GlyphSpan[] bloom(GlyphSpan[] spans, float level) {
         if (level <= 0f || spans.length == 0) {

@@ -274,6 +274,9 @@ public final class LinkLyricFabric implements ClientModInitializer {
         public void drawGlyphSpans(String glyph, float x, int y, float lift,
                                     GlyphSpan[] spans, int originX, boolean shadow) {
             syncSdfStyle();
+            // 清零：发光是全局状态，若上一个字设置过而不复位，
+            // 这一个不需要发光的字会连带被点亮。
+            SdfRenderType.setGlow(0f, 0f);
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift,
                         spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
@@ -293,9 +296,57 @@ public final class LinkLyricFabric implements ClientModInitializer {
         }
 
         @Override
+        public void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                    GlyphSpan[] spans, int originX, boolean shadow,
+                                    float glowRadius, float glowAlpha) {
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift,
+                        spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                        spans, originX, shadow, glowRadius, glowAlpha);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
+                    spans, originX, shadow, glowRadius, glowAlpha);
+        }
+
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       GlyphColors colors, boolean shadow,
+                                       float glowRadius, float glowAlpha) {
+            syncSdfStyle();
+            SdfRenderType.setGlow(glowRadius, glowAlpha);
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.draw(graphics, client.font, glyph, x, y,
+                        colors, shadow, glowRadius, glowAlpha);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.draw(graphics, client.font, glyph, x, y,
+                    colors, shadow, glowRadius, glowAlpha);
+        }
+
+        @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {
             syncSdfStyle();
+            SdfRenderType.setGlow(0f, 0f);
             if (!GradientPainter.usable()) {
                 drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
                 return;

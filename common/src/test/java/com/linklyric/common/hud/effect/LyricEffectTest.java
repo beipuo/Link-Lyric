@@ -1,6 +1,7 @@
 package com.linklyric.common.hud.effect;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
@@ -114,6 +115,67 @@ class LyricEffectTest {
         effect.apply(u, param(group.durationMs / 2), out);
         assertTrue(out.dy > 0f, "应上浮");
         assertTrue(out.bloom > 0f, "应提亮");
+    }
+
+    /**
+     * 强调时要产生外发光，且半径与强度都为正。
+     *
+     * <p>光晕由 SDF 距离场算出，因此这两项必须真的被设上；
+     * 只设强度不设半径时着色器会按「不发光」处理，
+     * 表现为调了参数却完全没效果。
+     */
+    @Test
+    void 强调时产生外发光() {
+        EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
+        EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
+        EffectUnit u = unit(0, 500, "字");
+        u.emphasisGroup = group;
+        u.emphasisCharIndex = 1;
+
+        UnitTransform out = new UnitTransform();
+        effect.apply(u, param(group.durationMs / 2), out);
+        assertTrue(out.hasGlow(), "应产生可见光晕");
+        assertTrue(out.glowRadius > 0f, "光晕半径应为正");
+        assertTrue(out.glowAlpha > 0f, "光晕强度应为正");
+    }
+
+    /**
+     * 光晕半径受 padding 约束。
+     *
+     * <p>SDF 图集每边只留了 2 个设计像素的留白。光晕半径若超过
+     * 字号的三成，向下取整后就可能越过留白边界，采到相邻字形，
+     * 表现为字周围冒出别人的笔画。这条上限必须真的生效。
+     */
+    @Test
+    void 光晕半径不超过字号的零点三倍() {
+        EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
+        EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
+        EffectUnit u = unit(0, 500, "字");
+        u.emphasisGroup = group;
+        u.emphasisCharIndex = 1;
+
+        EffectParam p = param(group.durationMs / 2);
+        p.textSize = 20f;
+        UnitTransform out = new UnitTransform();
+        effect.apply(u, p, out);
+
+        assertTrue(out.glowRadius <= p.textSize * 0.3f + 1e-4f,
+                "光晕半径应被 0.3 em 限住，实际 " + out.glowRadius
+                        + "，字号 " + p.textSize);
+    }
+
+    /** 动画结束、缓动归零后，光晕也应消失。 */
+    @Test
+    void 强调结束后光晕消失() {
+        EmphasisGroup group = EmphasisLayout.groups(chars("四个汉字", 0, 500))[0];
+        EmphasizeGlowEffect effect = new EmphasizeGlowEffect();
+        EffectUnit u = unit(0, 500, "字");
+        u.emphasisGroup = group;
+        u.emphasisCharIndex = 1;
+
+        UnitTransform out = new UnitTransform();
+        effect.apply(u, param(group.durationMs * 2), out);
+        assertFalse(out.hasGlow(), "动画结束后不应还留着光晕");
     }
 
     @Test
