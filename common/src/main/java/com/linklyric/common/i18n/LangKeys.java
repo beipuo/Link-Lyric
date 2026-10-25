@@ -8,13 +8,6 @@ package com.linklyric.common.i18n;
  */
 public final class LangKeys {
 
-    /** 样式预设的展示名。 */
-    public static final String STYLE_SUBTITLE = "linklyric.style.subtitle";
-    public static final String STYLE_ISLAND = "linklyric.style.island";
-    public static final String STYLE_SIDEBAR = "linklyric.style.sidebar";
-    public static final String STYLE_HOTBAR = "linklyric.style.hotbar";
-    public static final String STYLE_FLOATING = "linklyric.style.floating";
-
     /** 配置界面标题。 */
     public static final String CONFIG_TITLE = "linklyric.config.title";
     public static final String FEATHER = "linklyric.config.feather";
