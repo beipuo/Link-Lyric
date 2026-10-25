@@ -135,22 +135,6 @@ class DragAndOffsetTest {
     }
 
     /** 指令入口不能因为第一次移动就把歌词瞬移到光标处。 */
-    @Test
-    void 指令入口首帧不跳变() {
-        FloatingLyricRenderer renderer = renderer();
-        LyricDragController c = new LyricDragController(renderer, null);
-
-        assertTrue(c.beginAtCenter());
-        // 第一次移动只是确定基准点，位置不变
-        c.drag(500, 400);
-        assertEquals(0, renderer.offsetX(), "首帧不应移动");
-
-        // 之后的位移才生效
-        c.drag(520, 410);
-        assertEquals(20, renderer.offsetX());
-        assertEquals(10, renderer.offsetY());
-    }
-
     /** 取消必须回到按下前的位置，不能留下半路的位置。 */
     @Test
     void 取消回到原位() {

@@ -27,8 +27,6 @@ public final class LyricDragController {
     private int pressX;
     private int pressY;
     private boolean active;
-    /** 等待第一次鼠标移动来确定基准点（指令入口专用）。 */
-    private boolean waitingForCursor;
     /** 调整会话的起始位置，用于取消回滚。 */
     private int sessionOriginX;
     private int sessionOriginY;
@@ -111,41 +109,10 @@ public final class LyricDragController {
         }
     }
 
-    /**
-     * 由指令进入拖动模式：不依赖当前光标位置。
-     *
-     * <p>指令入口拿不到「按在歌词上」这个前提，因此改用「跟随光标」模式：
-     * 以当前偏移为基准，记录进入时的光标位置，之后每次鼠标移动都叠加位移。
-     * 左键确认、Esc 取消由平台层的输入钩子转发。
-     *
-     * @return 是否成功进入；已在拖动中返回 false
-     */
-    public boolean beginAtCenter() {
-        return beginFromOffset();
-    }
-
     /** 直接设定偏移并落盘，供指令精确定位使用。 */
     public void setOffset(int x, int y) {
         renderer.setOffset(x, y);
         persist();
-    }
-
-    /**
-     * 进入跟随模式，以当前偏移为基准。
-     *
-     * <p>光标基准点延迟到第一次移动时才确定：指令执行时光标位置
-     * 与歌词的位置没有关系，若此时就取基准，歌词会瞬间跳到光标处。
-     */
-    private boolean beginFromOffset() {
-        if (active) {
-            return false;
-        }
-        active = true;
-        waitingForCursor = true;
-        startOffsetX = renderer.offsetX();
-        startOffsetY = renderer.offsetY();
-        renderer.setDragging(true);
-        return true;
     }
 
     /**
@@ -175,13 +142,6 @@ public final class LyricDragController {
         if (!active) {
             return;
         }
-        // 指令入口：以第一次移动的位置作为基准，歌词不会瞬移到光标处。
-        if (waitingForCursor) {
-            waitingForCursor = false;
-            pressX = mouseX;
-            pressY = mouseY;
-            return;
-        }
         int dx = mouseX - pressX;
         int dy = mouseY - pressY;
         if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) {
@@ -204,7 +164,6 @@ public final class LyricDragController {
             return false;
         }
         active = false;
-        waitingForCursor = false;
         renderer.setDragging(false);
         int x = renderer.offsetX();
         int y = renderer.offsetY();
@@ -228,7 +187,6 @@ public final class LyricDragController {
      */
     public void beginSession() {
         active = false;
-        waitingForCursor = false;
         sessionOriginX = renderer.offsetX();
         sessionOriginY = renderer.offsetY();
         renderer.setDragging(true);
@@ -283,7 +241,13 @@ public final class LyricDragController {
         return begin(mouseX, mouseY);
     }
 
-    /** 取消拖动并回到按下前的位置，用于 Esc 之类的放弃操作。 */
+    /**
+     * 取消拖动并回到按下前的位置，用于 Esc 之类的放弃操作。
+     *
+     * <p>不再需要清理额外标志：原先那条「跟随光标」路径
+     * （{@code beginAtCenter}）已删除，状态只剩 {@code active} 一个布尔量，
+     * 它在这里被清掉，退出后不可能留下任何跨会话残留。
+     */
     public void cancel() {
         if (!active) {
             return;
