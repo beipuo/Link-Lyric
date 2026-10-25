@@ -12,7 +12,7 @@ import com.linklyric.core.capability.CapabilitySet;
  * @param track        曲目身份，歌词匹配的唯一依据
  * @param positionMs   发送该快照时的播放位置（毫秒）
  * @param playing      是否正在播放
- * @param sequence     单调递增序号，用于丢弃乱序或过期的快照
+ * @param sequence     适配器侧单调递增的序号，仅用于诊断与日志
  * @param sentAtNanos  发送端的本地时钟（纳秒），仅用于诊断，不参与外推
  * @param capabilities 该数据源本次会话的能力声明，决定 UI 显示哪些元素
  */
@@ -31,6 +31,18 @@ public record PlayerSnapshot(
         positionMs = Math.max(0L, positionMs);
         capabilities = capabilities == null ? CapabilitySet.empty() : capabilities;
     }
+
+    /**
+     * 序号为什么**不**参与乱序判定。
+     *
+     * <p>注释曾写「用于丢弃乱序或过期的快照」，但全代码库没有任何地方比较它。
+     * 这不只是文档与实现不符，更要紧的是：这里确实不需要那个判定。
+     * 轮询是单线程串行的——同一个 worker 依次取、依次解析、依次写入原子引用，
+     * 结构上不可能出现旧快照覆盖新快照。加一个永远不会触发的比较分支，
+     * 只会让人以为存在并发写入，从而在别处做出错误推断。
+     *
+     * <p>如果将来做了并行抓取或多数据源合并，这里才是应该加判定的地方。
+     */
 
     /** 是否携带可展示的曲目信息。空快照表示「没有活动会话」，UI 应整体隐藏。 */
     public boolean hasTrack() {

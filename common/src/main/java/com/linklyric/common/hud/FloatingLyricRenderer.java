@@ -577,7 +577,9 @@ public final class FloatingLyricRenderer {
                 : painter.textWidthScaled(secondaryText, SUB_TEXT_FONT_SCALE);
 
         int centerTextY = layoutCenterY(screenHeight);
-        int padX = 6;
+        // 左右留白取自几何常量。此前这里写死 6，而 LyricGeometry.PAD_X
+        // 定义着同一个值却没有任何消费者——调那个常量不会有任何效果。
+        int padX = LyricGeometry.PAD_X;
         // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
         // 在画面上变成「文字浮在框外」。
         int padY = Math.max(3, LIFT_HEADROOM + 1);

@@ -31,6 +31,16 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     /** 轮询间隔。200ms 足以让歌词跟随，又不会让本机环回产生可感负载。 */
     private static final long POLL_INTERVAL_MS = 200L;
 
+    /**
+     * 默认端口取自 {@link Protocol#DEFAULT_PORT}。
+     *
+     * <p>两个平台入口此前各自写了一份 {@code BRIDGE_PORT = 35400}，
+     * 与协议常量三处并存。改端口要同时改三个地方，漏一个就两端不一致。
+     */
+    public static int defaultPort() {
+        return Protocol.DEFAULT_PORT;
+    }
+
     /** 请求超时。本机回环若 500ms 无响应，基本可判定插件已停。 */
     private static final int CONNECT_TIMEOUT_MS = 500;
     private static final int READ_TIMEOUT_MS = 800;
@@ -168,7 +178,10 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     }
 
     private void pollOnce() {
-        String body = get("/lyric");
+        // 路径取自协议常量。此前这里写死 "/lyric"，而 Protocol.WS_PATH
+        // 定义着同一个字符串却没有任何消费者——适配器侧要改端点时，
+        // 改协议常量不会有任何效果，得再去改这一行。
+        String body = get(Protocol.WS_PATH);
         if (body == null) {
             onFailure();
             return;

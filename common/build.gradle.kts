@@ -421,6 +421,80 @@ val verifyNoDroppedParams = tasks.register("verifyNoDroppedParams") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 常量必须有消费者
+//
+// Protocol 里曾有四个常量一个消费者都没有：WS_PATH、DEFAULT_PORT、
+// STALE_AFTER_MS、COMMAND_TIMEOUT_MS。实际值在别处硬编码成了字面量，
+// 于是「改协议常量」这个最自然的动作完全不生效；其中两个还在注释里
+// 承诺了根本不存在的防御机制（陈旧隐藏、指令回执超时）。
+//
+// 两侧入口那两份 BRIDGE_PORT = 35400 与协议常量三次并存，
+// 就是这套结构最典型的结果。这里把「定义了就至少被引用一次」变成检查。
+// ---------------------------------------------------------------------------
+// 目前没有豁免项。真有需要时在此登记常量名并写明理由。
+val constantsAllowedUnreferenced = emptySet<String>()
+
+val verifyConstantsReferenced = tasks.register("verifyConstantsReferenced") {
+    group = "verification"
+    description = "校验协议与几何常量都至少有一个消费者"
+
+    val sources = listOf(
+        File(rootDir, "common/src/main/java/com/linklyric/core/protocol/Protocol.java"),
+        File(rootDir, "common/src/main/java/com/linklyric/common/hud/LyricGeometry.java"),
+    )
+    val searchRoots = listOf(
+        File(rootDir, "common/src/main/java"),
+        File(rootDir, "common/src/test/java"),
+        File(rootDir, "fabric/src/main/java"),
+        File(rootDir, "neoforge/src/main/java"),
+    )
+
+    doLast {
+        val problems = mutableListOf<String>()
+        // 把所有源文件读成一份大文本，逐个常量数引用次数
+        val corpus = searchRoots
+            .filter { it.isDirectory }
+            .flatMap { it.walkTopDown().filter { f -> f.isFile && f.extension == "java" }.toList() }
+            .joinToString("\n") { it.readText() }
+
+        for (file in sources) {
+            if (!file.isFile) {
+                problems += "找不到源文件: " + file.path
+                continue
+            }
+            val decls = Regex(
+                """public static final [\w.<>\[\]]+ ([A-Z][A-Z0-9_]*)\s*="""
+            ).findAll(file.readText()).map { it.groupValues[1] }.toList()
+
+            if (decls.isEmpty()) {
+                problems += file.name + ": 没有解析出任何常量，正则可能已失效"
+            }
+            for (name in decls) {
+                if (name in constantsAllowedUnreferenced) {
+                    continue
+                }
+                // 减去声明自身那一处
+                val uses = Regex("""\b""" + Regex.escape(name) + """\b""")
+                    .findAll(corpus).count() - 1
+                if (uses <= 0) {
+                    problems += file.name + ": 常量 " + name + " 没有任何消费者"
+                }
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "以下常量定义了却无人引用，实际值很可能在别处被硬编码：\n"
+                    + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle("常量均有消费者")
+    }
+}
+
 tasks.named("check") {
-    dependsOn(verifyMirroredRender, verifyLangKeys, verifyPainterParity, verifyNoDroppedParams)
+    dependsOn(
+        verifyMirroredRender, verifyLangKeys, verifyPainterParity,
+        verifyNoDroppedParams, verifyConstantsReferenced
+    )
 }

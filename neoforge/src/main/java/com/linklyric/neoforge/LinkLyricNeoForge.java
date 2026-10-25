@@ -39,8 +39,13 @@ public final class LinkLyricNeoForge {
     public static final String MOD_ID = "linklyric";
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
 
-    /** 桥接端口，需与 Salt Music 下 Link MC 插件的 BridgeConfig 一致。 */
-    private static final int BRIDGE_PORT = 35400;
+    /**
+     * 桥接端口，需与 Salt Music 下 Link MC 插件的 BridgeConfig 一致。
+     *
+     * <p>取自 {@link com.linklyric.core.protocol.Protocol#DEFAULT_PORT}：
+     * 此前两个平台入口各写一份字面量，与协议常量共三处，改端口极易漏改。
+     */
+    private static final int BRIDGE_PORT = BridgePlaybackSource.defaultPort();
 
     private final BridgePlaybackSource source;
     private final FloatingLyricRenderer renderer;
