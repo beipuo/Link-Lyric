@@ -56,7 +56,7 @@ public final class SdfGlyphProvider {
      * 码点 -> 图集区域。
      *
      * <p>用并发容器而非 {@code HashMap}：写入发生在渲染线程（歌词换行时首次见到某个字），
-     * 而 {@link #reset()} 由资源重载触发，在 Fabric 上不保证落在渲染线程。
+     * 而 {@link #reset()} 由资源重载触发，在 NeoForge 上不保证落在渲染线程。
      * 两者一旦交错，普通 {@code HashMap} 会在扩容期间留下环形链表或丢失条目，
      * 表现为图集错乱、字形指向别人的格子——这类故障只在换资源包时偶发，
      * 事后极难复现。读路径本身是热路径，{@code ConcurrentHashMap} 的无锁读也不会拖慢它。
@@ -77,7 +77,22 @@ public final class SdfGlyphProvider {
 
 
 
-    private static SdfAtlas atlas;
+    /**
+     * 图集。
+     *
+     * <p>{@code volatile} 不是保守起见：这个字段被两条线程无锁读写——
+     * 渲染线程在 {@link #slot(int)} 里首次用到时惰性创建，
+     * 资源重载线程在 {@link #reset()} 里关闭并置空。
+     * 没有 volatile 时，渲染线程可能读到「已置空」与「已创建」之间的
+     * 陈旧值或重排序结果，表现为拿到一个已 close 的图集，
+     * 于是整行字画到已被回收的纹理 id 上，屏幕上是透明或别人的纹理。
+     *
+     * <p>用 {@code synchronized} 把整段包住代价太高：{@link #slot(int)}
+     * 在渲染热路径上，每个新字都会进来一次。volatile 保证可见性，
+     * 「可能拿到刚被关闭的图集」这一残余窗口由 {@code reset()} 的
+     * 调用时机（主线程、渲染停顿期间）覆盖。
+     */
+    private static volatile SdfAtlas atlas;
 
     private static boolean initialised;
 
@@ -228,6 +243,10 @@ public final class SdfGlyphProvider {
      * 表现就是「重启或换资源包后，正在着色的字整片透明」。
      */
     public static synchronized void reset() {
+        // 先摘掉引用再关闭：反过来的话，另一条线程可能在「已 close」与
+        // 「已置空」之间读到那个正在被释放的图集，把字画到已回收的纹理上。
+        SdfAtlas old = atlas;
+        atlas = null;
         SLOTS.clear();
         BOXES.clear();
         GLOW_SPACE.clear();
@@ -235,19 +254,36 @@ public final class SdfGlyphProvider {
         degraded = false;
         initialised = false;
         SdfRenderType.invalidate();
-        if (atlas != null) {
-            atlas.close();
-            atlas = null;
+        if (old != null) {
+            old.close();
         }
     }
 
+    /**
+     * 取图集，不存在则创建。
+     *
+     * <p>惰性创建与 {@link #reset()} 的关闭可能交错，因此这里用
+     * 「创建后只发布一次」的写法：先建好局部实例，再靠 volatile 写发布。
+     * 两条线程最多各自建一个图集，先发布的胜出，后建的立刻关掉——
+     * 泄漏一个从未被绘制的 GL 纹理，好过让绘制线程拿着已回收的纹理 id 出画。
+     */
     private static SdfAtlas atlas() {
-        if (atlas == null) {
-            atlas = new SdfAtlas(
-                    ResourceLocation.fromNamespaceAndPath("linklyric", "sdf_glyphs"),
-                    PAGE_SIZE);
+        SdfAtlas local = atlas;
+        if (local != null) {
+            return local;
         }
-        return atlas;
+        SdfAtlas created = new SdfAtlas(
+                ResourceLocation.fromNamespaceAndPath("linklyric", "sdf_glyphs"),
+                PAGE_SIZE);
+        synchronized (SdfGlyphProvider.class) {
+            if (atlas != null) {
+                // 另一条线程抢先建好了：丢弃自己这份，避免泄漏。
+                created.close();
+                return atlas;
+            }
+            atlas = created;
+            return created;
+        }
     }
 
     /**
