@@ -115,7 +115,8 @@ class OldLineFadeTest {
             public PlayerSnapshot pollSnapshot() {
                 long elapsedMs = (System.nanoTime() - start) / 1_000_000L;
                 return new PlayerSnapshot("test", TrackIdentity.of("曲目", "", 0L),
-                        4_700L + elapsedMs, true, 0L, System.nanoTime(),
+                        // 起点落在第一句尾段，约 600ms 后跨入第二句。
+                        4_400L + elapsedMs, true, 0L, System.nanoTime(),
                         CapabilitySet.empty());
             }
 
@@ -130,22 +131,29 @@ class OldLineFadeTest {
             }
         });
 
-        // 采集换行后主行首字出现的所有 y，应当出现多个位置（说明在移动），
-        // 最终稳定在一个固定值。
+        // 先画一帧属于第一句的画面。
+        //
+        // 首次出画不计入换行过渡（否则进入世界时整块歌词会从下方滑上来），
+        // 所以必须先把这一次消耗掉，后面真正的跨行才会产生位移。
+        renderer.render(painter);
+        sleep();
+
+        // 只在进入第二句之后采集主行首字的 y。
+        //
+        // 第二句在成为主行之前会先以「下一句预览」的形式出现，
+        // 那时它的 y 固定不动。若不按播放位置过滤，
+        // 采到的全是预览行，位移永远看不到——这正是本测试曾经的假阴性。
         List<Integer> ys = new ArrayList<>();
-        boolean switched = false;
-        long deadline = System.nanoTime() + 3_000_000_000L;
+        long deadline = System.nanoTime() + 4_000_000_000L;
         while (System.nanoTime() < deadline) {
             painter.reset();
             renderer.render(painter);
-            if (painter.drawnChars.contains(L2.substring(0, 1))) {
-                switched = true;
-            }
-            if (switched) {
+            if (renderer.currentPositionMs() >= 5_000L) {
                 Integer y = painter.frameYs.get(L2.substring(0, 1));
                 if (y != null) {
                     ys.add(y);
                 }
+                // 过渡只有几百毫秒，采够十余帧足以覆盖起止。
                 if (ys.size() >= 12) {
                     break;
                 }
@@ -153,9 +161,7 @@ class OldLineFadeTest {
             sleep();
         }
 
-        assertTrue(switched, "应观察到换行发生");
         assertTrue(ys.size() >= 2, "换行后应采集到多帧主行位置，实际=" + ys);
-        // 首末位置之差说明发生过上移。
         int first = ys.get(0);
         int last = ys.get(ys.size() - 1);
         assertTrue(first > last,

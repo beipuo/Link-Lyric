@@ -27,6 +27,9 @@ final class LineTransition {
     /** 当前动画对应的行索引。 */
     private int fromIndex = -1;
 
+    /** 是否已经历过至少一次换行。首次不算换行。 */
+    private boolean started;
+
     /**
      * 已进行的时长（纳秒）。
      *
@@ -49,6 +52,23 @@ final class LineTransition {
             return;
         }
         fromIndex = index;
+        // 首次出画不是换行，不能从零开始动画。
+        //
+        // 这里曾经无条件归零。但首帧的 index 总与
+        // 初始值 -1 不同，于是每次进入世界、每次歌词时间轴重建，
+        // 都会触发一次完整的「整块上移」动画——
+        // 整行歌词从下方一个行距滑上来。
+        //
+        // 它与「先染色后定位」的首帧行为叠加在一起，
+        // 就是用户看到的「逐字歌词动画异常」：
+        // 字在往上滑，而染色已经是句中终态。
+        //
+        // 首次出画应直接就位——与字段注释写的意图一致。
+        if (!started) {
+            started = true;
+            elapsedNanos = Long.MAX_VALUE / 4;
+            return;
+        }
         elapsedNanos = 0L;
     }
 

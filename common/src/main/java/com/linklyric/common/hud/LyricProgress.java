@@ -180,8 +180,58 @@ final class LyricProgress {
         return starts;
     }
 
-    /** 估算单个字的宽度：行宽除以字数。 */
-    static float fontSizeOf(int lineWidth, int charCount) {
+    /**
+     * 参考字宽：抬升与过渡带的尺度基准。
+     *
+     * <h2>旧实现的错误</h2>
+     *
+     * <p>这里曾经写成 {@code lineWidth / charCount}，并命名为「字号」。
+     * 但那个商是<b>平均每格宽度</b>，不是字号。
+     *
+     * <p>中文每字正好 9px、行宽又是字数的整数倍，
+     * 所以 {@code 9 × n / n} 恰好等于 9，看不出问题；
+     * 一旦变成英文、空格或窄字比例高的句子，结果就偏得厉害。
+     *
+     * <p>实测：同样是 9px 字号，
+     * {@code "abcdefghijklmnop"} 算出 6.0，
+     * {@code "i i i i i i i i i i"} 算出 4.0（真实值 9）。
+     *
+     * <h2>为什么影响逐字动画</h2>
+     *
+     * <p>两个后果都从这个估值乘出来：
+     * 抬升幅度 = 估值 × 0.10，过渡带 = 估值 × 1.2。
+     * 过渡带变窄到接近一个字宽时，前沿扫过的那个字
+     * 会整体同时起落，而不是被渐变扫过——观感就是「字在跳」。
+     *
+     * <h2>修正</h2>
+     *
+     * <p>不再从行宽推测字号：行宽只能反推「平均宽度」，
+     * 而这里真正需要的是「一个字的尺度量级」。
+     * 改取<b>行内最大字宽</b>：它直接取自实际字形，
+     * 不受文字种类与空格数量影响，也就不会因为一句里
+     * 少数几个宽字而把整句的动画压扁。
+     *
+     * @param charWidths 逐字宽度（像素），空白字符不计入
+     * @return 参考字宽；无法取值时返回 0
+     */
+    static float referenceSize(int[] charWidths) {
+        int max = 0;
+        for (int w : charWidths) {
+            if (w > max) {
+                max = w;
+            }
+        }
+        return max;
+    }
+
+    /**
+     * 由行宽与字数估算参考字宽。
+     *
+     * <p>仅在拿不到逐字宽度时使用（例如测试替身、
+     * 或调用方只有整行宽）。它仍然是平均值，
+     * 但至少不会因为没有逐字信息而完全无法工作。
+     */
+    static float referenceSize(int lineWidth, int charCount) {
         if (charCount <= 0) {
             return 0f;
         }

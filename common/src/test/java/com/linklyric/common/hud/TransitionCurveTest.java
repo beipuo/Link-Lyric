@@ -54,11 +54,14 @@ class TransitionCurveTest {
     @Test
     void 上移位移随过渡时长缩短而收敛() {
         LineTransition transition = new LineTransition();
+        // 首次出画不是换行，不计过渡；先吃掉这一次。
         transition.update(0, 0L, 700L);
+        // 换行：从第 0 行切到第 1 行
+        transition.update(1, 0L, 700L);
         int atStart = transition.blockShift(700L);
         assertEquals(LyricGeometry.LINE_STEP, atStart, "过渡起点应偏整整一行");
 
-        transition.update(0, 700_000_000L, 700L);
+        transition.update(1, 700_000_000L, 700L);
         assertEquals(0, transition.blockShift(700L), "过渡结束应完全就位");
     }
 
@@ -72,6 +75,8 @@ class TransitionCurveTest {
     @Test
     void 换行不再冻结旧句() {
         LineTransition transition = new LineTransition();
+        // 首次出画不是换行，不计过渡；先吃掉这一次。
+        transition.update(0, 0L, 700L);
         transition.update(1, 0L, 700L);
         // 换行瞬间即进入位移过渡，但没有任何「旧行还可绘制」的状态。
         assertTrue(transition.active(700L), "换行后应处于上移过渡中");

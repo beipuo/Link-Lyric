@@ -656,7 +656,7 @@ public final class FloatingLyricRenderer {
         int viewportLeft = layoutLeft(this.style.align(), centerX, maxWidth, viewWidth);
         int viewportRight = viewportLeft + viewWidth;
 
-        // 换行或时间轴变更时重置动画，避免沿用上一行的进度
+        // 换行或时间轴变更时重置进度，避免沿用上一行的。
         if (index != lastLineIndex) {
             sungWidth = targetWidthAt(painter, line, visible, positionMs);
             lastLineIndex = index;
@@ -852,22 +852,30 @@ public final class FloatingLyricRenderer {
     private float[] buildLifts(FloatingLyricRenderer.Painter painter, String visible,
                                int primaryWidth, float sungWidth,
                                com.linklyric.core.lyric.LyricLine line, long positionMs) {
-        float fontSize = LyricProgress.fontSizeOf(primaryWidth, visible.length());
-        if (style.liftCurve() == com.linklyric.common.style.LyricStyleConfig.LiftCurve.LINEAR) {
-            return LyricProgress.lifts(visible.length(), fontSize,
-                    LyricProgress.charProgress(line, visible, positionMs));
-        }
         int[] starts = LyricProgress.charStarts(painter, visible);
         int[] widths = new int[starts.length];
         for (int i = 0; i < starts.length; i++) {
             int next = i + 1 < starts.length ? starts[i + 1] : primaryWidth;
             widths[i] = Math.max(1, next - starts[i]);
         }
+        // 参考字宽取行内最宽字，而不是行宽除以字数。
+        //
+        // 后者是「平均每格宽度」，在中文上巧合等于字号，
+        // 但英文、空格与窄字一多就偏小，直接把
+        // 抬升幅度与过渡带一起压扁，逐字动画退化成整字跳动。
+        float fontSize = LyricProgress.referenceSize(widths);
+        if (fontSize <= 0f) {
+            fontSize = LyricProgress.referenceSize(primaryWidth, visible.length());
+        }
+        if (style.liftCurve() == com.linklyric.common.style.LyricStyleConfig.LiftCurve.LINEAR) {
+            return LyricProgress.lifts(visible.length(), fontSize,
+                    LyricProgress.charProgress(line, visible, positionMs));
+        }
         return LyricProgress.cosineLifts(starts, widths, sungWidth, fontSize);
     }
 
     private static float fontSizeOf(int lineWidth, int charCount) {
-        return LyricProgress.fontSizeOf(lineWidth, charCount);
+        return LyricProgress.referenceSize(lineWidth, charCount);
     }
 
     /**
