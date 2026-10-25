@@ -53,8 +53,15 @@ public final class FloatingLyricRenderer {
     /** 目标值比当前值小超过该像素数时判定为 seek，直接跳变而非回退。 */
     private static final float BACKWARD_SNAP_PX = 6f;
 
-    /** 与目标的差值小于此值即吸附，避免指数逼近在行尾永久残留暗边。 */
-    private static final float SNAP_EPSILON_PX = 1.5f;
+    /**
+     * 与目标的差值小于此值即吸附，避免指数逼近在行尾永久残留暗边。
+     *
+     * <p>必须远小于单字宽度。9px 字号下 1.5px 等于字宽六分之一，
+     * 而每帧的目标推进只有约 0.5px，于是**每一帧都被吸附**，
+     * 平滑逻辑实际从未执行，呈现在画面上就是逐字一跳一跳。
+     * 取 0.05px：既让吸附生效于终点，又不吞掉任何一帧的推进。
+     */
+    private static final float SNAP_EPSILON_PX = 0.05f;
 
     /**
      * 未唱文字的透明度。
@@ -231,7 +238,31 @@ public final class FloatingLyricRenderer {
         return nextLine != null && !nextLine.text().isEmpty();
     }
 
-    /** 副行内容：优先取下一句，没有下一句时退回当前行的翻译。 */
+    /**
+     * 与当前行同时演唱的另一行。
+     *
+     * <p>只取一行：HUD 的副行槽位有限，而两行以上的重叠在实际歌词里极罕见。
+     * 取开始时间最晚的那一行——它是最新进来的声音，读者最需要看到。
+     */
+    private static LyricLine concurrentLineAt(LyricTimeline timeline, LyricLine current,
+                                              long positionMs) {
+        java.util.List<LyricLine> active = timeline.activeLinesAt(positionMs);
+        for (int i = active.size() - 1; i >= 0; i--) {
+            LyricLine candidate = active.get(i);
+            if (candidate != current && !candidate.text().isEmpty()) {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 副行内容：正在同时演唱的另一句 &gt; 下一句 &gt; 当前行的翻译。
+     *
+     * <p>时间重叠优先，因为那是**此刻正在唱**的词：主唱一句未落、伴唱已经进来时，
+     * 只按开始时间取一行会让另一句连词带译文一起消失。
+     * 若没有重叠，再按原规则取下一句做预览。
+     */
     private String secondaryTextOf(Painter painter, LyricLine line,
                                    LyricLine nextLine, int maxWidth) {
         if (nextLine != null && !nextLine.text().isEmpty()) {
@@ -248,10 +279,18 @@ public final class FloatingLyricRenderer {
      *
      * <p>受时间轴剩余行数限制，不能凭空补空行。
      */
-    private int drawableLineCount(LyricTimeline timeline, int index) {
+    private int drawableLineCount(LyricTimeline timeline, int index, LyricLine concurrent) {
         int total = Math.max(1, style.lineCount());
         int drawable = 1;
+        // 重叠行占用第一格副行槽位，且它不受「后续行是否存在」的限制：
+        // 重叠可能发生在歌曲最后一句上，那时根本没有下一行。
+        if (concurrent != null) {
+            drawable++;
+        }
         for (int i = 1; i < total; i++) {
+            if (drawable >= total) {
+                break;
+            }
             LyricLine upcoming = timeline.line(index + i);
             if (upcoming == null || upcoming.text().isEmpty()) {
                 break;
@@ -320,6 +359,14 @@ public final class FloatingLyricRenderer {
 
     /** 跨帧保留的已唱宽度（像素）。这是染色连续性的来源。 */
     private float sungWidth;
+
+    /**
+     * 本帧实际用于查时间轴的位置（外推 + 用户偏移）。
+     *
+     * <p>外部若用轮询上报值做对齐会错开最多一个上报周期，
+     * 诊断与测试必须看到这个值才与画面一致。
+     */
+    private long lastRenderedPositionMs;
 
     /** 设置用户偏移量；由指令与拖动共同写入。 */
     public void setOffset(int x, int y) {
@@ -413,6 +460,17 @@ public final class FloatingLyricRenderer {
         return sungWidth;
     }
 
+    /**
+     * 本帧实际用于查时间轴的位置：外推后的播放位置加用户时间偏移。
+     *
+     * <p>诊断与测试要对着「渲染器真正看到的时间」说话。
+     * 用数据源的上报值会错开最多一个上报周期（200ms），
+     * 足以跨过一句歌词的边界，得出的结论会是错的。
+     */
+    public long currentPositionMs() {
+        return lastRenderedPositionMs;
+    }
+
     /** 上一帧对应的时间轴与行索引，用于识别换行并重置动画。 */
     private long lastSignature = Long.MIN_VALUE;
     private int lastLineIndex = -1;
@@ -477,6 +535,7 @@ public final class FloatingLyricRenderer {
         // 若直接偏移 clock 的输入，外推锚点会跟着漂移，暂停/恢复后累积误差；
         // 在这里加一次常量相当于整体平移时间轴，语义干净且可逆。
         long positionMs = boundedPosition(snapshot.positionMs()) + style.offsetMs();
+        lastRenderedPositionMs = positionMs;
 
         int index = timeline.indexAt(positionMs);
         if (index < 0) {
@@ -509,7 +568,10 @@ public final class FloatingLyricRenderer {
         //
         // 主行是可逐字染色的那一行；副行只做静态预览，
         // 因为下一句的逐字时间还没到，提前染色没有意义。
-        LyricLine nextLine = timeline.line(index + 1);
+        // 同时在唱的另一句优先于「下一句预览」：
+        // 前者是此刻就该读到的词，后者只是提前量。
+        LyricLine concurrent = concurrentLineAt(timeline, line, positionMs);
+        LyricLine nextLine = concurrent != null ? concurrent : timeline.line(index + 1);
 
         // 行切换动画进度：换行后用 220ms 把上一行推上去、把新行推到主位。
         // 取自 RichLyricLineView.animateNextLinePromotion：
@@ -536,6 +598,8 @@ public final class FloatingLyricRenderer {
         String visible = scrolling ? fullText : clip(painter, fullText, maxWidth);
 
         String secondaryText = secondaryTextOf(painter, line, nextLine, maxWidth);
+        // 重叠行是歌词而不是译文，上色必须按后续歌词走，否则会淡成译文色。
+        boolean nextLineIsLyric = nextLine != null && !nextLine.text().isEmpty();
 
         int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
         // 副行按 Salt 的 SubTextFontSizeScale 缩小，宽度必须同样缩放，
@@ -552,7 +616,7 @@ public final class FloatingLyricRenderer {
 
         // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在 centerTextY。
         boolean hasSecondary = !secondaryText.isEmpty();
-        int drawableLines = drawableLineCount(timeline, index);
+        int drawableLines = drawableLineCount(timeline, index, concurrent);
         LineLayout.Block block = LineLayout.compute(centerTextY, drawableLines, 0,
                 LyricGeometry.LINE_HEIGHT, LyricGeometry.LINE_GAP, SUB_TEXT_FONT_SCALE);
 
@@ -703,7 +767,7 @@ public final class FloatingLyricRenderer {
             for (int i = 1; i < drawableLines; i++) {
                 boolean firstExtra = i == 1;
                 // 首条副行可能来自翻译兜底，其余行一律取后续歌词。
-                LyricLine upcoming = firstExtra && !hasNextLine(line, nextLine)
+                LyricLine upcoming = firstExtra && !nextLineIsLyric
                         ? null : timeline.line(index + i);
                 String text = firstExtra
                         ? secondaryText
@@ -711,7 +775,7 @@ public final class FloatingLyricRenderer {
                 if (text.isEmpty()) {
                     continue;
                 }
-                int color = firstExtra && !hasNextLine(line, nextLine)
+                int color = firstExtra && !nextLineIsLyric
                         ? translationColor() : nextLineColor();
                 // 左边界按**缩放后宽度**算，因为 drawTextScaled 以 (x, y)
                 // 为原点缩放，缩放后文字实际占据 [x, x + width*scale]。
@@ -855,9 +919,27 @@ public final class FloatingLyricRenderer {
         }
     }
 
-    /** 单个演唱单元的进度曲线，与行切换共用同一条缓动。 */
+    /**
+     * 单个演唱单元的进度曲线。
+     *
+     * <p>**不能**复用行切换的 {@link LyricEasing#ease}：那条曲线
+     * {@code CubicBezier(0.25, 0, 0.2, 1)} 两端导数趋零，是为「推上去」
+     * 设计的。用在逐字填充上，字头与字尾几乎不动、中段猛冲，
+     * 观感就是每个字都先僵住再跳过去；行尾还会永远差一点到不了。
+     *
+     * <p>演唱进度本身在数据里就是匀速的，填充也应当匀速。
+     * 这里只做一次平滑起步与收尾，避免与 {@code advance()} 的平滑叠加后过冲。
+     */
     private static float sustainCurve(float progress) {
-        return LyricEasing.ease(progress);
+        if (progress <= 0f) {
+            return 0f;
+        }
+        if (progress >= 1f) {
+            return 1f;
+        }
+        // 三次平滑插值：两端导数趋零的幅度远小于 CubicBezier(0.25,0,0.2,1)，
+        // 中段接近线性，因此不会把一个字切成「静止—猛冲—静止」三段。
+        return progress * progress * (3f - 2f * progress);
     }
 
     /**
@@ -891,6 +973,15 @@ public final class FloatingLyricRenderer {
             return lineWidth * ratio;
         }
 
+        // 已唱宽度必须在**整行**上是时间的单一连续函数。
+        //
+        // 早先的写法是逐字各自套 sustainCurve：每个字从 0 平滑到 1，
+        // 而 smoothstep 在两端导数为零。于是唱到字边界时速度先降到 0
+        // 再重新爬升，听感/观感上就是「一顿」，字与字之间接不上。
+        // 逐字缓动把一条连续的时间线切成了 N 段各自起停的曲线。
+        //
+        // 正确做法：只用「字内进度」这个线性比例决定前沿落在字内何处，
+        // 缓动若需要则作用于整行进度，而不是每个字各缓动一次。
         float width = 0f;
         int consumed = 0;
         for (LyricWord word : words) {
@@ -909,7 +1000,16 @@ public final class FloatingLyricRenderer {
             if (positionMs >= word.endMs()) {
                 width += partWidth;
             } else if (positionMs > word.startMs()) {
-                width += partWidth * sustainCurve(word.progressAt(positionMs));
+                // 线性推进：前沿速度由该字的实际时长决定，
+                // 字间不存在速度凹陷。
+                long span = word.endMs() - word.startMs();
+                float ratio = span <= 0L ? 1f : (positionMs - word.startMs()) / (float) span;
+                width += partWidth * Math.max(0f, Math.min(1f, ratio));
+            } else {
+                // 本字尚未开始。位置可能在外推下还没走到这里，
+                // 因此不能提前退出：外推会把位置往后推，
+                // 而这里的循环只是按当前值累加。
+                break;
             }
             consumed += available;
         }

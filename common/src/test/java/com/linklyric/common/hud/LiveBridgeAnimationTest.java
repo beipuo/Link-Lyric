@@ -78,12 +78,9 @@ class LiveBridgeAnimationTest {
         }
     }
 
-    /** 反射读取渲染器本帧使用的位置，用于诊断对齐。 */
-    private static long renderedPosition(FloatingLyricRenderer renderer) throws Exception {
-        java.lang.reflect.Field f =
-                FloatingLyricRenderer.class.getDeclaredField("lastRenderedPositionMs");
-        f.setAccessible(true);
-        return (long) f.get(renderer);
+    /** 本帧渲染位置，用于与时间轴对齐做诊断。 */
+    private static long renderedPosition(FloatingLyricRenderer renderer) {
+        return renderer.currentPositionMs();
     }
 
     private static boolean reachable() {

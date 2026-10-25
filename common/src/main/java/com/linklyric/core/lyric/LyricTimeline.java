@@ -17,13 +17,27 @@ public final class LyricTimeline {
     private final List<LyricLine> lines;
     private final long[] starts;
 
+    /**
+     * 前缀最大结束时间：{@code maxEnd[i]} 是第 0 行到第 i 行的最晚结束时刻。
+     *
+     * <p>用于把「向前找重叠行」的扫描限制在常数步内：若 {@code maxEnd[i] <= 当前时刻}，
+     * 说明第 0 行到第 i 行全部已经唱完，再往前不可能有仍在进行的行。
+     */
+    private final long[] maxEnd;
+
     public LyricTimeline(List<LyricLine> lines) {
         List<LyricLine> sorted = new ArrayList<>(lines == null ? List.of() : lines);
         sorted.sort(Comparator.comparingLong(LyricLine::startMs));
-        this.lines = List.copyOf(sorted);
-        this.starts = new long[this.lines.size()];
-        for (int i = 0; i < this.lines.size(); i++) {
+        // 排序后才能知道「下一行」是谁，尾部时间必须在这之后补。
+        this.lines = LyricTimingFix.fix(sorted);
+        int count = this.lines.size();
+        this.starts = new long[count];
+        this.maxEnd = new long[count];
+        long running = Long.MIN_VALUE;
+        for (int i = 0; i < count; i++) {
             starts[i] = this.lines.get(i).startMs();
+            running = Math.max(running, this.lines.get(i).endMs());
+            maxEnd[i] = running;
         }
     }
 
@@ -78,6 +92,41 @@ public final class LyricTimeline {
     /** 当前位置对应的行；通常用于「是否已经结束」的额外判断。 */
     public LyricLine lineAt(long positionMs) {
         return line(indexAt(positionMs));
+    }
+
+    /**
+     * 与当前行在同一时刻并存的行，即对唱、主唱与伴唱叠加的情形。
+     *
+     * <p>歌词数据里两行时间重叠是正常现象：主唱一句还没唱完，伴唱已经进来。
+     * {@link #indexAt(long)} 只能返回一个索引，另一行会被完全丢弃——
+     * 不是画得难看，是那句词和它的译文都不出现在屏幕上。
+     *
+     * <p>返回按开始时间升序的所有「此刻仍在进行」的行，含当前行本身。
+     * 没有重叠时返回单元素列表，调用方无需分支。
+     */
+    public List<LyricLine> activeLinesAt(long positionMs) {
+        int index = indexAt(positionMs);
+        if (index < 0) {
+            return List.of();
+        }
+        // 开始时间晚于当前位置的行一律不可能在唱，index 之后无需考虑。
+        // 真正需要的是「开始得更早、到此刻还没结束」的行，只能向前找。
+        List<LyricLine> active = new ArrayList<>(2);
+        active.add(lines.get(index));
+        for (int i = index - 1; i >= 0; i--) {
+            if (maxEnd[i] <= positionMs) {
+                break;
+            }
+            if (lines.get(i).endMs() > positionMs) {
+                active.add(lines.get(i));
+            }
+        }
+        if (active.size() == 1) {
+            return List.of(active.get(0));
+        }
+        // 向前收集的顺序是倒的，翻回开始时间升序。
+        java.util.Collections.reverse(active);
+        return List.copyOf(active);
     }
 
     /** 当前行是否已唱完（用于间隙淡出）。 */

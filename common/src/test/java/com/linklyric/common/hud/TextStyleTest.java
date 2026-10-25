@@ -1,5 +1,6 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.LyricStyleConfig;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
@@ -39,10 +40,10 @@ class TextStyleTest {
     void 单项写入不影响其他() {
         LyricStyleConfig d = base();
 
-        LyricStyleConfig bold = d.withWeight(LyricStyleConfig.Weight.BOLD);
-        assertEquals(LyricStyleConfig.Weight.BOLD, bold.weight());
-        assertEquals(d.align(), bold.align());
-        assertEquals(d.sungColor(), bold.sungColor());
+        LyricStyleConfig same = d.withWeight(LyricStyleConfig.Weight.REGULAR);
+        assertEquals(LyricStyleConfig.Weight.REGULAR, same.weight());
+        assertEquals(d.align(), same.align());
+        assertEquals(d.sungColor(), same.sungColor());
 
         LyricStyleConfig left = d.withAlign(LyricStyleConfig.Align.LEFT);
         assertEquals(LyricStyleConfig.Align.LEFT, left.align());
@@ -66,29 +67,40 @@ class TextStyleTest {
         assertEquals(LyricStyleConfig.Align.CENTER, c.align());
     }
 
-    /** 字重只有原版支持的两档，每档都必须有可翻译的名称。 */
+    /**
+     * 只保留常规一档。
+     *
+     * <p>加粗已移除：MC 的粗体是同一字形右移一个纹素再画一遍，
+     * 在 9px 位图字形上两份轮廓只错开 1px、重叠 8px，
+     * 看起来就是同一个字画了两次。
+     */
     @Test
-    void 字重档位完整() {
-        assertEquals(2, LyricStyleConfig.Weight.values().length,
-                "原版只有常规与加粗两档");
+    void 字重只保留常规() {
+        assertEquals(1, LyricStyleConfig.Weight.values().length,
+                "加粗已移除，只剩常规一档");
         for (LyricStyleConfig.Weight w : LyricStyleConfig.Weight.values()) {
             assertNotNull(w.labelKey, w + " 必须有语言键");
             assertFalse(w.labelKey.isEmpty());
         }
     }
 
-    /** 加粗必须通过样式符交给字体管线，而不是自己叠描边。 */
+    /**
+     * 绘制文本里绝不出现样式符。
+     *
+     * <p>逐字绘制时每个字单独成一个字符串。字形解析按第一个码点取字形，
+     * 拼上 {@code §l} 前缀后取到的是 § 本身，屏幕上于是每字多画一个
+     * S 形状的字符。
+     */
     @Test
-    void 加粗由样式符表达() {
+    void 绘制文本不含样式符() {
         FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
-        r.setStyle(base().withWeight(LyricStyleConfig.Weight.BOLD));
-        CountingPainter painter = new CountingPainter();
+        r.setStyle(base());
+        BoldPainter painter = new BoldPainter();
         r.render(painter);
 
-        assertTrue(painter.texts.stream().anyMatch(t -> t.contains("\u00a7l")),
-                "加粗应出现 §l，实际=" + painter.texts);
-        assertTrue(painter.texts.stream().anyMatch(t -> t.contains("\u00a7r")),
-                "加粗必须补 §r 复位，实际=" + painter.texts);
+        assertTrue(painter.texts.stream().noneMatch(t -> t.contains("\u00a7")),
+                "绘制文本不得含样式符，实际=" + painter.texts);
+        assertFalse(painter.sawBold, "加粗已移除，不应再传字重");
     }
 
     /** 字号缩放必须真的进入绘制路径。 */
@@ -117,43 +129,24 @@ class TextStyleTest {
     }
 
     /**
-     * 加粗不增加绘制次数，而是通过样式前缀交给原版字体管线。
+     * 字重不再影响绘制：每个字只画一次。
      *
-     * <p>用像素偏移重复绘制模拟加粗会绕过字体管线的度量，
-     * 既不改字形也不改字距，只会得到错位副本（重影与颗粒）。
-     * MC 的 {@code Style.isBold()} 会走
-     * {@code glyphInfo.getBoldOffset()} 与 {@code getAdvance(bold)}，
-     * 字形与字距一起正确。
+     * <p>这是「两个字重叠」的直接回归测试。曾因加粗启用伪粗体副本，
+     * 同一字形在 {@code x+1} 处被再写一遍，与本体只错开 1px，
+     * 9px 的字上看起来像重影。
      */
     @Test
-    void 加粗通过样式前缀而非重复绘制() {
-        FloatingLyricRenderer regular = new FloatingLyricRenderer(new TestFeeds.Simple());
-        regular.setStyle(base().withWeight(LyricStyleConfig.Weight.REGULAR));
-        RecordingTexts pr = new RecordingTexts();
-        regular.render(pr);
+    void 每字只画一次() {
+        FloatingLyricRenderer r = new FloatingLyricRenderer(new TestFeeds.Simple());
+        r.setStyle(base());
 
-        FloatingLyricRenderer bold = new FloatingLyricRenderer(new TestFeeds.Simple());
-        bold.setStyle(base().withWeight(LyricStyleConfig.Weight.BOLD));
-        RecordingTexts pb = new RecordingTexts();
-        bold.render(pb);
+        BoldPainter painter = new BoldPainter();
+        r.render(painter);
 
-        assertTrue(!pr.texts.isEmpty(), "常规应至少画一次");
-        assertEquals(pr.texts.size(), pb.texts.size(),
-                "加粗不应增加绘制次数");
-        // 逐字绘制时单字不带样式符：给一个字符包 §l…§r 会让
-        // 拼接出的文本变成碎片，按内容做的判断全部失效。
-        // 因此只要求多字文本带前缀，且单字文本不含样式符。
-        var multi = pb.texts.stream().filter(t -> t.length() > 1).toList();
-        assertTrue(!multi.isEmpty(), "应有整行文本，实际=" + pb.texts);
-        assertTrue(multi.stream().allMatch(t -> t.contains("\u00a7l")),
-                "多字加粗文本应带 §l 前缀，实际=" + multi);
-        assertTrue(multi.stream().allMatch(t -> t.contains("\u00a7r")),
-                "多字加粗文本应带 §r 复位，实际=" + multi);
-        assertTrue(pb.texts.stream().filter(t -> t.length() <= 1)
-                        .noneMatch(t -> t.contains("\u00a7l")),
-                "单字文本不应带样式符，实际=" + pb.texts);
-        assertTrue(pr.texts.stream().noneMatch(t -> t.contains("\u00a7l")),
-                "常规文本不应带加粗前缀，实际=" + pr.texts);
+        assertTrue(!painter.texts.isEmpty(), "应至少画一次");
+        assertTrue(painter.texts.stream().noneMatch(t -> t.contains("\u00a7")),
+                "绘制文本不含样式符，实际=" + painter.texts);
+        assertFalse(painter.sawBold, "加粗已移除，不应再收到字重");
     }
 
     /** 阴影开关必须逐次透传给平台层，而不是写死。 */
@@ -260,6 +253,74 @@ class TextStyleTest {
             if (text != null && !text.isEmpty()) {
                 texts.add(text);
             }
+        }
+
+        @Override
+        public int screenWidth() {
+            return 480;
+        }
+
+        @Override
+        public int screenHeight() {
+            return 270;
+        }
+
+        @Override
+        public int textWidth(String text) {
+            return text == null ? 0 : text.length() * 9;
+        }
+
+        @Override
+        public void fillRect(int x, int y, int width, int height, int color) {
+        }
+
+        @Override
+        public boolean supportsScissor() {
+            return true;
+        }
+
+        @Override
+        public void enableScissor(int x, int y, int width, int height) {
+        }
+
+        @Override
+        public void disableScissor() {
+        }
+    }
+
+    /**
+     * 记录绘制文本，并观察字重是否经参数到达平台层。
+     *
+     * <p>刻意**不**覆盖无字重的旧重载：若实现仍在走旧路径，
+     * {@link #sawBold} 会保持 false，测试立刻失败。
+     */
+    private static final class BoldPainter implements FloatingLyricRenderer.Painter {
+        final java.util.List<String> texts = new java.util.ArrayList<>();
+        boolean sawBold;
+
+        @Override
+        public void drawText(String text, int x, int y, int color) {
+            if (text != null && !text.isEmpty()) {
+                texts.add(text);
+            }
+        }
+
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift,
+                                   int color, boolean shadow, boolean bold) {
+            if (text != null && !text.isEmpty()) {
+                texts.add(text);
+            }
+            sawBold |= bold;
+        }
+
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                      GlyphColors colors, boolean shadow, boolean bold) {
+            if (glyph != null && !glyph.isEmpty()) {
+                texts.add(glyph);
+            }
+            sawBold |= bold;
         }
 
         @Override

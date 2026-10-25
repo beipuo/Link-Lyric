@@ -69,15 +69,16 @@ public record LyricStyleConfig(
     /**
      * 字重。
      *
-     * <p>原版字体管线只提供「常规」与「加粗」两档，{@code §l} 会在度量阶段
-     * 同时改字形与字距，因此这里只需要两档。配置文件里的旧值
-     * （例如已移除的 {@code HEAVY}）由解析器回退到默认值。
+     * <p>**只保留常规一档。** 加粗在逐字绘制路径上无法正确实现：
+     * MC 的粗体是同一字形右移一个纹素再画一遍，在 9px 的位图字形上
+     * 这份错位副本会形成肉眼可见的第二个轮廓，看起来像两个字重叠。
+     *
+     * <p>保留枚举本身是为了配置文件与界面选项的结构不变：
+     * 旧配置里的 {@code BOLD} 由解析器回退到 {@link #REGULAR}，不影响启动。
      */
     public enum Weight {
         /** 常规字重。 */
-        REGULAR(LangKeys.WEIGHT_REGULAR),
-        /** 加粗，由 {@code §l} 交给字体管线处理。 */
-        BOLD(LangKeys.WEIGHT_BOLD);
+        REGULAR(LangKeys.WEIGHT_REGULAR);
 
         /** 名称的语言键。 */
         public final String labelKey;

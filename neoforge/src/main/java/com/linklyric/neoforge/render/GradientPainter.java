@@ -1,6 +1,7 @@
 package com.linklyric.neoforge.render;
 
 import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -91,16 +92,55 @@ public final class GradientPainter {
     }
 
     /**
+     * 按段绘制一个字形。
+     *
+     * <p>段边界落在前沿函数的折点上，因此每段内两端颜色插值即精确。
+     * 阴影同样按段绘制，保持与主色一致的形状。
+     */
+    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+                                     float x, float y, GlyphSpan[] spans,
+                                     boolean shadow) {
+        if (glyph.isEmpty() || spans == null || spans.length == 0) {
+            return true;
+        }
+        int cp = glyph.codePointAt(0);
+        BakedGlyph baked = GlyphLookup.glyph(font, cp);
+        if (baked == null) {
+            return false;
+        }
+        RenderType type = GradientGlyphWriter.renderType(baked, false);
+        if (type == null) {
+            return false;
+        }
+        var buffer = graphics.bufferSource();
+        VertexConsumer consumer = buffer.getBuffer(type);
+        Matrix4f pose = graphics.pose().last().pose();
+        int light = 0xF000F0;
+
+        if (shadow) {
+            GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
+            for (int i = 0; i < spans.length; i++) {
+                GlyphSpan s = spans[i];
+                shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
+                        shadowOf(s.startColor()), shadowOf(s.endColor()));
+            }
+            GradientGlyphWriter.writeSpans(consumer, pose, baked,
+                    x + SHADOW_OFFSET, y, shadowSpans, light);
+        }
+        return GradientGlyphWriter.writeSpans(consumer, pose, baked, x, y, spans, light);
+    }
+
+    /**
      * 字形步进宽度。
      *
      * <p>减去斜体补偿之外的部分：{@code getAdvance} 返回的正是原版推进量，
      * 直接用即可，不要叠加 boldOffset（那由 Info 内部处理）。
      */
-    public static float advance(Font font, String glyph, boolean bold) {
+    public static float advance(Font font, String glyph) {
         if (glyph.isEmpty()) {
             return 0f;
         }
-        return GlyphLookup.advance(font, glyph.codePointAt(0), bold);
+        return GlyphLookup.advance(font, glyph.codePointAt(0));
     }
 
     /** 主色转阴影色：RGB 乘 0.25，alpha 保持不变。 */

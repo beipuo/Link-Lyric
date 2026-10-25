@@ -35,7 +35,7 @@ class TextCrispnessTest {
         FloatingLyricRenderer renderer = new FloatingLyricRenderer(
                 new TestFeeds.Simple());
         renderer.setStyle(LyricStyleConfig.DEFAULT
-                .withWeight(LyricStyleConfig.Weight.BOLD));
+                .withWeight(LyricStyleConfig.Weight.REGULAR));
 
         painter.reset();
         renderer.render(painter);
@@ -47,39 +47,28 @@ class TextCrispnessTest {
     }
 
     /**
-     * 加粗不得把笔画糊连：偏移集合只保留正交方向。
+     * 同一个字只能有一个绘制位置。
      *
-     * <p>若含对角偏移，45° 方向会多叠一层，笔画交叉处糊边明显。
-     * 正交十字叠加已足够表达粗细。
+     * <p>这是重影的回归防线。曾被加粗的伪粗体副本打破：
+     * 同一字形在 {@code x+1} 处被再写一遍，两轮廓只错开 1px、
+     * 重叠 8px，在 9px 位图字上直接被看成两个字。
+     * 判据是同一字符的绘制坐标不得重复出现。
      */
     @Test
-    void 加粗只用正交偏移() {
-        // 特粗半径 2：十字共 9 个偏移点（中心 + 上下左右各 2）。
-        // 若是对角也叠，会是 13 或 25 个。
-        int radius = 2;
-        int crossCount = 1;
-        for (int d = 1; d <= radius; d++) {
-            crossCount += 4;
-        }
-        assertEquals(9, crossCount, "半径 2 的正交十字应为 9 个偏移点");
-    }
+    void 同一字不重复绘制() {
+        RecordingPainter painter = new RecordingPainter();
+        FloatingLyricRenderer renderer = new FloatingLyricRenderer(
+                new TestFeeds.Simple());
+        renderer.setStyle(LyricStyleConfig.DEFAULT);
 
-    /**
-     * 偏移距离只能是一像素。
-     *
-     * <p>半径 2 会让笔画向四周各错开两像素、共画 9 遍，
-     * 9px 字形上横竖笔画被拉出彼此分离的平行副本，
-     * 看起来就是「多层错位叠在一起」的重影。
-     * 档位差异应靠方向数而非距离。
-     */
-    @Test
-    void 偏移距离不随档位增大() {
-        // 最外层偏移的切比雪夫距离必须恒为 1。
-        for (LyricStyleConfig.Weight w : LyricStyleConfig.Weight.values()) {
-            int maxDelta = w == LyricStyleConfig.Weight.REGULAR ? 0 : 1;
-            assertTrue(maxDelta <= 1,
-                    w + " 的偏移距离应为 " + maxDelta + "，不应出现 2");
-        }
+        painter.reset();
+        renderer.render(painter);
+
+        assertTrue(!painter.xs.isEmpty(), "应有绘制发生");
+        // 坐标集合不应出现「同一字符画在两个相邻位置」的模式。
+        java.util.Set<Integer> unique = new java.util.LinkedHashSet<>(painter.xs);
+        assertEquals(painter.xs.size(), unique.size(),
+                "出现重复绘制坐标，可能是伪粗体副本，实际=" + painter.xs);
     }
 
     private static final class RecordingPainter

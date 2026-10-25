@@ -14,6 +14,19 @@ base {
     archivesName = "${providers.gradleProperty("archives_base_name").get()}-${providers.gradleProperty("minecraft_version").get()}-fabric"
 }
 
+/**
+ * Loom 自己声明了 project 级仓库，settings 里的 repository 声明会被整体忽略。
+ * CurseForge 制品必须在这里加，否则只会在 Loom 托管的几个仓库里空转。
+ */
+repositories {
+    maven("https://www.cursemaven.com") {
+        name = "CurseMaven"
+        content {
+            includeGroup("curse.maven")
+        }
+    }
+}
+
 dependencies {
     minecraft("com.mojang:minecraft:${providers.gradleProperty("minecraft_version").get()}")
     mappings(loom.officialMojangMappings())
@@ -21,6 +34,11 @@ dependencies {
     // 需要重映射的依赖走 modImplementation。
     modImplementation("net.fabricmc:fabric-loader:${providers.gradleProperty("loader_version").get()}")
     modImplementation("net.fabricmc.fabric-api:fabric-api:${providers.gradleProperty("fabric_api_version").get()}")
+
+    // Modern UI：高分辨率字体与文本排版。Fabric 制品是已编译模组，
+    // 必须走 modImplementation 才能在 dev 环境正确重映射并加入运行时。
+    // 文件 ID 写在 gradle.properties，换 MC 版本时只改那一处。
+//    modImplementation("curse.maven:modern-ui-352491:${providers.gradleProperty("modernui_fabric_file").get()}")
 
     // common 是纯 Java、零 Minecraft 依赖，不能被重映射。
     implementation(project(":common"))

@@ -15,6 +15,13 @@ dependencyResolutionManagement {
         mavenCentral()
         maven("https://maven.fabricmc.net/") { name = "Fabric" }
         maven("https://maven.neoforged.net/releases") { name = "NeoForged" }
+        // CurseForge 制品代理。ModernUI 等只发布在 CF 的模组需要它。
+        maven("https://www.cursemaven.com") {
+            name = "CurseMaven"
+            content {
+                includeGroup("curse.maven")
+            }
+        }
     }
 }
 

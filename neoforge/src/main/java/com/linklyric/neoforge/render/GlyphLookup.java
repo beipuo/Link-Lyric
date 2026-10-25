@@ -114,14 +114,15 @@ public final class GlyphLookup {
      * <p>1.21.1 的 {@code BakedGlyph} 不暴露 {@code info()}，
      * 宽度要从 {@code FontSet.getGlyphInfo} 取。
      */
-    public static float advance(Font font, int cp, boolean bold) {
+    public static float advance(Font font, int cp) {
         FontSet set = fontSet(font);
         if (set == null) {
             return 0f;
         }
         try {
             GlyphInfo info = set.getGlyphInfo(cp, false);
-            return info == null ? 0f : info.getAdvance(bold);
+            // 不用 getAdvance(bold)：加粗已移除，推进量一律按常规计算。
+            return info == null ? 0f : info.getAdvance(false);
         } catch (RuntimeException e) {
             return 0f;
         }

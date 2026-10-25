@@ -3,6 +3,7 @@ package com.linklyric.fabric;
 import com.linklyric.common.bridge.BridgePlaybackSource;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.fabric.render.GradientPainter;
 import com.linklyric.common.config.LayoutConfig;
 import com.linklyric.common.hud.LyricDragController;
@@ -172,6 +173,14 @@ public final class LinkLyricFabric implements ClientModInitializer {
         @Override
         public void drawTextLifted(String text, int x, int y, float lift,
                                    int color, boolean shadow) {
+            drawTextLifted(text, x, y, lift, color, shadow, false);
+        }
+
+        @Override
+        public void drawTextLifted(String text, int x, int y, float lift,
+                                   int color, boolean shadow, boolean ignoredBold) {
+            // 加粗已移除：§l 与它带来的伪粗体副本会让 9px 字形出现重影。
+            // 参数保留只为实现接口签名。
             int dy = Math.round(lift);
             if (dy == 0) {
                 drawText(text, x, y, color, shadow);
@@ -189,6 +198,25 @@ public final class LinkLyricFabric implements ClientModInitializer {
          *
          * <p>平台能力不可用（字段改名、字形缺失）时退回单色，保住可读性。
          */
+        @Override
+        public void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                    GlyphSpan[] spans, boolean shadow) {
+            if (!GradientPainter.usable()) {
+                drawTextLifted(glyph, Math.round(x), y, lift,
+                        spans.length == 0 ? 0xFFFFFFFF : spans[0].startColor(), shadow);
+                return;
+            }
+            if (lift != 0f) {
+                var pose = graphics.pose();
+                pose.pushPose();
+                pose.translate(0f, -lift, 0f);
+                GradientPainter.drawSpans(graphics, client.font, glyph, x, y, spans, shadow);
+                pose.popPose();
+                return;
+            }
+            GradientPainter.drawSpans(graphics, client.font, glyph, x, y, spans, shadow);
+        }
+
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {

@@ -1,6 +1,7 @@
 package com.linklyric.neoforge.render;
 
 import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.gui.font.GlyphRenderTypes;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
@@ -131,11 +132,89 @@ public final class GradientGlyphWriter {
 
         // 顶点顺序与 UV 对应关系必须与原版完全一致，
         // 否则字形的上下左右会被翻转，笔画变成镜像。
+        quad(buffer, pose, x0, y0, x1, y1, u0v, u1v, v0v, v1v, lc, rc, light);
+        // 不再绘制伪粗体副本。
+        //
+        // MC 的粗体是同一字形右移一个纹素再画一遍。在 9px 的位图字形上，
+        // 这份副本与本体只错开 1px、重叠 8px，笔画通常只有 1px 宽，
+        // 于是形成两个清晰可见的轮廓——观感就是「同一个字重叠了一次」。
+        // 原版 drawString 里该偏移由字形度量统一处理，未见此问题；
+        // 逐顶点路径没有同等余地，因此直接去掉。
+        return true;
+    }
+
+    /**
+     * 按段写入字形（NeoForge）。
+     *
+     * <h2>UV 如何切分</h2>
+     *
+     * <p>整段文字共用一张字形纹理，横向位置与 {@code u} 坐标是线性对应：
+     * <pre>
+     *   u(x) = u0 + (u1 - u0) * (x - glyphLeft) / (glyphRight - glyphLeft)
+     * </pre>
+     * 因此段边界处的 u 直接按比例求出，不需要知道图集里这个字的具体位置。
+     *
+     * @param spans 段列表，坐标与 {@code x} 同一坐标系
+     */
+    public static boolean writeSpans(VertexConsumer buffer, Matrix4f pose,
+                                      BakedGlyph glyph, float x, float y,
+                                      GlyphSpan[] spans, int light) {
+        if (!available() || spans == null || spans.length == 0) {
+            return false;
+        }
+        float u0v = (float) u0.get(glyph);
+        float u1v = (float) u1.get(glyph);
+        float v0v = (float) v0.get(glyph);
+        float v1v = (float) v1.get(glyph);
+        float l = (float) left.get(glyph);
+        float r = (float) right.get(glyph);
+        float u = (float) up.get(glyph);
+        float d = (float) down.get(glyph);
+
+        float glyphWidth = r - l;
+        if (glyphWidth <= 0f) {
+            return false;
+        }
+        float base = x;
+        float y0 = y + u;
+        float y1 = y + d;
+
+        boolean wrote = false;
+        for (GlyphSpan span : spans) {
+            if (span.isEmpty()) {
+                continue;
+            }
+            float sx0 = span.startX() - base;
+            float sx1 = span.endX() - base;
+            // 夹进字形可见范围：跨出字形的部分没有纹素对应，
+            // 画出去只会采样到邻字的像素边缘。
+            if (sx0 < l) {
+                sx0 = l;
+            }
+            if (sx1 > r) {
+                sx1 = r;
+            }
+            if (sx1 - sx0 <= 0f) {
+                continue;
+            }
+            float su0 = u0v + (u1v - u0v) * ((sx0 - l) / glyphWidth);
+            float su1 = u0v + (u1v - u0v) * ((sx1 - l) / glyphWidth);
+            quad(buffer, pose, base + sx0, y0, base + sx1, y1,
+                    su0, su1, v0v, v1v,
+                    span.startColor(), span.endColor(), light);
+            wrote = true;
+        }
+        return wrote;
+    }
+
+    private static void quad(VertexConsumer buffer, Matrix4f pose,
+                              float x0, float y0, float x1, float y1,
+                              float u0v, float u1v, float v0v, float v1v,
+                              int lc, int rc, int light) {
         vertex(buffer, pose, x0, y0, u0v, v0v, lc, light);
         vertex(buffer, pose, x0, y1, u0v, v1v, lc, light);
         vertex(buffer, pose, x1, y1, u1v, v1v, rc, light);
         vertex(buffer, pose, x1, y0, u1v, v0v, rc, light);
-        return true;
     }
 
     private static void vertex(VertexConsumer buffer, Matrix4f pose,

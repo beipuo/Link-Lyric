@@ -1,6 +1,7 @@
 package com.linklyric.common.hud;
 
 import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GlyphSpan;
 
 /**
  * 平台绘制适配层。
@@ -44,6 +45,20 @@ public interface LyricCanvas {
     }
 
     /**
+     * 带浮点抬升与字重的绘制。
+     *
+     * <p>加粗已从渲染路径移除：MC 的粗体是同一字形右移一个纹素再画一遍，
+     * 在 9px 位图字形上那份错位副本会被看成第二个字。
+     *
+     * <p>重载保留是为了不破坏既有调用点与测试替身的签名；
+     * {@code bold} 参数一律忽略。
+     */
+    default void drawTextLifted(String text, int x, int y, float lift,
+                                int color, boolean shadow, boolean bold) {
+        drawTextLifted(text, x, y, lift, color, shadow);
+    }
+
+    /**
      * 绘制单个字形，左右两端可不同色。
      *
      * <p>这是字内渐变的唯一入口：GPU 在顶点之间线性插值，
@@ -53,6 +68,35 @@ public interface LyricCanvas {
     default void drawGlyphGradient(String glyph, float x, int y, float lift,
                                    GlyphColors colors, boolean shadow) {
         drawTextLifted(glyph, Math.round(x), y, lift, colors.left(), shadow);
+    }
+
+    /**
+     * 带字重参数的版本，{@code bold} 已不再生效。
+     *
+     * <p>保留签名以免破坏调用点；实际绘制一律按常规字重。
+     */
+    default void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                   GlyphColors colors, boolean shadow, boolean bold) {
+        drawGlyphGradient(glyph, x, y, lift, colors, shadow);
+    }
+
+    /**
+     * 按段绘制单个字形。
+     *
+     * <p>前沿函数是分段线性的，段边界落在它的折点上，
+     * 因此每段内两端颜色插值即精确，不需要更多顶点。
+     * 默认实现退化为「取首尾颜色画一次」，仅保证不崩。
+     *
+     * @param spans 段列表，{@code startX}/{@code endX} 与 {@code x} 同一坐标系
+     */
+    default void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                GlyphSpan[] spans, boolean shadow) {
+        if (spans == null || spans.length == 0) {
+            return;
+        }
+        drawGlyphGradient(glyph, x, y, lift,
+                new GlyphColors(spans[0].startColor(),
+                        spans[spans.length - 1].endColor()), shadow);
     }
 
     /** 按缩放比例绘制文本。默认实现忽略缩放。 */

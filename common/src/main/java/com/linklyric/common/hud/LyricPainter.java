@@ -1,6 +1,7 @@
 package com.linklyric.common.hud;
 
 import com.linklyric.common.style.GlyphColors;
+import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.common.style.GradientColorizer;
 import com.linklyric.common.style.LyricStyleConfig.Weight;
 import com.linklyric.common.hud.effect.EmphasisGroup;
@@ -122,10 +123,12 @@ final class LyricPainter {
                 continue;
             }
 
-            GlyphColors colors = GradientColorizer.forChar(
-                    charX, charRight, edge, sung, unsung);
+            // 传入整行宽度：过渡宽度按行宽比例推算，
+            // 使长句与短句的羽化观感一致。
+            GlyphSpan[] spans = GradientColorizer.spansForChar(
+                    charX, charRight, edge, sung, unsung, lineWidth);
             glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
-                    colors, transform.dx, transform.bloom);
+                    spans, transform.dx, transform.bloom);
         }
     }
 
@@ -150,7 +153,7 @@ final class LyricPainter {
      * <p>位移由特效给出，渐变由染色给出：前者动字形，后者动颜色，两者互不干扰。
      */
     private void glyph(String ch, int charX, int textY, float lift,
-                       int viewportLeft, int viewRight, GlyphColors colors,
+                       int viewportLeft, int viewRight, GlyphSpan[] spans,
                        float dx, float bloomLevel) {
         int charWidth = painter.textWidth(ch);
         int drawX = Math.round(charX + dx);
@@ -165,12 +168,20 @@ final class LyricPainter {
             enableScissor(left, textY, right - left);
         }
 
-        GlyphColors shown = bloom(colors, bloomLevel);
-        if (shown.isGradient()) {
-            painter.drawGlyphGradient(styled(ch), drawX, textY, lift, shown, shadow);
+        // 一律按常规字重绘制。
+        //
+        // 加粗已移除：MC 的粗体是同一字形右移一个纹素再画一遍，
+        // 在 9px 位图字形上两份轮廓只错开 1px，叠出 8px，
+        // 看起来就是同一个字重了一次。逐字绘制路径没有原版
+        // drawString 那样能让两份合成一个观感的余地。
+        GlyphSpan[] shown = bloom(spans, bloomLevel);
+        if (shown.length == 1 && shown[0].isSolid()) {
+            // 单色：走平台原有的整字绘制，省掉逐顶点写入。
+            painter.drawTextLifted(ch, drawX, textY, lift,
+                    shown[0].startColor(), shadow);
         } else {
-            painter.drawTextLifted(styled(ch), drawX, textY, lift,
-                    shown.left(), shadow);
+            // 段边界落在前沿函数的折点上，段内插值即精确。
+            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, shadow);
         }
 
         if (!full) {
@@ -185,6 +196,22 @@ final class LyricPainter {
      * 但颜色可以自由改。提亮沿 RGB 三通道向 255 插值、保留原 alpha，
      * 字形边缘仍取自图集，所以字始终清晰。
      */
+    private static GlyphSpan[] bloom(GlyphSpan[] spans, float level) {
+        if (level <= 0f || spans.length == 0) {
+            return spans;
+        }
+        float t = Math.min(1f, level);
+        GlyphSpan[] out = new GlyphSpan[spans.length];
+        for (int i = 0; i < spans.length; i++) {
+            GlyphSpan s = spans[i];
+            out[i] = new GlyphSpan(s.startX(), s.endX(),
+                    liftTowardWhite(s.startColor(), t),
+                    liftTowardWhite(s.endColor(), t));
+        }
+        return out;
+    }
+
+    /** 保留旧的整字提亮入口，供整行绘制路径使用。 */
     private static GlyphColors bloom(GlyphColors colors, float level) {
         if (level <= 0f) {
             return colors;
@@ -297,8 +324,15 @@ final class LyricPainter {
                 painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
     }
 
+    /**
+     * 整行绘制的文本准备。
+     *
+     * <p>返回原文。曾经在这里按字重拼 {@code §l}/{@code §r}，
+     * 加粗移除后不再有任何修饰；保留这个方法是因为调用点较多，
+     * 且未来若需要加回样式，这里是唯一的插入点。
+     */
     private String styled(String text) {
-        return weight == Weight.REGULAR ? text : "\u00a7l" + text + "\u00a7r";
+        return text;
     }
 
     static int withAlpha(int color, int alpha) {
