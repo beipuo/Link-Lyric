@@ -116,21 +116,6 @@ public final class FloatingLyricRenderer {
      */
 
 
-    /** 上报周期初值（毫秒）：轮询更频繁，但宿主每秒才更新一次位置。 */
-    private static final long DEFAULT_UPLINK_PERIOD_MS = 1000L;
-
-    /** 上报周期估计的合理范围，用于过滤异常观测值。 */
-    private static final long MIN_UPLINK_PERIOD_MS = 150L;
-    private static final long MAX_UPLINK_PERIOD_MS = 4000L;
-
-    /**
-     * 外推余量在上报周期之外的额外裕度。
-     *
-     * <p>留出这段裕度，才能覆盖上报自身的抖动与网络延迟，
-     * 不会在下一个上报到达前就撞到上限。
-     */
-    private static final long LEAD_MARGIN_MS = 400L;
-
 
 
     /**
@@ -312,7 +297,7 @@ public final class FloatingLyricRenderer {
         // 还在按描边几何算，只是画不出来，白算一遍。
         float stroke = style.stroke() ? style.strokePx() : 0f;
         return new LyricPainter(painter, style.weight(), style.shadow(), effects,
-                stroke, style.strokeArgb());
+                stroke, style.strokeArgb(), style.feather());
     }
 
     /** 两个矩形的交集；无重叠时返回空区域。 */
@@ -485,12 +470,6 @@ public final class FloatingLyricRenderer {
 
     /** 行切换动画状态：淡出进度、上移位移、旧句快照。 */
     private final LineTransition transition = new LineTransition();
-
-    /** 上一帧主行的已唱宽度。 */
-    private float lastSungWidth;
-
-    /** 上一帧主行的行宽，用于还原旧行的分界比例。 */
-    private int lastLineWidth;
 
     private LyricTimeline lastTimeline = LyricTimeline.empty();
 
@@ -776,7 +755,6 @@ public final class FloatingLyricRenderer {
         if (scaling) {
             painter.pose().popPose();
         }
-        lastLineWidth = primaryWidth;
         return true;
     }
 
@@ -823,8 +801,25 @@ public final class FloatingLyricRenderer {
         int screenHeight = painter.screenHeight();
         int width = painter.textWidth(text);
         // 与正常歌词共用同一份偏移，切换歌词与间奏时不会跳动。
-        int x = layoutCenterX(screenWidth) - width / 2;
-        int y = layoutCenterY(screenHeight) - LINE_HEIGHT;
+        int centerX = layoutCenterX(screenWidth);
+        int centerY = layoutCenterY(screenHeight);
+        int x = centerX - width / 2;
+        int y = centerY - LINE_HEIGHT;
+
+        // 字号缩放必须同样作用到间奏提示。
+        //
+        // 主行分支在下面才压缩放栈，而间奏走的是提前 return 的另一条路径，
+        // 因此这里必须自己 push/pop。否则用户把字号调到 200% 时，
+        // 歌词放大而「间奏」二字仍停在原尺寸——同一块区域里两种字号。
+        float scale = this.style.lineScale();
+        boolean scaling = Math.abs(scale - 1f) > 0.001f;
+        if (scaling) {
+            var pose = painter.pose();
+            pose.pushPose();
+            pose.translate(centerX, centerY);
+            pose.scale(scale, scale);
+            pose.translate(-centerX, -centerY);
+        }
 
         // 间奏提示也能被悬停命中：它同样是可见歌词的一部分，
         // 若包围盒只覆盖正常行，鼠标停在「间奏」上就拖不动。
@@ -838,6 +833,9 @@ public final class FloatingLyricRenderer {
                         Math.round(((COLOR_INTERLUDE >>> 24) & 0xFF)
                                 * this.style.opacity())),
                 style.shadow());
+        if (scaling) {
+            painter.pose().popPose();
+        }
         return true;
     }
 
@@ -872,10 +870,6 @@ public final class FloatingLyricRenderer {
                     LyricProgress.charProgress(line, visible, positionMs));
         }
         return LyricProgress.cosineLifts(starts, widths, sungWidth, fontSize);
-    }
-
-    private static float fontSizeOf(int lineWidth, int charCount) {
-        return LyricProgress.referenceSize(lineWidth, charCount);
     }
 
     /**

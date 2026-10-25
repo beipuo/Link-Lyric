@@ -64,9 +64,22 @@ public record TrackIdentity(String title, String artist, String album, long dura
         return matches(other, DEFAULT_DURATION_TOLERANCE_MS);
     }
 
-    /** 缓存键。不含专辑——同一录音在不同数据源上专辑字段经常缺失或不一致。 */
+    /**
+     * 缓存键。不含专辑——同一录音在不同数据源上专辑字段经常缺失或不一致。
+     *
+     * <p>时长必须先按 {@link #DEFAULT_DURATION_TOLERANCE_MS} 量化再入键。
+     * {@link #matches} 用的是容差比较：同一首歌在两个数据源上报 243000 与
+     * 243480 会被判定为同一录音，但若把原始毫秒直接拼进键，两者得到不同的键，
+     * 缓存永远不命中，每次换曲都要重新查询一遍歌词。
+     *
+     * <p>小写化必须指定 {@link java.util.Locale#ROOT}。默认 locale 下
+     * 土耳其语的 {@code I} 会映射成 {@code ı}，于是 "Time" 与 "TIME"
+     * 得到两个不同的键。
+     */
     public String cacheKey() {
-        return (title + '\u0000' + artist + '\u0000' + durationMs).toLowerCase();
+        long bucket = durationMs / DEFAULT_DURATION_TOLERANCE_MS;
+        return (title + '\u0000' + artist + '\u0000' + bucket)
+                .toLowerCase(java.util.Locale.ROOT);
     }
 
     private static String normalize(String value) {

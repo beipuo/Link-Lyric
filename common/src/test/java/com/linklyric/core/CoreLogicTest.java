@@ -151,6 +151,21 @@ class CoreLogicTest {
         assertEquals(a.cacheKey(), b.cacheKey());
     }
 
+    /**
+     * 时长落在容差内的两个身份必须共用一个缓存键。
+     *
+     * <p>{@code matches} 用容差比较时长，若 {@code cacheKey} 把原始毫秒直接
+     * 拼进键，同一首歌在两个数据源上报 243000 与 243480 会得到两个键，
+     * 缓存永远不命中，每次换曲都要重新查询一遍歌词。
+     */
+    @Test
+    void cacheKeyBucketsDurationWithinTolerance() {
+        TrackIdentity a = TrackIdentity.of("Song", "Artist", 243_000L);
+        TrackIdentity b = TrackIdentity.of("Song", "Artist", 243_480L);
+        assertTrue(a.matches(b), "两秒内应判定为同一录音");
+        assertEquals(a.cacheKey(), b.cacheKey(), "同一录音必须共用缓存键");
+    }
+
     // ---------------- 能力探测 ----------------
 
     @Test

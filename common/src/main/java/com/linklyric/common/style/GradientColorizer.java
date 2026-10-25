@@ -83,8 +83,27 @@ public final class GradientColorizer {
                                            float edge,
                                            int sungColor, int unsungColor,
                                            float lineWidth) {
+        return spansForChar(charLeft, charRight, edge, sungColor, unsungColor,
+                lineWidth, true);
+    }
+
+    /**
+     * 带羽化开关的版本。
+     *
+     * <p>{@code feather=false} 时传 0 给下游，走「硬边界」分支：最多两段，
+     * 切点就是前沿。这条分支本来就在 {@link #spansForCharWithFeather} 里，
+     * 但没有入口能到达它——样式里的 {@code feather} 开关一直是个死开关：
+     * 配置界面能改、能存盘，渲染侧却始终按 {@link #featherFor} 算出的
+     * 非零宽度画渐变，关掉之后画面毫无变化。
+     *
+     * @param feather 是否启用交界羽化；false 表示硬切
+     */
+    public static GlyphSpan[] spansForChar(float charLeft, float charRight,
+                                           float edge,
+                                           int sungColor, int unsungColor,
+                                           float lineWidth, boolean feather) {
         return spansForCharWithFeather(charLeft, charRight, edge, sungColor, unsungColor,
-                featherFor(lineWidth));
+                feather ? featherFor(lineWidth) : 0f);
     }
 
     /**

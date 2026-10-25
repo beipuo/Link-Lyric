@@ -63,6 +63,8 @@ final class LyricPainter {
     private final float strokeWidth;
     /** 描边颜色，含 alpha。 */
     private final int strokeArgb;
+    /** 是否启用交界羽化；false 时前沿为硬切。 */
+    private final boolean feather;
 
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow) {
         this(painter, weight, shadow, null);
@@ -75,12 +77,19 @@ final class LyricPainter {
 
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
                  LyricEffectEngine effects, float strokeWidth, int strokeArgb) {
+        this(painter, weight, shadow, effects, strokeWidth, strokeArgb, true);
+    }
+
+    LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
+                 LyricEffectEngine effects, float strokeWidth, int strokeArgb,
+                 boolean feather) {
         this.painter = painter;
         this.weight = weight;
         this.shadow = shadow;
         this.effects = effects;
         this.strokeWidth = strokeWidth;
         this.strokeArgb = strokeArgb;
+        this.feather = feather;
     }
 
     /**
@@ -152,7 +161,7 @@ final class LyricPainter {
             // 否则每个字各自归零会让前沿函数在每个字边界处跳变。
             // 转成字形局部坐标由绘制层负责，这里额外给出行锚点。
             GlyphSpan[] spans = GradientColorizer.spansForChar(
-                    charX, charRight, edge, sung, unsung, lineWidth);
+                    charX, charRight, edge, sung, unsung, lineWidth, feather);
             glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
                     spans, transform.dx, transform.bloom,
                     transform.glowRadius, transform.glowAlpha);

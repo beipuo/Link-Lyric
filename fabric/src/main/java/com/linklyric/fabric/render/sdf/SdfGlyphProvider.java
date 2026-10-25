@@ -16,9 +16,9 @@ import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 按需把原版字形烘成 SDF 并缓存进自建图集。
@@ -52,11 +52,19 @@ public final class SdfGlyphProvider {
     /** 每页边长。一屏文字通常落在一页里，因而合并为一次绘制。 */
     private static final int PAGE_SIZE = 1024;
 
-    /** 码点 -> 图集区域。 */
-    private static final Map<Integer, SdfAtlas.Slot> SLOTS = new HashMap<>();
+    /**
+     * 码点 -> 图集区域。
+     *
+     * <p>用并发容器而非 {@code HashMap}：写入发生在渲染线程（歌词换行时首次见到某个字），
+     * 而 {@link #reset()} 由资源重载触发，在 Fabric 上不保证落在渲染线程。
+     * 两者一旦交错，普通 {@code HashMap} 会在扩容期间留下环形链表或丢失条目，
+     * 表现为图集错乱、字形指向别人的格子——这类故障只在换资源包时偶发，
+     * 事后极难复现。读路径本身是热路径，{@code ConcurrentHashMap} 的无锁读也不会拖慢它。
+     */
+    private static final Map<Integer, SdfAtlas.Slot> SLOTS = new ConcurrentHashMap<>();
 
     /** 码点 -> 绘制盒 {@code [left, top, right, bottom, advance]}，设计空间。 */
-    private static final Map<Integer, float[]> BOXES = new HashMap<>();
+    private static final Map<Integer, float[]> BOXES = new ConcurrentHashMap<>();
 
     /**
      * 码点 -> 轮廓外可用的距离（设计空间）。
@@ -65,13 +73,16 @@ public final class SdfGlyphProvider {
      * CLAMP 的边界像素，衰减被截断成硬边。绘制层据此封顶，
      * 因此换留白、换字体、换展开倍数都会自动跟着变。
      */
-    private static final Map<Integer, Float> GLOW_SPACE = new HashMap<>();
+    private static final Map<Integer, Float> GLOW_SPACE = new ConcurrentHashMap<>();
 
 
 
     private static SdfAtlas atlas;
 
     private static boolean initialised;
+
+    /** 见 {@link #degrade()}：反射链路被证明不可用后置位，避免每帧重试。 */
+    private static boolean degraded;
 
     private static MethodHandle getFontSet;
     private static MethodHandle getActiveProviders;
@@ -82,17 +93,12 @@ public final class SdfGlyphProvider {
     private static Field bmpOffsetY;
     private static Field bmpWidth;
     private static Field bmpHeight;
-    private static Field bmpScale;
-    private static Field bmpAscent;
 
     /** UnihexProvider$Glyph 的字段访问器。 */
     private static Field uniContents;
-    private static Field uniLeft;
-    private static Field uniRight;
 
-    /** UnihexProvider$LineData 的 line(int) / bitWidth() 方法句柄。 */
+    /** UnihexProvider$LineData 的 line(int) 方法句柄。 */
     private static MethodHandle lineOf;
-    private static MethodHandle bitWidthOf;
 
     private SdfGlyphProvider() {
     }
@@ -101,7 +107,33 @@ public final class SdfGlyphProvider {
         if (!initialised) {
             initialise();
         }
-        return getFontSet != null && getActiveProviders != null;
+        return getFontSet != null && getActiveProviders != null && !degraded;
+    }
+
+    /**
+     * 反射链路是否已经被判定为不可用。
+     *
+     * <p>不设这个标志时，「字体集拿到了、但字形字段改名了」这种半可用状态
+     * 会被 {@link #available()} 判为可用，于是每个字、每一帧都走一遍完整烘焙：
+     * {@code glyphInfo()} 遍历全部 provider 并分配 List，{@code bakeBitmap}
+     * 取字段失败，{@code bakeUnihex} 再失败一次，最后返回 null 退回原版绘制。
+     * 一句 30 字、60fps 就是每秒 1800 次注定失败的反射调用链。
+     *
+     * <p>失败一次即整体降级：反射字段不会在运行期变好，资源包重载会走
+     * {@link #reset()}，那时再把 {@code initialised} 清掉重新探测。
+     */
+    private static void degrade() {
+        degraded = true;
+    }
+
+    /** 该字形需要的反射字段是否齐全。 */
+    private static boolean bitmapFieldsUsable() {
+        return bmpImage != null && bmpOffsetX != null && bmpOffsetY != null
+                && bmpWidth != null && bmpHeight != null;
+    }
+
+    private static boolean unihexFieldsUsable() {
+        return uniContents != null && lineOf != null;
     }
 
     private static synchronized void initialise() {
@@ -129,19 +161,13 @@ public final class SdfGlyphProvider {
             bmpOffsetY = fieldOf("net.minecraft.client.gui.font.providers.BitmapProvider$Glyph", "offsetY");
             bmpWidth = fieldOf("net.minecraft.client.gui.font.providers.BitmapProvider$Glyph", "width");
             bmpHeight = fieldOf("net.minecraft.client.gui.font.providers.BitmapProvider$Glyph", "height");
-            bmpScale = fieldOf("net.minecraft.client.gui.font.providers.BitmapProvider$Glyph", "scale");
-            bmpAscent = fieldOf("net.minecraft.client.gui.font.providers.BitmapProvider$Glyph", "ascent");
 
             uniContents = fieldOf("net.minecraft.client.gui.font.providers.UnihexProvider$Glyph", "contents");
-            uniLeft = fieldOf("net.minecraft.client.gui.font.providers.UnihexProvider$Glyph", "left");
-            uniRight = fieldOf("net.minecraft.client.gui.font.providers.UnihexProvider$Glyph", "right");
 
             Class<?> lineDataClass =
                     Class.forName("net.minecraft.client.gui.font.providers.UnihexProvider$LineData");
             lineOf = MethodHandles.publicLookup().findVirtual(lineDataClass, "line",
                     MethodType.methodType(int.class, int.class));
-            bitWidthOf = MethodHandles.publicLookup().findVirtual(lineDataClass, "bitWidth",
-                    MethodType.methodType(int.class));
         } catch (ReflectiveOperationException | RuntimeException e) {
             getFontSet = null;
             getActiveProviders = null;
@@ -205,6 +231,9 @@ public final class SdfGlyphProvider {
         SLOTS.clear();
         BOXES.clear();
         GLOW_SPACE.clear();
+        // 资源包或存档重载后，字体 provider 会被整体换掉，反射探测值得重来一次。
+        degraded = false;
+        initialised = false;
         SdfRenderType.invalidate();
         if (atlas != null) {
             atlas.close();
@@ -238,11 +267,17 @@ public final class SdfGlyphProvider {
             // 也可能字体里确实没有。都不占图集位置。
             return null;
         }
+        // 两条路都不可用时直接整体降级：缺字段是编译期就定死的事实，
+        // 不会因为这个字换成另一个字就好转，继续逐字重试纯属浪费。
+        if (!bitmapFieldsUsable() && !unihexFieldsUsable()) {
+            degrade();
+            return null;
+        }
         boolean bitmap = true;
-        Pixels pixels = bakeBitmap(info);
+        Pixels pixels = bitmapFieldsUsable() ? bakeBitmap(info) : null;
         if (pixels == null) {
             bitmap = false;
-            pixels = bakeUnihex(info);
+            pixels = unihexFieldsUsable() ? bakeUnihex(info) : null;
         }
         if (pixels == null || pixels.width() <= 0 || pixels.height() <= 0) {
             return null;

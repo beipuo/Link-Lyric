@@ -36,6 +36,41 @@ class GradientColorizerTest {
         assertFalse(c.isGradient());
     }
 
+    /**
+     * 关掉羽化后前沿必须是硬切。
+     *
+     * <p>这条分支本来就在 {@code spansForCharWithFeather} 里，但此前没有任何
+     * 调用方能到达它：样式里的 {@code feather} 开关能改、能存盘，渲染侧却
+     * 始终按算出的非零宽度画渐变。用户关掉开关后画面毫无变化。
+     */
+    @Test
+    void 关闭羽化后前沿硬切() {
+        GlyphSpan[] spans = GradientColorizer.spansForChar(
+                10f, 19f, 14f, SUNG, UNSUNG, 300f, false);
+        assertEquals(2, spans.length, "硬切只应有已唱与未唱两段");
+        assertEquals(SUNG, spans[0].startColor());
+        assertEquals(SUNG, spans[0].endColor());
+        assertEquals(UNSUNG, spans[1].startColor());
+        assertEquals(UNSUNG, spans[1].endColor());
+        assertEquals(14f, spans[0].endX(), 0.001f, "切点必须落在前沿上");
+    }
+
+    /** 开启羽化时必须存在一段两端异色的过渡带，否则等于没开。 */
+    @Test
+    void 开启羽化后存在过渡带() {
+        GlyphSpan[] spans = GradientColorizer.spansForChar(
+                10f, 19f, 14f, SUNG, UNSUNG, 300f, true);
+        assertTrue(spans.length >= 2, "羽化开启时应有过渡段");
+        boolean gradient = false;
+        for (GlyphSpan span : spans) {
+            if (span.startColor() != span.endColor()) {
+                gradient = true;
+                break;
+            }
+        }
+        assertTrue(gradient, "羽化开启时至少有一段两端异色，否则与硬切无异");
+    }
+
     /** 前沿穿过字内：必须左右异色，这样顶点插值才能画出字内渐变。 */
     @Test
     void 前沿穿过时左右异色() {

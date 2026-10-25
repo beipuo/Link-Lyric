@@ -1,6 +1,5 @@
 package com.linklyric.common.hud;
 
-import com.linklyric.common.style.LyricEasing;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricWord;
 
@@ -64,7 +63,14 @@ final class LyricProgress {
             } else if (positionMs <= word.startMs()) {
                 value = 0f;
             } else {
-                value = LyricEasing.ease(ratio);
+                // 必须与 FloatingLyricRenderer#targetWidthAt 用同一条曲线：线性。
+                //
+                // 这里曾写成 LyricEasing.ease(ratio)，而那条曲线是
+                // CubicBezier(0.25, 0, 0.2, 1)，两端导数趋零，是给「整块推上去」
+                // 的行切换设计的。染色的那个入口早已改成线性，抬升却还留着贝塞尔，
+                // 于是 LiftCurve.LINEAR 下颜色匀速推进、抬升先僵住再猛冲，
+                // 恰好违反了「字被染到多少就升起多少」这条约定。
+                value = ratio;
             }
             for (int k = 0; k < available; k++) {
                 progress[index + k] = value;

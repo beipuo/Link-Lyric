@@ -2,13 +2,17 @@ package com.linklyric.common.bridge;
 
 import com.linklyric.core.capability.CapabilitySet;
 import com.linklyric.core.lyric.LyricTimeline;
+import com.linklyric.core.protocol.Protocol;
 import com.linklyric.core.source.PlaybackSource;
 import com.linklyric.core.sync.PlayerSnapshot;
 import com.linklyric.core.sync.TrackIdentity;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -254,6 +258,32 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
         return 0;
     }
 
+    /**
+     * 有界读取响应体。
+     *
+     * <p>回环端口只绑 127.0.0.1，但**任何本机进程都能监听这个端口**，
+     * 一个畸形或有意的响应就能让 {@code readAllBytes()} 把整个游戏堆吃穿。
+     * 载荷上限在协议里已经定义（{@link Protocol#MAX_PAYLOAD_CHARS}），
+     * 但此前没有任何地方引用了它，这里才真正兑现。
+     *
+     * @return 响应文本；超过上限时返回 null，按一次失败处理
+     */
+    private static String readBounded(InputStream in) throws IOException {
+        int limit = Protocol.MAX_PAYLOAD_CHARS;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(64 * 1024);
+        byte[] buffer = new byte[16 * 1024];
+        int total = 0;
+        int read;
+        while ((read = in.read(buffer)) > 0) {
+            total += read;
+            if (total > limit) {
+                return null;
+            }
+            out.write(buffer, 0, read);
+        }
+        return out.toString(StandardCharsets.UTF_8);
+    }
+
     private void onFailure() {
         consecutiveFailures++;
         if (consecutiveFailures >= FAILURE_THRESHOLD) {
@@ -277,7 +307,7 @@ public final class BridgePlaybackSource implements PlaybackSource, com.linklyric
                 return null;
             }
             try (InputStream in = connection.getInputStream()) {
-                return new String(in.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+                return readBounded(in);
             }
         } catch (Throwable t) {
             return null;
