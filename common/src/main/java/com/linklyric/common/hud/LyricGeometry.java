@@ -27,11 +27,14 @@ public final class LyricGeometry {
     public static final int LINE_HEIGHT = 9;
 
     /**
-     * 行间距。
+     * 行间距的**默认值**。
      *
-     * <p>这是**真实的**行间空白：行高已按字形高度给足，不再有
-     * 多算出来的像素混进来，因此这里写多少，画面上就是多少。
-     * 取 2 像素，使行步长为 11，约合行高的 1.22 倍——字幕常用的区间。
+     * <p>运行时真实行距以 {@code LyricStyleConfig.lineGapPx()} 为准，
+     * 这个常量只用于「没有样式配置」的场合与测试基准。
+     * 排版、换行位移都必须读样式里的值——此处曾经是唯一来源，
+     * 于是用户把行距调大后，换行动画仍按默认步长收尾，末尾跳一像素。
+     *
+     * <p>取 2 像素，使默认行步长为 11，约合行高的 1.22 倍——字幕常用的区间。
      *
      * <p>用固定像素而非比例：字号缩放（{@code lineScale}）是对整块
      * 施加的姿态变换，块内的像素常量会跟着一起缩放，
@@ -39,7 +42,12 @@ public final class LyricGeometry {
      */
     public static final int LINE_GAP = 2;
 
-    /** 一行的纵向步长：行高加行距。 */
+    /**
+     * 默认行步长：行高加默认行距。
+     *
+     * <p>同样只是默认值。需要按用户设置计算时，请用
+     * {@code LINE_HEIGHT + style.lineGapPx()}。
+     */
     public static final int LINE_STEP = LINE_HEIGHT + LINE_GAP;
 
     /** 歌词块左右留白。 */
