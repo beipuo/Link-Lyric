@@ -207,11 +207,6 @@ public final class FloatingLyricRenderer {
         return key == null || key.isEmpty() ? "" : textResolver.resolve(key);
     }
 
-    /** 是否存在真正的下一句；否则副行取当前行的翻译。 */
-    private static boolean hasNextLine(LyricLine line, LyricLine nextLine) {
-        return nextLine != null && !nextLine.text().isEmpty();
-    }
-
     /**
      * 与当前行同时演唱的另一行。
      *

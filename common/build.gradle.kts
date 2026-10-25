@@ -319,6 +319,108 @@ val verifyPainterParity = tasks.register("verifyPainterParity") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 参数丢弃检查
+//
+// verifyPainterParity 只比方法签名，所以「签名对、但形参被整段丢掉」它抓不到。
+// 上一轮 NeoForge 那两个带特效的重载正是这种形态：签名与 Fabric 完全一致，
+// 方法体却只转调无特效版本，glow 与 stroke 两个参数从未被读取。
+//
+// 这里把「实现了却从不读取某个形参」变成构建检查。
+// 白名单只登记确有理由的：接口为兼容保留的参数、平台回调的固定签名。
+// ---------------------------------------------------------------------------
+val intentionallyUnusedParams = mapOf(
+    "LinkLyricFabric.java" to setOf("deltaTracker"),
+    "LinkLyricNeoForge.java" to setOf("event"),
+    "*" to setOf("ignoredBold"),
+)
+
+/** 解析出「方法名 -> 未被读取的形参名」。 */
+fun unusedParameters(file: File): List<String> {
+    val src = file.readText()
+    val problems = mutableListOf<String>()
+    val pattern = Regex(
+        """(?:public|private|protected)\s+(?:static\s+)?(?:final\s+)?""" +
+            """[\w.<>\[\], ]+?\s+(\w+)\s*\(([^)]*)\)\s*\{"""
+    )
+    for (m in pattern.findAll(src)) {
+        val name = m.groupValues[1]
+        val raw = m.groupValues[2].trim()
+        if (raw.isEmpty()) {
+            continue
+        }
+        val params = raw.split(",")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { it.split(Regex("""\s+""")).last().removeSuffix("[]") }
+            .filter { Regex("""^[a-zA-Z_]\w*$""").matches(it) }
+        if (params.isEmpty()) {
+            continue
+        }
+        // 取方法体：从开括号起做配平
+        var i = m.range.last
+        var depth = 0
+        var end = i
+        while (i < src.length) {
+            when (src[i]) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) {
+                        end = i
+                        break
+                    }
+                }
+            }
+            i++
+        }
+        val body = src.substring(m.range.last, end)
+        for (p in params) {
+            if (!Regex("""\b""" + Regex.escape(p) + """\b""").containsMatchIn(body)) {
+                problems += name + " 丢弃了形参 " + p
+            }
+        }
+    }
+    return problems
+}
+
+val verifyNoDroppedParams = tasks.register("verifyNoDroppedParams") {
+    group = "verification"
+    description = "校验实现方没有整段丢弃形参（签名对但参数不读，形同虚设）"
+
+    val targets = listOf(
+        File(rootDir, "fabric/src/main/java/com/linklyric/fabric/LinkLyricFabric.java"),
+        File(rootDir, "neoforge/src/main/java/com/linklyric/neoforge/LinkLyricNeoForge.java"),
+        File(rootDir, "common/src/main/java/com/linklyric/common/hud/LyricPainter.java"),
+        File(rootDir, "common/src/main/java/com/linklyric/common/hud/FloatingLyricRenderer.java"),
+    )
+
+    doLast {
+        val problems = mutableListOf<String>()
+        for (file in targets) {
+            if (!file.isFile) {
+                problems += "找不到源文件: " + file.path
+                continue
+            }
+            val allowed = intentionallyUnusedParams[file.name].orEmpty() +
+                intentionallyUnusedParams["*"].orEmpty()
+            for (issue in unusedParameters(file)) {
+                if (allowed.any { issue.endsWith(" " + it) }) {
+                    continue
+                }
+                problems += file.name + ": " + issue
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "以下形参实现了却从未读取，很可能是特效/配置被静默丢弃：\n"
+                    + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle("形参无静默丢弃：" + targets.size + " 个文件")
+    }
+}
+
 tasks.named("check") {
-    dependsOn(verifyMirroredRender, verifyLangKeys, verifyPainterParity)
+    dependsOn(verifyMirroredRender, verifyLangKeys, verifyPainterParity, verifyNoDroppedParams)
 }

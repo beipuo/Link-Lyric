@@ -28,7 +28,7 @@ public interface LyricCanvas {
      * <p>有了这个原语，逐字左边界可以用一次增量累加求出：O(n) 度量、零分配。
      *
      * <p>默认实现仍退回前缀度量，保证第三方与测试替身不必立刻跟进；
-     * 平台层覆盖后立即获得收益。
+     * 平台层覆盖后立即获得收益。两端入口均已覆盖。
      */
     default int charWidth(char c) {
         return textWidth(String.valueOf(c));
@@ -183,21 +183,6 @@ public interface LyricCanvas {
     /** 坐标变换栈；不支持缩放的平台返回恒等实现。 */
     default Pose2D pose() {
         return Pose2D.IDENTITY;
-    }
-
-    /**
-     * 带位移与缩放的绘制。
-     *
-     * <p>变换围绕文本起点，{@code dx} 向右、{@code dy} 向上为正。
-     * 默认实现把位移取整后绘制并忽略缩放。
-     */
-    default void drawTextTransformed(String text, int x, int y, float dx, float dy,
-                                     float scale, int color, boolean shadow) {
-        if (scale != 1f) {
-            drawTextScaled(text, Math.round(x + dx), y - Math.round(dy), scale, color, shadow);
-        } else {
-            drawTextLifted(text, Math.round(x + dx), y, dy, color, shadow);
-        }
     }
 
     /** 当前字体的行高，用于给裁剪区留足空间。 */
