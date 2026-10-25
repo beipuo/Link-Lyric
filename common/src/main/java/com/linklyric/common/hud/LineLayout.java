@@ -27,6 +27,20 @@ public final class LineLayout {
     }
 
     /**
+     * 一行的高度。
+     *
+     * <p>返回浮点而非取整：次行按 {@code 0.8} 缩放后是 7.2 像素，
+     * 取整成 7 会少算 0.2，逐行累加后块高偏移，块心居中就偏了；
+     * 向上取整成 8 又多算 0.8，两行歌词看起来比实际更松散。
+     * 行高只在最终落位时取整一次，中间过程保持精确。
+     */
+    public static float heightOf(int index, int current, int lineHeight, float scaleRatio) {
+        return index == current
+                ? lineHeight
+                : Math.max(1f, lineHeight * scaleRatio);
+    }
+
+    /**
      * 计算多行堆叠。
      *
      * @param centerY     块心的 y
@@ -42,33 +56,31 @@ public final class LineLayout {
         int currentIndex = Math.max(0, Math.min(lines - 1, current));
 
         // 先算每行的实际行高：非当前行按比例缩小。
-        int[] heights = new int[lines];
-        int total = 0;
+        // 全程用浮点累加，只在落位时取整一次——逐行取整会让误差累积。
+        float[] heights = new float[lines];
+        float total = 0f;
         for (int i = 0; i < lines; i++) {
-            heights[i] = i == currentIndex
-                    ? lineHeight
-                    : Math.max(1, Math.round(lineHeight * scaleRatio));
+            heights[i] = heightOf(i, currentIndex, lineHeight, scaleRatio);
             total += heights[i];
         }
         total += gap * (lines - 1);
 
-        int top = centerY - total / 2;
-        int baseline = top;
+        int blockHeight = Math.round(total);
+        int top = centerY - blockHeight / 2;
+        float baseline = top;
         for (int i = 0; i < currentIndex; i++) {
             baseline += heights[i] + gap;
         }
-        return new Block(top, total, baseline);
+        return new Block(top, blockHeight, Math.round(baseline));
     }
 
     /** 第 i 行的顶部。 */
     public static int lineTop(Block block, int index, int current,
                               int lineHeight, int gap, float scaleRatio) {
-        int y = block.top();
+        float y = block.top();
         for (int i = 0; i < index; i++) {
-            int h = i == current ? lineHeight
-                    : Math.max(1, Math.round(lineHeight * scaleRatio));
-            y += h + gap;
+            y += heightOf(i, current, lineHeight, scaleRatio) + gap;
         }
-        return y;
+        return Math.round(y);
     }
 }

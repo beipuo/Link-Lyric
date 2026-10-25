@@ -618,7 +618,7 @@ public final class FloatingLyricRenderer {
         boolean hasSecondary = !secondaryText.isEmpty();
         int drawableLines = drawableLineCount(timeline, index, concurrent);
         LineLayout.Block block = LineLayout.compute(centerTextY, drawableLines, 0,
-                LyricGeometry.LINE_HEIGHT, LyricGeometry.LINE_GAP, SUB_TEXT_FONT_SCALE);
+                LyricGeometry.LINE_HEIGHT, this.style.lineGapPx(), SUB_TEXT_FONT_SCALE);
 
         // 行切换：其余行连续上移一行补位。旧主行直接在换行瞬间消失，
         // 理由见 {@link LineTransition} 的类注释。
@@ -761,7 +761,7 @@ public final class FloatingLyricRenderer {
                 int width = painter.textWidthScaled(text, SUB_TEXT_FONT_SCALE);
                 int x = layoutLeft(this.style.align(), centerX, maxWidth, width);
                 int y = LineLayout.lineTop(block, i, 0, LyricGeometry.LINE_HEIGHT,
-                        LyricGeometry.LINE_GAP, SUB_TEXT_FONT_SCALE) + blockShift;
+                        this.style.lineGapPx(), SUB_TEXT_FONT_SCALE) + blockShift;
                 // 副行同样应用字重与阴影设置。
                 textPainter(painter).textScaled(text, x, y,
                         SUB_TEXT_FONT_SCALE, color);

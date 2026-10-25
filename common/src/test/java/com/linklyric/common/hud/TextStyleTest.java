@@ -59,7 +59,7 @@ class TextStyleTest {
     void 空枚举兜底() {
         LyricStyleConfig c = new LyricStyleConfig(
                 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 1f, 0.7f, true,
-                null, null, true, 2, null, 1f, null, 0, true);
+                null, null, true, 2, null, 1f, null, 0, true, 2);
         assertNotNull(c.weight());
         assertNotNull(c.align());
         assertNotNull(c.interlude(), "间奏样式也必须兜底");

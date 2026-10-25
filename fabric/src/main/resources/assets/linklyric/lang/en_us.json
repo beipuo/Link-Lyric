@@ -1,4 +1,6 @@
 {
+  "linklyric.config.line_gap": "Line Spacing",
+  "linklyric.config.unit_px": "px",
   "linklyric.config.shadow.soft": "Soft Shadow",
   "linklyric.config.lift_curve": "Lift Curve",
   "linklyric.config.lift_curve.linear": "Linear",

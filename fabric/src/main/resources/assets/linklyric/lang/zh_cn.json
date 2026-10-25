@@ -1,4 +1,6 @@
 {
+  "linklyric.config.line_gap": "行间距",
+  "linklyric.config.unit_px": "像素",
   "linklyric.config.shadow.soft": "柔和阴影",
   "linklyric.config.lift_curve": "上浮曲线",
   "linklyric.config.lift_curve.linear": "线性",

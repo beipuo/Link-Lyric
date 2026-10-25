@@ -39,7 +39,10 @@ public final class LyricOptions {
         /** 笔画加粗百分比。0 为不加粗。 */
         WEIGHT_PERCENT(LangKeys.OPTION_WEIGHT, LangKeys.UNIT_PERCENT,
                 LyricStyleConfig.MIN_WEIGHT_PERCENT,
-                LyricStyleConfig.MAX_WEIGHT_PERCENT, 1);
+                LyricStyleConfig.MAX_WEIGHT_PERCENT, 1),
+        /** 行间距，像素。 */
+        LINE_GAP(LangKeys.OPTION_LINE_GAP, LangKeys.UNIT_PX,
+                LyricStyleConfig.MIN_LINE_GAP, LyricStyleConfig.MAX_LINE_GAP, 1);
 
         /** 名称与单位的语言键。 */
         public final String labelKey;
@@ -76,6 +79,7 @@ public final class LyricOptions {
                 case WIDTH_RATIO -> Math.round(style.maxWidthRatio() * 100f);
                 case OPACITY -> Math.round(style.opacity() * 100f);
                 case WEIGHT_PERCENT -> style.weightPercent();
+                case LINE_GAP -> style.lineGapPx();
             };
         }
 
@@ -90,6 +94,7 @@ public final class LyricOptions {
                 case WIDTH_RATIO -> style.withMaxWidthRatio(raw / 100f);
                 case OPACITY -> style.withOpacity(raw / 100f);
                 case WEIGHT_PERCENT -> style.withWeightPercent(raw);
+                case LINE_GAP -> style.withLineGapPx(raw);
             };
         }
 

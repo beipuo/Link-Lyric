@@ -81,6 +81,12 @@ public final class LangKeys {
     /** 上浮曲线切换。 */
     public static final String SHADOW_SOFT = "linklyric.config.shadow.soft";
 
+    /** 行间距。 */
+    public static final String OPTION_LINE_GAP = "linklyric.config.line_gap";
+
+    /** 像素单位。 */
+    public static final String UNIT_PX = "linklyric.config.unit_px";
+
     /** 上浮曲线切换。 */
     public static final String LIFT_CURVE = "linklyric.config.lift_curve";
     public static final String LIFT_CURVE_LINEAR = "linklyric.config.lift_curve.linear";
