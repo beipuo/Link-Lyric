@@ -1,5 +1,6 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.style.LyricEasing;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricWord;
 
@@ -8,8 +9,11 @@ import java.util.List;
 /**
  * 逐字染色进度与上浮量的计算。
  *
- * <p>上浮与染色共用同一个进度量：字被染到多少就升起多少，染完即升满。
- * 两者不使用独立的缓动时间常数，否则颜色与位移会错位。
+ * <p>上浮量由染色进度派生：字被染到多少就升起多少，染完即升满。
+ * 两者共用同一个进度量，不引入独立的时间常数——那样颜色与位移会错位。
+ *
+ * <p>但「共用进度量」不等于「共用同一条曲线」。上浮在取用进度时
+ * 再过一道 {@link LyricEasing}，原因见 {@link #charProgress} 的注释。
  */
 final class LyricProgress {
 
@@ -63,14 +67,24 @@ final class LyricProgress {
             } else if (positionMs <= word.startMs()) {
                 value = 0f;
             } else {
-                // 必须与 FloatingLyricRenderer#targetWidthAt 用同一条曲线：线性。
+                // 上浮必须过一道贝塞尔，不能直接取线性进度。
                 //
-                // 这里曾写成 LyricEasing.ease(ratio)，而那条曲线是
-                // CubicBezier(0.25, 0, 0.2, 1)，两端导数趋零，是给「整块推上去」
-                // 的行切换设计的。染色的那个入口早已改成线性，抬升却还留着贝塞尔，
-                // 于是 LiftCurve.LINEAR 下颜色匀速推进、抬升先僵住再猛冲，
-                // 恰好违反了「字被染到多少就升起多少」这条约定。
-                value = ratio;
+                // <p>这里一度被改成 {@code value = ratio}，理由是「与染色用同一条
+                // 曲线」。那个理由只对了一半：染色（{@code targetWidthAt}）走线性，
+                // 是因为<b>前沿位置</b>必须与音频时间严格成正比——那是「唱到哪」，
+                // 属于事实，不允许被艺术加工，否则口型对不上。
+                //
+                // <p>上浮是<b>观感</b>，不是事实。字从基线抬到顶点用线性，
+                // 每一帧位移都相同，观感是匀速平移，机械且没有重量；
+                // 而 0.9px 这么小的位移，匀速反倒显得「卡」——
+                // 眼睛读到的是位置在台阶式变化，而不是「被托起来」。
+                //
+                // <p>{@code CubicBezier(0.25, 0, 0.2, 1)} 的形状是
+                // 「起步蓄力、中段抬起、尾部贴顶」，正是位移该有的手感。
+                // 它作用在<b>已经由时间决定</b>的进度上，只重新分配速度分布，
+                // 不改变起止时刻与总量，因此不会让颜色和位移错位：
+                // 两者仍在同一时刻开始、同一时刻结束。
+                value = LyricEasing.ease(ratio);
             }
             for (int k = 0; k < available; k++) {
                 progress[index + k] = value;

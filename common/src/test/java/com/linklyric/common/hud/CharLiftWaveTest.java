@@ -11,11 +11,14 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * 逐字上浮与染色同步。
+ * 逐字上浮量与进度的映射关系。
  *
- * <p>Salt 的行为是「字被染到多少就升起多少」，两者是同一个量：
- * 完全染完时正好升到顶点。因此这里不引入任何时间常数——
- * 染色进度本身已是时间的函数，再叠一层缓动会让两者错位。
+ * <p>「字被染到多少就升起多少，染完即升满」——两者共用同一个进度量。
+ * 本类只验证这条**映射**是线性成比例的，不涉及进度本身怎么算出来。
+ *
+ * <p>上游 {@code LyricProgress.charProgress} 在取进度时会过一次
+ * {@code LyricEasing} 给出位移手感，那是「进度 → 观感」的事；
+ * 这里是「进度 → 抬升量」，必须严格成正比，否则半唱的字会升到不该有的高度。
  */
 class CharLiftWaveTest {
 
