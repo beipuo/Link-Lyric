@@ -71,14 +71,26 @@ public interface LyricCanvas {
     }
 
     /**
-     * 带外发光的单字形绘制。
+     * 带外发光与描边的单字形绘制。
      *
-     * <p>光晕由 SDF 的距离场在着色器里算出，不需要额外的绘制批次。
-     * 默认实现忽略光晕、退回普通绘制，保证不支持 SDF 的平台仍可工作。
+     * <p>光晕与描边都由 SDF 的距离场在着色器里算出，不需要额外的绘制批次。
+     * 两者都作用在字形轮廓上，与颜色分段无关。
      *
-     * @param glowRadius 光晕半径，屏幕像素
-     * @param glowAlpha  光晕强度，0..1
+     * <p>默认实现忽略特效、退回普通绘制，保证不支持 SDF 的平台仍可工作。
+     *
+     * @param glowRadius  光晕半径，屏幕像素
+     * @param glowAlpha   光晕强度，0..1
+     * @param strokeWidth 描边宽度，屏幕像素；0 表示不描边
+     * @param strokeArgb  描边颜色，含 alpha
      */
+    default void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                   GlyphColors colors, boolean shadow,
+                                   float glowRadius, float glowAlpha,
+                                   float strokeWidth, int strokeArgb) {
+        drawGlyphGradient(glyph, x, y, lift, colors, shadow, glowRadius, glowAlpha);
+    }
+
+    /** 不描边的版本，保留给既有调用点。 */
     default void drawGlyphGradient(String glyph, float x, int y, float lift,
                                    GlyphColors colors, boolean shadow,
                                    float glowRadius, float glowAlpha) {
@@ -90,6 +102,13 @@ public interface LyricCanvas {
      *
      * <p>光晕作用在字形轮廓上，与颜色分段无关，因此只接受一份半径与强度。
      */
+    default void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                GlyphSpan[] spans, int originX, boolean shadow,
+                                float glowRadius, float glowAlpha,
+                                float strokeWidth, int strokeArgb) {
+        drawGlyphSpans(glyph, x, y, lift, spans, originX, shadow, glowRadius, glowAlpha);
+    }
+
     default void drawGlyphSpans(String glyph, float x, int y, float lift,
                                 GlyphSpan[] spans, int originX, boolean shadow,
                                 float glowRadius, float glowAlpha) {

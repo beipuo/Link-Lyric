@@ -42,7 +42,14 @@ public final class LyricOptions {
                 LyricStyleConfig.MAX_WEIGHT_PERCENT, 1),
         /** 行间距，像素。 */
         LINE_GAP(LangKeys.OPTION_LINE_GAP, LangKeys.UNIT_PX,
-                LyricStyleConfig.MIN_LINE_GAP, LyricStyleConfig.MAX_LINE_GAP, 1);
+                LyricStyleConfig.MIN_LINE_GAP, LyricStyleConfig.MAX_LINE_GAP, 1),
+        /** 描边宽度，像素。 */
+        STROKE_PX(LangKeys.OPTION_STROKE_PX, LangKeys.UNIT_PX,
+                LyricStyleConfig.MIN_STROKE_PX, LyricStyleConfig.MAX_STROKE_PX, 1),
+        /** 描边不透明度，百分比。 */
+        STROKE_ALPHA(LangKeys.OPTION_STROKE_ALPHA, LangKeys.UNIT_PERCENT,
+                LyricStyleConfig.MIN_STROKE_ALPHA,
+                LyricStyleConfig.MAX_STROKE_ALPHA, 1);
 
         /** 名称与单位的语言键。 */
         public final String labelKey;
@@ -80,6 +87,8 @@ public final class LyricOptions {
                 case OPACITY -> Math.round(style.opacity() * 100f);
                 case WEIGHT_PERCENT -> style.weightPercent();
                 case LINE_GAP -> style.lineGapPx();
+                case STROKE_PX -> style.strokePx();
+                case STROKE_ALPHA -> style.strokeAlphaPercent();
             };
         }
 
@@ -95,6 +104,8 @@ public final class LyricOptions {
                 case OPACITY -> style.withOpacity(raw / 100f);
                 case WEIGHT_PERCENT -> style.withWeightPercent(raw);
                 case LINE_GAP -> style.withLineGapPx(raw);
+                case STROKE_PX -> style.withStrokePx(raw);
+                case STROKE_ALPHA -> style.withStrokeAlphaPercent(raw);
             };
         }
 

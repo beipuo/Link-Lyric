@@ -77,5 +77,10 @@
   "linklyric.style.island": "Dynamic Island",
   "linklyric.style.sidebar": "Sidebar",
   "linklyric.style.hotbar": "Hotbar",
-  "linklyric.style.floating": "Floating"
+  "linklyric.style.floating": "Floating",
+  "linklyric.config.stroke": "Outline",
+  "linklyric.config.stroke_px": "Outline Width",
+  "linklyric.config.stroke_alpha": "Outline Opacity",
+  "linklyric.config.stroke_color": "Outline Color",
+  "linklyric.config.group.stroke": "Outline"
 }

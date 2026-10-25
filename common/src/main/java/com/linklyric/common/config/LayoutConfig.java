@@ -44,6 +44,10 @@ public final class LayoutConfig {
     private static final String KEY_WEIGHT_PERCENT = "weightPercent";
     private static final String KEY_SOFT_SHADOW = "softShadow";
     private static final String KEY_LINE_GAP = "lineGap";
+    private static final String KEY_STROKE = "stroke";
+    private static final String KEY_STROKE_PX = "strokePx";
+    private static final String KEY_STROKE_COLOR = "strokeColor";
+    private static final String KEY_STROKE_ALPHA = "strokeAlpha";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -112,7 +116,12 @@ public final class LayoutConfig {
                 parseInt(props.getProperty(KEY_WEIGHT_PERCENT), d.weightPercent()),
                 !"false".equalsIgnoreCase(
                         props.getProperty(KEY_SOFT_SHADOW, "true").trim()),
-                parseInt(props.getProperty(KEY_LINE_GAP), d.lineGapPx()));
+                parseInt(props.getProperty(KEY_LINE_GAP), d.lineGapPx()),
+                !"false".equalsIgnoreCase(
+                        props.getProperty(KEY_STROKE, "false").trim()),
+                parseInt(props.getProperty(KEY_STROKE_PX), d.strokePx()),
+                parseColor(props.getProperty(KEY_STROKE_COLOR), d.strokeColor()),
+                parseInt(props.getProperty(KEY_STROKE_ALPHA), d.strokeAlphaPercent()));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -246,6 +255,10 @@ public final class LayoutConfig {
         props.setProperty(KEY_WEIGHT_PERCENT, Integer.toString(style.weightPercent()));
         props.setProperty(KEY_SOFT_SHADOW, Boolean.toString(style.softShadow()));
         props.setProperty(KEY_LINE_GAP, Integer.toString(style.lineGapPx()));
+        props.setProperty(KEY_STROKE, Boolean.toString(style.stroke()));
+        props.setProperty(KEY_STROKE_PX, Integer.toString(style.strokePx()));
+        props.setProperty(KEY_STROKE_COLOR, hex(style.strokeColor()));
+        props.setProperty(KEY_STROKE_ALPHA, Integer.toString(style.strokeAlphaPercent()));
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();

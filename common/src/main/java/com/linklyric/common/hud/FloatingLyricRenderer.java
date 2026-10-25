@@ -307,7 +307,12 @@ public final class FloatingLyricRenderer {
 
     /** 按当前样式构造绘制器；特效引擎跨帧复用，避免每帧重建。 */
     private LyricPainter textPainter(Painter painter) {
-        return new LyricPainter(painter, style.weight(), style.shadow(), effects);
+        // 描边关闭时传 0 宽度：让绘制层走无描边分支，
+        // 而不是传一个「颜色透明但宽度非零」的组合——那会让字形
+        // 还在按描边几何算，只是画不出来，白算一遍。
+        float stroke = style.stroke() ? style.strokePx() : 0f;
+        return new LyricPainter(painter, style.weight(), style.shadow(), effects,
+                stroke, style.strokeArgb());
     }
 
     /** 两个矩形的交集；无重叠时返回空区域。 */

@@ -47,6 +47,10 @@ final class LyricPainter {
     private final Weight weight;
     private final boolean shadow;
     private final LyricEffectEngine effects;
+    /** 描边宽度，像素；0 表示不描边。 */
+    private final float strokeWidth;
+    /** 描边颜色，含 alpha。 */
+    private final int strokeArgb;
 
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow) {
         this(painter, weight, shadow, null);
@@ -54,10 +58,17 @@ final class LyricPainter {
 
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
                  LyricEffectEngine effects) {
+        this(painter, weight, shadow, effects, 0f, 0);
+    }
+
+    LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
+                 LyricEffectEngine effects, float strokeWidth, int strokeArgb) {
         this.painter = painter;
         this.weight = weight;
         this.shadow = shadow;
         this.effects = effects;
+        this.strokeWidth = strokeWidth;
+        this.strokeArgb = strokeArgb;
     }
 
     /**
@@ -190,7 +201,7 @@ final class LyricPainter {
             // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
             painter.drawGlyphGradient(ch, drawX, textY, lift,
                     new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow,
-                    glowRadius, glowAlpha);
+                    glowRadius, glowAlpha, strokeWidth, strokeArgb);
         } else {
             // 段边界落在前沿函数的折点上，段内插值即精确。
             //
@@ -199,7 +210,7 @@ final class LyricPainter {
             // 字形局部坐标。若改传 textX（行首），每个字会多偏移
             // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
             painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX),
-                    shadow, glowRadius, glowAlpha);
+                    shadow, glowRadius, glowAlpha, strokeWidth, strokeArgb);
         }
 
         if (!full) {

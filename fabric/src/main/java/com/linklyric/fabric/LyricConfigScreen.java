@@ -48,6 +48,36 @@ final class LyricConfigScreen extends OptionsSubScreen {
     private final FloatingLyricRenderer renderer;
     private final LyricDragController controller;
 
+    /**
+     * 描边预设色。
+     *
+     * <p>描边不需要整块调色板：它的取值空间很小，现实里几乎只用
+     * 黑、白与几个深色。给一排预设比塞进调色页更省事，也不用
+     * 再为它开一个二级界面。要精确颜色仍可去调色页——那里管的是
+     * 歌词本体。
+     */
+    private record StrokePreset(String name, int argb) {
+    }
+
+    private static final StrokePreset[] STROKE_PRESETS = {
+            new StrokePreset("黑", 0xFF000000),
+            new StrokePreset("白", 0xFFFFFFFF),
+            new StrokePreset("深灰", 0xFF404040),
+            new StrokePreset("深蓝", 0xFF102040),
+            new StrokePreset("深棕", 0xFF3A2410),
+    };
+
+    /** 当前颜色对应哪个预设；不在预设里时退回第一个。 */
+    private int strokePresetIndex() {
+        int current = controller.style().strokeColor();
+        for (int i = 0; i < STROKE_PRESETS.length; i++) {
+            if (STROKE_PRESETS[i].argb == current) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
     /** 预览占位：只为占住一行，本身不画任何东西。 */
     private AbstractWidget previewAnchor;
 
@@ -174,6 +204,43 @@ final class LyricConfigScreen extends OptionsSubScreen {
                         .create(0, 0, 150, 20,
                                 Component.translatable(LangKeys.LIFT_CURVE),
                                 (b, v) -> apply(s -> s.withLiftCurve(v))));
+
+        // ——— 描边 ———
+        //
+        // 单开一组，因为描边是「开关 + 两个连续量」的组合：
+        // 关掉时那两个滑条仍然有意义（下次打开就是这套值），
+        // 所以不联动禁用，避免掉进「关掉了就调不了」的死角。
+        section("描边");
+
+        single(CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.SHADOW_ON),
+                        Component.translatable(LangKeys.SHADOW_OFF))
+                .withInitialValue(controller.style().stroke())
+                .create(0, 0, 310, 20,
+                        Component.translatable(LangKeys.STROKE),
+                        (b, v) -> apply(s -> s.withStroke(v))));
+
+        single(integer(LangKeys.OPTION_STROKE_PX,
+                LyricStyleConfig.MIN_STROKE_PX, LyricStyleConfig.MAX_STROKE_PX,
+                LyricStyleConfig::strokePx,
+                LyricStyleConfig::withStrokePx,
+                "描边宽度。9px 的字上 1 像素刚好能压住轮廓，再宽笔画会粘连"));
+
+        single(integer(LangKeys.OPTION_STROKE_ALPHA,
+                LyricStyleConfig.MIN_STROKE_ALPHA, LyricStyleConfig.MAX_STROKE_ALPHA,
+                LyricStyleConfig::strokeAlphaPercent,
+                LyricStyleConfig::withStrokeAlphaPercent,
+                "描边的不透明度。和颜色分开调，改浓度不会把选好的颜色冲掉"));
+
+        single(CycleButton.builder(
+                        (Integer v) -> Component.translatable(LangKeys.STROKE_COLOR)
+                                .append(Component.literal(": " + STROKE_PRESETS[v].name)))
+                .withValues(java.util.stream.IntStream.range(0, STROKE_PRESETS.length)
+                        .boxed().toList())
+                .withInitialValue(strokePresetIndex())
+                .create(0, 0, 310, 20,
+                        Component.translatable(LangKeys.STROKE_COLOR),
+                        (b, v) -> apply(s -> s.withStrokeColor(STROKE_PRESETS[v].argb))));
 
         single(CycleButton.builder(
                         (LyricStyleConfig.InterludeStyle i) ->

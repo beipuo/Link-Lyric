@@ -78,10 +78,26 @@ public final class GradientPainter {
     public static boolean draw(GuiGraphics graphics, Font font, String glyph,
                                 float x, float y, GlyphColors colors,
                                 boolean shadow, float glowRadius, float glowAlpha) {
+        return draw(graphics, font, glyph, x, y, colors, shadow,
+                glowRadius, glowAlpha, 0f, 0);
+    }
+
+    /**
+     * 带外发光与描边的单字形绘制。
+     *
+     * <p>描边作用在轮廓外一圈，与颜色无关，因此只接受一份宽度与颜色。
+     * 与发光互斥：同一批只能有一份 uniform 生效，两者都开时优先发光——
+     * 发光是强调瞬间的短暂状态，描边是常驻样式，短暂效果不该被吞掉。
+     */
+    public static boolean draw(GuiGraphics graphics, Font font, String glyph,
+                                float x, float y, GlyphColors colors,
+                                boolean shadow, float glowRadius, float glowAlpha,
+                                float strokeWidth, int strokeArgb) {
         if (glyph.isEmpty()) {
             return true;
         }
         SdfRenderType.setGlow(glowRadius, glowAlpha);
+        applyStroke(strokeWidth, strokeArgb);
         int cp = glyph.codePointAt(0);
 
         // 优先走 SDF：任意缩放都锐利，且顶点色渐变照旧生效。
@@ -180,10 +196,21 @@ public final class GradientPainter {
                                      float x, float y, GlyphSpan[] spans,
                                      float originX, boolean shadow,
                                      float glowRadius, float glowAlpha) {
+        return drawSpans(graphics, font, glyph, x, y, spans, originX, shadow,
+                glowRadius, glowAlpha, 0f, 0);
+    }
+
+    /** 带外发光与描边的按段绘制。 */
+    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+                                     float x, float y, GlyphSpan[] spans,
+                                     float originX, boolean shadow,
+                                     float glowRadius, float glowAlpha,
+                                     float strokeWidth, int strokeArgb) {
         if (glyph.isEmpty() || spans == null || spans.length == 0) {
             return true;
         }
         SdfRenderType.setGlow(glowRadius, glowAlpha);
+        applyStroke(strokeWidth, strokeArgb);
         int cp = glyph.codePointAt(0);
 
         // 优先走 SDF。段切分逻辑与原版路径完全一致——
@@ -263,6 +290,21 @@ public final class GradientPainter {
             return 0f;
         }
         return GlyphLookup.advance(font, glyph.codePointAt(0));
+    }
+
+    /**
+     * 设置当前描边。
+     *
+     * <p>与发光**可以同时开启**：它们是着色器里两个独立的 uniform，
+     * 作用在同一套距离场上但颜色不同。让描边在发光时无提示地让位，
+     * 会让用户的强调特效看起来"被描边吃掉"，而且没有任何反馈。
+     */
+    private static void applyStroke(float width, int argb) {
+        if (width <= 0f) {
+            SdfRenderType.clearStroke();
+        } else {
+            SdfRenderType.setStroke(width, argb);
+        }
     }
 
     /** 主色转阴影色：RGB 乘 0.25，alpha 保持不变。 */

@@ -27,6 +27,10 @@ import com.linklyric.common.i18n.LangKeys;
  * @param weightPercent   笔画加粗，0..100，0 为不加粗
  * @param softShadow      阴影是否柔和。关闭则退回原版的硬边投影
  * @param lineGapPx       行间距，像素。指两行字形之间的真实空白
+ * @param stroke          是否给字形描边
+ * @param strokePx        描边宽度，像素
+ * @param strokeColor     描边颜色，ARGB
+ * @param strokeAlphaPercent 描边不透明度百分比，0..100
  */
 public record LyricStyleConfig(
         int sungColor,
@@ -46,7 +50,11 @@ public record LyricStyleConfig(
         LiftCurve liftCurve,
         int weightPercent,
         boolean softShadow,
-        int lineGapPx) {
+        int lineGapPx,
+        boolean stroke,
+        int strokePx,
+        int strokeColor,
+        int strokeAlphaPercent) {
 
     /** 间奏提示的显示方式。 */
     public enum InterludeStyle {
@@ -106,6 +114,28 @@ public record LyricStyleConfig(
 
     /** 默认行间距，像素。取 2 使行步长为 11，约合字号的 1.22 倍。 */
     public static final int DEFAULT_LINE_GAP = 2;
+
+    /** 描边宽度范围，像素。上限 4：9px 的字上再宽就糊成一团。 */
+    public static final int MIN_STROKE_PX = 1;
+    public static final int MAX_STROKE_PX = 4;
+
+    /** 描边不透明度范围，百分比。 */
+    public static final int MIN_STROKE_ALPHA = 0;
+    public static final int MAX_STROKE_ALPHA = 100;
+
+    /** 默认描边宽度。1 像素在小字号上刚好能看清轮廓。 */
+    public static final int DEFAULT_STROKE_PX = 1;
+
+    /**
+     * 默认描边颜色：不透明黑。
+     *
+     * <p>黑色描边在浅色底和彩色歌词上都能压住轮廓，
+     * 是最不容易出错的选择。
+     */
+    public static final int DEFAULT_STROKE_COLOR = 0xFF000000;
+
+    /** 默认描边不透明度。全不透明，描边才立得住。 */
+    public static final int DEFAULT_STROKE_ALPHA = 70;
 
     /**
      * 字重。
@@ -176,7 +206,11 @@ public record LyricStyleConfig(
             LiftCurve.COSINE,
             0,
             true,
-            DEFAULT_LINE_GAP);
+            DEFAULT_LINE_GAP,
+            false,
+            DEFAULT_STROKE_PX,
+            DEFAULT_STROKE_COLOR,
+            DEFAULT_STROKE_ALPHA);
 
     public LyricStyleConfig {
         // 构造时就夹到合法区间：配置文件和界面都可能给出越界值，
@@ -219,91 +253,139 @@ public record LyricStyleConfig(
     public LyricStyleConfig withSungColor(int color) {
         return new LyricStyleConfig(color, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withUnsungColor(int color) {
         return new LyricStyleConfig(sungColor, color, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withTranslationColor(int color) {
         return new LyricStyleConfig(sungColor, unsungColor, color,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withOffsetMs(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 value, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withLineTransitionMs(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, value, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withLineScale(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, value, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withMaxWidthRatio(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, value, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withFeather(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, value,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withWeight(Weight value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                value, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                value, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withAlign(Align value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, value, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, value, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withShadow(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, value, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, value, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withLineCount(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, value, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, value, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withInterlude(InterludeStyle value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, value, opacity, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, value, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withLiftCurve(LiftCurve value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, value, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, value, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withSoftShadow(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, value, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, value, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
+    }
+
+    /** 开关描边。 */
+    public LyricStyleConfig withStroke(boolean value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, value, strokePx, strokeColor,
+                strokeAlphaPercent);
+    }
+
+    /** 描边宽度，像素。 */
+    public LyricStyleConfig withStrokePx(int value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, stroke,
+                Math.max(MIN_STROKE_PX, Math.min(MAX_STROKE_PX, value)),
+                strokeColor, strokeAlphaPercent);
+    }
+
+    /** 描边颜色，ARGB。 */
+    public LyricStyleConfig withStrokeColor(int value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, stroke, strokePx, value,
+                strokeAlphaPercent);
+    }
+
+    /** 描边不透明度，百分比。 */
+    public LyricStyleConfig withStrokeAlphaPercent(int value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
+                Math.max(MIN_STROKE_ALPHA, Math.min(MAX_STROKE_ALPHA, value)));
+    }
+
+    /**
+     * 描边最终用于绘制的 ARGB：把百分比乘进 alpha。
+     *
+     * <p>颜色与不透明度分开存，是为了让调色板与滑条各自独立——
+     * 改透明度不该把用户选的颜色冲掉。
+     */
+    public int strokeArgb() {
+        int a = Math.round(((strokeColor >>> 24) & 0xFF) * (strokeAlphaPercent / 100f));
+        return (a << 24) | (strokeColor & 0x00FFFFFF);
     }
 
     public LyricStyleConfig withLineGapPx(int value) {
@@ -311,18 +393,20 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow,
-                Math.max(MIN_LINE_GAP, Math.min(MAX_LINE_GAP, value)));
+                Math.max(MIN_LINE_GAP, Math.min(MAX_LINE_GAP, value)),
+                stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withWeightPercent(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, value, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, value,
+                softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 
     public LyricStyleConfig withOpacity(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, value, liftCurve, weightPercent, softShadow, lineGapPx);
+                weight, align, shadow, lineCount, interlude, value, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent);
     }
 }

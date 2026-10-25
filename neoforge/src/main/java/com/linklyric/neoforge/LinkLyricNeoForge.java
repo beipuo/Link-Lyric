@@ -234,6 +234,22 @@ public final class LinkLyricNeoForge {
         }
 
         @Override
+        public void drawGlyphSpans(String glyph, float x, int y, float lift,
+                                    GlyphSpan[] spans, int originX, boolean shadow,
+                                    float glowRadius, float glowAlpha,
+                                    float strokeWidth, int strokeArgb) {
+            drawGlyphSpans(glyph, x, y, lift, spans, originX, shadow);
+        }
+
+        @Override
+        public void drawGlyphGradient(String glyph, float x, int y, float lift,
+                                       GlyphColors colors, boolean shadow,
+                                       float glowRadius, float glowAlpha,
+                                       float strokeWidth, int strokeArgb) {
+            drawGlyphGradient(glyph, x, y, lift, colors, shadow);
+        }
+
+        @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
                                        GlyphColors colors, boolean shadow) {
             syncSdfStyle();

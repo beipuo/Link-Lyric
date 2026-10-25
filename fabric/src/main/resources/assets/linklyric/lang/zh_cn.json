@@ -77,5 +77,10 @@
   "linklyric.style.island": "灵动岛",
   "linklyric.style.sidebar": "侧边栏",
   "linklyric.style.hotbar": "物品栏",
-  "linklyric.style.floating": "悬浮歌词"
+  "linklyric.style.floating": "悬浮歌词",
+  "linklyric.config.stroke": "描边",
+  "linklyric.config.stroke_px": "描边宽度",
+  "linklyric.config.stroke_alpha": "描边浓度",
+  "linklyric.config.stroke_color": "描边颜色",
+  "linklyric.config.group.stroke": "描边"
 }

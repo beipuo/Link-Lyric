@@ -87,6 +87,21 @@ public final class LangKeys {
     /** 像素单位。 */
     public static final String UNIT_PX = "linklyric.config.unit_px";
 
+    /** 描边开关。 */
+    public static final String STROKE = "linklyric.config.stroke";
+
+    /** 描边宽度。 */
+    public static final String OPTION_STROKE_PX = "linklyric.config.stroke_px";
+
+    /** 描边不透明度。 */
+    public static final String OPTION_STROKE_ALPHA = "linklyric.config.stroke_alpha";
+
+    /** 描边颜色。 */
+    public static final String STROKE_COLOR = "linklyric.config.stroke_color";
+
+    /** 描边分组标题。 */
+    public static final String GROUP_STROKE = "linklyric.config.group.stroke";
+
     /** 上浮曲线切换。 */
     public static final String LIFT_CURVE = "linklyric.config.lift_curve";
     public static final String LIFT_CURVE_LINEAR = "linklyric.config.lift_curve.linear";

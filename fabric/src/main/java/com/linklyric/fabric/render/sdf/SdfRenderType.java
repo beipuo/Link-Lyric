@@ -51,9 +51,58 @@ public final class SdfRenderType {
     /**
      * 缓存键：图集页 + 是否正文层。
      *
-     * @param body  true 为正文，false 为阴影
+     * @param body   true 为正文，false 为阴影
+     * @param glow   这批是否带外发光
+     * @param stroke 这批是否带描边
+     *
+     * <p>两位必须**分开**：发光与描边可以同时开启，用户的强调特效
+     * 不该因为开了描边就消失。早先合并成一位时，开发光就会把描边位
+     * 置成 false，着色器据此把发光也一并关掉——功能静默失效，
+     * 既不报错也不容易察觉。
      */
-    private record Key(SdfAtlas.Page page, boolean body, boolean glow) {
+    private record Key(SdfAtlas.Page page, boolean body, boolean glow, boolean stroke) {
+    }
+
+    /**
+     * 当前描边宽度与颜色。
+     *
+     * <p>和发光一样是每批 setup 时读取的全局状态。**必须参与分批**：
+     * 若描边与不描边的顶点落进同一批，那一批只会有一次 setup，
+     * 要么全都描边、要么全都不描边，取决于最后的赋值顺序。
+     */
+    private static volatile float strokeWidth;
+    private static volatile float strokeRed;
+    private static volatile float strokeGreen;
+    private static volatile float strokeBlue;
+    private static volatile float strokeAlpha;
+
+    /**
+     * 设置当前描边。
+     *
+     * @param width 宽度，屏幕像素；0 表示不描边
+     * @param argb  颜色，含 alpha
+     */
+    public static void setStroke(float width, int argb) {
+        strokeWidth = Math.max(0f, width);
+        strokeAlpha = ((argb >>> 24) & 0xFF) / 255f;
+        strokeRed = ((argb >>> 16) & 0xFF) / 255f;
+        strokeGreen = ((argb >>> 8) & 0xFF) / 255f;
+        strokeBlue = (argb & 0xFF) / 255f;
+    }
+
+    /** 当前是否在发光；描边据此让位。 */
+    public static boolean glowing() {
+        return glowRadius > 0f && glowAlpha > 0f;
+    }
+
+    /** 关闭描边。 */
+    public static void clearStroke() {
+        setStroke(0f, 0);
+    }
+
+    /** 当前是否有描边，供分批决策。 */
+    private static boolean strokeEnabled() {
+        return strokeWidth > 0f && strokeAlpha > 0f;
     }
 
     private static final Map<Key, RenderType> CACHE = new HashMap<>();
@@ -185,19 +234,26 @@ public final class SdfRenderType {
 
     /** 取正文层的 RenderType。 */
     public static RenderType body(SdfAtlas.Page page) {
-        boolean glow = glowRadius > 0f && glowAlpha > 0f;
-        return CACHE.computeIfAbsent(new Key(page, true, glow),
-                k -> create(k.page(), true, k.glow()));
+        return CACHE.computeIfAbsent(
+                new Key(page, true, glowing(), strokeEnabled()),
+                k -> create(k.page(), true, k.glow(), k.stroke()));
     }
 
-    /** 取阴影层的 RenderType。 */
+    /**
+     * 取阴影层的 RenderType。
+     *
+     * <p>阴影层不描边：阴影本身就是一圈糊掉的暗色轮廓，
+     * 再给它描边会变成两圈套在一起，边界彻底糊掉。
+     * 因此这里的 Key 恒为 {@code glow=false}，与描边状态无关。
+     */
     public static RenderType shadow(SdfAtlas.Page page) {
-        boolean glow = glowRadius > 0f && glowAlpha > 0f;
-        return CACHE.computeIfAbsent(new Key(page, false, glow),
-                k -> create(k.page(), false, k.glow()));
+        // 阴影层的发光与描边两位恒为 false，与当前状态无关。
+        return CACHE.computeIfAbsent(new Key(page, false, false, false),
+                k -> create(k.page(), false, false, false));
     }
 
-    private static RenderType create(SdfAtlas.Page page, boolean body, boolean glowEnabled) {
+    private static RenderType create(SdfAtlas.Page page, boolean body,
+                                     boolean glowEnabled, boolean strokeEnabled) {
         Supplier<ShaderInstance> supplier = () -> shader;
         // 顶点格式含 LIGHTMAP 属性，就必须配 setLightmapState：
         // 状态不全的 RenderType 在 prepare 阶段拿不到完整绑定，
@@ -229,6 +285,15 @@ public final class SdfRenderType {
                         // 留白距离在设计空间，着色器里的 pixelsOut 也是同一空间
                         // （坐标系来自纹理 UV 求导），因此直接传设计空间值。
                         instance.safeGetUniform("GlowLimit").set(glowLimit);
+                        // 描边只给正文层，理由同发光：阴影层不描边。
+                        boolean strokeOn = body && strokeEnabled;
+                        instance.safeGetUniform("StrokeWidth")
+                                .set(strokeOn ? strokeWidth : 0f);
+                        instance.safeGetUniform("StrokeColor").set(
+                                strokeOn ? strokeRed : 0f,
+                                strokeOn ? strokeGreen : 0f,
+                                strokeOn ? strokeBlue : 0f,
+                                strokeOn ? strokeAlpha : 0f);
                     }
                 })
                 .setTextureState(new BoundTextureState(page))
@@ -238,7 +303,8 @@ public final class SdfRenderType {
                 .createCompositeState(false);
         return RenderType.create(
                 "linklyric_sdf_text_" + (body ? "body" : "shadow")
-                        + (glowEnabled ? "_glow" : ""),
+                        + (glowEnabled ? "_glow" : "")
+                        + (strokeEnabled ? "_stroke" : ""),
                 DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                 VertexFormat.Mode.QUADS,
                 256,
