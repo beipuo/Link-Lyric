@@ -17,8 +17,8 @@ final class LyricProgress {
     /** 抬升幅度，以字号比例计。 */
     static final float LIFT_FONT_RATIO = 0.10f;
 
-    /** 逐字绘制的最多字数，超过则退回整段绘制。 */
-    static final int MAX_LIFT_CHARS = 24;
+    /** 逐字绘制的最多字数。超出仍是整段绘制，因为逐字成本随字数线性上升。 */
+    static final int MAX_LIFT_CHARS = 128;
 
     private LyricProgress() {
     }
@@ -75,7 +75,12 @@ final class LyricProgress {
      * @return null 表示不值得逐字绘制，调用方应退回整段绘制
      */
     static float[] lifts(int charCount, float fontSizePx, float[] charProgress) {
-        if (charCount <= 1 || charCount > MAX_LIFT_CHARS || fontSizePx <= 0f) {
+        if (charCount <= 1) {
+            return null;
+        }
+        // 上限只用于限制逐字绘制的开销；这里还要承载强调动画，
+        // 因此放宽到覆盖常见整行。绘制本身已按可见区间提前跳过。
+        if (charCount > MAX_LIFT_CHARS || fontSizePx <= 0f) {
             return null;
         }
         int n = Math.min(charCount, charProgress.length);

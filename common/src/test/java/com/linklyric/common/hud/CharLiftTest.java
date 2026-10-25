@@ -134,11 +134,12 @@ class CharLiftTest {
                 "第一个 i 应在第一个 W（宽 14）之后，实际 x=" + xs.get("i"));
     }
 
-    /** 超长行应退回整段绘制，避免几十次绘制调用。 */
+    /** 超过字数上限的行应退回整段绘制，避免上百次绘制调用。 */
     @Test
     void 超长行退回整段绘制() {
-        String text = "一".repeat(40);
-        LyricTimeline timeline = new LyricTimeline(List.of(wordsLine(text, 0, 40_000)));
+        String text = "一".repeat(LyricProgress.MAX_LIFT_CHARS + 8);
+        LyricTimeline timeline = new LyricTimeline(
+                List.of(wordsLine(text, 0, 40_000L)));
 
         RecordingPainter painter = new RecordingPainter();
         FloatingLyricRenderer renderer =

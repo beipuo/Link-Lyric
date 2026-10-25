@@ -3,7 +3,14 @@ package com.linklyric.common.hud;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GradientColorizer;
 import com.linklyric.common.style.LyricStyleConfig.Weight;
+import com.linklyric.common.hud.effect.EmphasisGroup;
+import com.linklyric.common.hud.effect.EmphasisLayout;
+import com.linklyric.common.hud.effect.LyricEffectEngine;
+import com.linklyric.common.hud.effect.UnitTransform;
 import com.linklyric.core.lyric.LyricLine;
+import com.linklyric.core.lyric.LyricWord;
+
+import java.util.List;
 
 /**
  * 歌词文本的绘制。
@@ -25,14 +32,31 @@ final class LyricPainter {
     /** 未唱文字的透明度。 */
     private static final float UNSUNG_ALPHA = 0.38f;
 
+    /**
+     * 强调上浮幅度，相对字号。
+     *
+     * <p>用于估算动画需要的垂直空间；实际幅度由特效按组参数缩放。
+     */
+    private static final float EMPHASIS_LIFT_EM = 0.03f;
+
+    /** 动画强度下限：空间再紧也保留一点动感。 */
+    private static final float MIN_STRENGTH = 0.2f;
+
     private final FloatingLyricRenderer.Painter painter;
     private final Weight weight;
     private final boolean shadow;
+    private final LyricEffectEngine effects;
 
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow) {
+        this(painter, weight, shadow, null);
+    }
+
+    LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
+                 LyricEffectEngine effects) {
         this.painter = painter;
         this.weight = weight;
         this.shadow = shadow;
+        this.effects = effects;
     }
 
     /**
@@ -56,7 +80,20 @@ final class LyricPainter {
             return;
         }
 
+        List<LyricWord> words = line.words();
+        EmphasisGroup[] groups = emphasisGroups(words);
+        int lineWidth = painter.textWidth(visible);
+
+        // 每帧只算一次全局参数；强度按可用行高收缩，避免抬升把字挤出裁剪区。
+        if (effects != null) {
+            effects.beginFrame(lineWidth, sungWidth, textSizePx(), positionMs,
+                    motionStrength(textY));
+        }
+
+        int[] charWord = mapCharsToWords(words, visible.length());
         int cursor = 0;
+        int wordCursor = 0;
+        int currentWord = -1;
         for (int i = 0; i < visible.length(); i++) {
             String ch = visible.substring(i, i + 1);
             int charX = textX + cursor;
@@ -64,13 +101,31 @@ final class LyricPainter {
             cursor += charWidth;
             int charRight = charX + charWidth;
 
+            int word = charWord[i];
+            if (word != currentWord) {
+                currentWord = word;
+                wordCursor = 0;
+            }
+
+            UnitTransform transform = UnitTransform.IDENTITY;
+            if (effects != null && word >= 0) {
+                LyricWord source = words.get(word);
+                EmphasisGroup group = groups[word];
+                transform = effects.prepare(
+                        i, 1, charX - textX, charRight - textX,
+                        EmphasisLayout.isCjk(ch), source.startMs(), source.endMs(),
+                        group, wordCursor);
+            }
+            wordCursor++;
+
             if (charRight <= viewportLeft || charX >= viewRight) {
                 continue;
             }
 
             GlyphColors colors = GradientColorizer.forChar(
                     charX, charRight, edge, sung, unsung);
-            glyph(ch, charX, textY, lifts[i], viewportLeft, viewRight, colors);
+            glyph(ch, charX, textY, lifts[i] + transform.dy, viewportLeft, viewRight,
+                    colors, transform.dx, transform.bloom);
         }
     }
 
@@ -89,31 +144,118 @@ final class LyricPainter {
         }
     }
 
-    /** 绘制单个字，左右两端可不同色。 */
+    /**
+     * 绘制单个字，左右两端可不同色，可带位移与辉光。
+     *
+     * <p>位移由特效给出，渐变由染色给出：前者动字形，后者动颜色，两者互不干扰。
+     */
     private void glyph(String ch, int charX, int textY, float lift,
-                       int viewportLeft, int viewRight, GlyphColors colors) {
+                       int viewportLeft, int viewRight, GlyphColors colors,
+                       float dx, float bloomLevel) {
         int charWidth = painter.textWidth(ch);
-        int left = Math.max(charX, viewportLeft);
-        int right = Math.min(charX + charWidth, viewRight);
+        int drawX = Math.round(charX + dx);
+        int left = Math.max(drawX, viewportLeft);
+        int right = Math.min(drawX + charWidth, viewRight);
         if (right - left <= 0) {
             return;
         }
 
-        boolean full = left <= charX && right >= charX + charWidth;
+        boolean full = left <= drawX && right >= drawX + charWidth;
         if (!full) {
             enableScissor(left, textY, right - left);
         }
 
-        if (colors.isGradient()) {
-            painter.drawGlyphGradient(styled(ch), charX, textY, lift, colors, shadow);
+        GlyphColors shown = bloom(colors, bloomLevel);
+        if (shown.isGradient()) {
+            painter.drawGlyphGradient(styled(ch), drawX, textY, lift, shown, shadow);
         } else {
-            painter.drawTextLifted(styled(ch), charX, textY, lift,
-                    colors.left(), shadow);
+            painter.drawTextLifted(styled(ch), drawX, textY, lift,
+                    shown.left(), shadow);
         }
 
         if (!full) {
             painter.disableScissor();
         }
+    }
+
+    /**
+     * 把颜色朝白色提亮。
+     *
+     * <p>强调动画的「发光」用提亮而不是光晕：位图字体不能被位移或缩放，
+     * 但颜色可以自由改。提亮沿 RGB 三通道向 255 插值、保留原 alpha，
+     * 字形边缘仍取自图集，所以字始终清晰。
+     */
+    private static GlyphColors bloom(GlyphColors colors, float level) {
+        if (level <= 0f) {
+            return colors;
+        }
+        float t = Math.min(1f, level);
+        return new GlyphColors(liftTowardWhite(colors.left(), t),
+                liftTowardWhite(colors.right(), t));
+    }
+
+    private static int liftTowardWhite(int argb, float t) {
+        int a = (argb >>> 24) & 0xFF;
+        int r = (argb >>> 16) & 0xFF;
+        int g = (argb >>> 8) & 0xFF;
+        int b = argb & 0xFF;
+        r = Math.round(r + (255 - r) * t);
+        g = Math.round(g + (255 - g) * t);
+        b = Math.round(b + (255 - b) * t);
+        return (a << 24) | (r << 16) | (g << 8) | b;
+    }
+
+    /** 为整行算出强调分组；词序列为空时返回全 null。 */
+    private static EmphasisGroup[] emphasisGroups(List<LyricWord> words) {
+        if (words == null || words.isEmpty()) {
+            return new EmphasisGroup[0];
+        }
+        return EmphasisLayout.groups(words);
+    }
+
+    /**
+     * 把行的每个字符映射到它所属的词序号。
+     *
+     * <p>词按出现顺序铺在行文本上，与渲染时逐字遍历的顺序一致。
+     * 对不上的位置填 -1，渲染端据此跳过特效。
+     */
+    private static int[] mapCharsToWords(List<LyricWord> words, int charCount) {
+        int[] map = new int[charCount];
+        java.util.Arrays.fill(map, -1);
+        if (words == null) {
+            return map;
+        }
+        int at = 0;
+        for (int w = 0; w < words.size(); w++) {
+            int length = words.get(w).text().length();
+            for (int k = 0; k < length && at < charCount; k++) {
+                map[at++] = w;
+            }
+        }
+        return map;
+    }
+
+    /**
+     * 动画强度。
+     *
+     * <p>HUD 的可用高度未必容得下完整的抬升：把可用高度与动画所需高度之比
+     * 压到 0.2 以上，空间越小幅度越轻，字不会被推出边界，同时仍保留一点动感。
+     */
+    private float motionStrength(int textY) {
+        int available = painter.screenHeight() - textY - LyricGeometry.LINE_HEIGHT;
+        if (available <= 0) {
+            return MIN_STRENGTH;
+        }
+        float needed = textSizePx() * (1f + EMPHASIS_LIFT_EM);
+        if (needed <= 0f) {
+            return 1f;
+        }
+        return Math.min(1f, Math.max(MIN_STRENGTH, available / needed));
+    }
+
+    /** 当前字号，像素；取不到时按行高估算。 */
+    private float textSizePx() {
+        return painter.lineHeight() > 0 ? painter.lineHeight() : LyricGeometry.LINE_HEIGHT;
     }
 
     /** 用指定颜色画一层文字，只显示 {@code [clipLeft, clipLeft + clipWidth)} 这一段。 */

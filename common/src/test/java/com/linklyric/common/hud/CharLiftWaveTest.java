@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -161,14 +162,22 @@ class CharLiftWaveTest {
                 "单字行应返回 null 走整段绘制");
     }
 
-    /** 行太长时不值得逐字绘制。 */
+    /** 行内字数超过上限时才回退整段：上限用于限制逐字绘制开销。 */
     @Test
-    void 超长行不做逐字抬升() {
+    void 超过字数上限才退回整段绘制() {
+        int count = LyricProgress.MAX_LIFT_CHARS + 1;
+        float[] p = new float[count];
+        assertNull(FloatingLyricRenderer.computeLifts(count, FONT_PX, p),
+                "超过上限应返回 null 走整段绘制");
+    }
+
+    /** 常见整行字数在上限内，仍逐字绘制，以便承载强调动画。 */
+    @Test
+    void 常见整行字数仍逐字绘制() {
         int count = 40;
         float[] p = new float[count];
-        assertNull(FloatingLyricRenderer.computeLifts(
-                count, FONT_PX, p),
-                "超长行应返回 null 走整段绘制");
+        assertNotNull(FloatingLyricRenderer.computeLifts(count, FONT_PX, p),
+                "40 字属于常见整行，应逐字绘制");
     }
 
 }

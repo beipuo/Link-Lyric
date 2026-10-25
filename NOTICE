@@ -1,0 +1,22 @@
+Link Lyric
+Copyright (c) 2026 Link Lyric contributors
+
+This product includes software derived from Lyricon
+(https://github.com/tomakino/lyricon),
+Copyright 2026 Proify, Tomakino,
+licensed under the Apache License, Version 2.0.
+A copy of that license is at third_party/lyricon/LICENSE.
+
+Derived files (modified for this project):
+  common/src/main/java/com/linklyric/common/hud/effect/EmphasizeGlowEffect.java
+  common/src/main/java/com/linklyric/common/hud/effect/EmphasisGroup.java
+  common/src/main/java/com/linklyric/common/hud/effect/EmphasisLayout.java
+  common/src/main/java/com/linklyric/common/hud/effect/WaveLiftEffect.java
+  common/src/main/java/com/linklyric/common/hud/effect/EmpEasing.java
+
+Lyricon states that these effects are ported from applemusic-like-lyrics
+(https://github.com/amll-dev/applemusic-like-lyrics), which is distributed
+under AGPL-3.0. That statement is reproduced here for provenance.
+
+All other files are original to this project and licensed under the MIT
+License; see LICENSE.

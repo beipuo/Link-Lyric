@@ -78,6 +78,21 @@ public interface LyricCanvas {
         return Pose2D.IDENTITY;
     }
 
+    /**
+     * 带位移与缩放的绘制。
+     *
+     * <p>变换围绕文本起点，{@code dx} 向右、{@code dy} 向上为正。
+     * 默认实现把位移取整后绘制并忽略缩放。
+     */
+    default void drawTextTransformed(String text, int x, int y, float dx, float dy,
+                                     float scale, int color, boolean shadow) {
+        if (scale != 1f) {
+            drawTextScaled(text, Math.round(x + dx), y - Math.round(dy), scale, color, shadow);
+        } else {
+            drawTextLifted(text, Math.round(x + dx), y, dy, color, shadow);
+        }
+    }
+
     /** 当前字体的行高，用于给裁剪区留足空间。 */
     default int lineHeight() {
         return LyricGeometry.LINE_HEIGHT;

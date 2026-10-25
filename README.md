@@ -54,6 +54,11 @@ Salt Player ──(spmod 插件)──► 127.0.0.1:35400 ──► BridgePlayba
 | `common/hud/PositionTracker` | 播放位置外推：校准、上限推进、单调约束 |
 | `common/hud/LyricPainter` | 逐字与整行的双层上色、裁剪与字重应用 |
 | `common/hud/LyricCanvas` | 平台绘制原语，默认实现保证可测试 |
+| `common/hud/effect/EmphasisLayout` | 把一行切成强调组，按组时长推导幅度 |
+| `common/hud/effect/LyricEffectEngine` | 逐单元特效链，按注册顺序叠加变换 |
+| `common/hud/effect/EmphasizeGlowEffect` | 强调动画：上浮、向两侧展开、提亮 |
+| `common/hud/effect/WaveLiftEffect` | 浮动上浮（可选，默认不启用） |
+| `common/hud/effect/EmpEasing` | 强调动画的分段贝塞尔缓动查找表 |
 | `common/hud/Pose2D` | 极简二维变换栈，避免依赖渲染库 |
 | `common/hud/LineLayout` | 块内多行的顶点与基线计算 |
 | `common/hud/LyricDragController` | 拖动状态机：按下点 + 累计位移，与持久化 |
@@ -399,6 +404,29 @@ UV 与位置的对应顺序也不能变，否则字形会翻转。
 `ProgressCurveTest` 用真实桥接数据校验曲线单调与收敛，
 `LiveBridgeAnimationTest` 直接连 `127.0.0.1:35400` 实跑，端点未启动时自动跳过。
 
+### 强调动画
+
+够长的词组被唱到时整体上浮、向两侧展开并提亮，行末那一组幅度更大，
+让句子收尾有落点。参数移植自 AMLL 的 emphasize 动画：组时长至少 1 秒才参与，
+CJK 不限字数，非 CJK 限 2 到 7 字；幅度按组时长推导，有上限。
+
+缓动是**脉冲形**：0 起、中点达峰、终点归零。这一点容易看错——
+它看起来像「渐入后保持」，实际是「亮一下再走」，动画结束强调完全消失。
+单元测试按脉冲形写，包含中点峰值与终点归零两条锚。
+
+**发光用提亮，不用光晕。** 原版字体是位图图集，字形按整像素对齐取样；
+任何位移或缩放都会让笔画按非整数倍采样，9px 的字立刻发虚。
+把同一个字向四个方向各画一次叠成光晕，在 9px 上等于四个错位的副本互相覆盖，
+字会糊成一团。所以这里只改颜色：沿 RGB 向白色插值、保留 alpha，
+像素一个都不动，边缘仍是图集里的抗锯齿值。
+
+同理，强调**不做缩放**。AMLL 的 1.1 倍放大在 Compose 的矢量字体上没问题，
+在这里会让整个字重新采样。这条有专门的测试守住（`强调不做缩放以免位图字体发糊`）。
+
+中文按单字成词，因此连续汉字的强调组最多 5 字、动画最长 2.4 秒。
+上游的「词」本身就限制在几个字，本项目逐字切分，必须自己设这个窗口，
+否则一句慢歌会聚成一个十几秒的巨型组，整句持续发亮。
+
 ### 两个必须知道的坑
 
 **映射名不是 Yarn。** 1.21.1 分支用 Mojang 官方映射：`GuiGraphics`、`Minecraft`、
@@ -423,7 +451,7 @@ jar 里不会有 common 的类，装进游戏立刻 `NoClassDefFoundError`。
 .\gradlew.bat :common:test
 ```
 
-230 项，覆盖布局几何、逐字染色、行切换两段式、位置外推、配置持久化与语言键。
+259 项，覆盖布局几何、逐字染色、行切换两段式、位置外推、配置持久化、语言键与强调动画。
 
 其中 `LiveSampleTest` 使用**真实抓取的 `/lyric` 响应**（`live-sample.json`）
 做端到端验证：手写样例永远会漏掉真实数据里的格式细节，切片截断导致括号不配平、
@@ -586,6 +614,78 @@ void render(Matrix4fc pose, VertexConsumer buffer, int packedLightCoords, boolea
 - NeoForge 26.1.2 的 `loaderVersion` 范围（当前 `[4,)`，需按实机日志校准）
 - 26.1.2 上 Fabric 与 NeoForge 的 HUD 注册 API 形态（是否已全面转向 RenderState 模型）
 - SMTC 的 `Position` 实际精度：部分播放器恒报 0，需运行时判断而非盲信能力声明
+
+## 参考源码与致谢
+
+强调动画的算法、参数与缓动曲线来自下列项目。这里只列**代码、设计或数据确实进了本仓库**的项目，
+不是「有所耳闻」的名单：每条都写清取用了什么，否则无法与源码对照核验。
+名称保持各作者自己的写法，不译。
+
+### 动画
+
+**applemusic-like-lyrics（AMLL）** — <https://github.com/amll-dev/applemusic-like-lyrics>
+逐字 emphasize 动画的原始出处。取用其参数体系：
+组时长门槛（≥1s）、CJK 不限字数而非 CJK 限 2..7 字、幅度按时长推导
+（`amount = powerCurve(du/2000) × 0.6`，`blur = powerCurve(du/3000) × 0.5`，上限 1.2 / 0.8）、
+行末组放大 1.6 / 1.5 / 1.2 倍、逐字错峰跨度 `du / 2.5 / 字符数`、
+向两侧展开 `0.03em × (n/2 - i)`、上浮 `0.025em`，
+以及分段三次贝塞尔缓动（前段 `cubic-bezier(0.2, 0.4, 0.58, 1)`，后段 `1 - cubic-bezier(0.3, 0, 0.58, 1)`，中点 0.5）。
+
+**Lyricon**（Tomakino / Proify）— <https://github.com/tomakino/lyricon>
+本仓库移植时的直接参照实现（Apache-2.0），AMLL 的参数体系经其转写为 Android Canvas 版本。
+取用其工程细节：贝塞尔结果预计算为 512 项查找表（逐字特效每帧调用上百次，
+直接求解是 CPU 热路径）、缓动**脉冲形**这一关键语义（0 起、中点达峰、终点归零，
+而非「渐入后保持」）、`WaveLiftEffect` 的脉冲参数（唱到后保持 `0.05em` 浮位，
+另叠提前 400ms、时长 `max(1s, 词时长) × 1.4` 的 `sin(πx)` 脉冲）、
+以及动画强度按「视图可用高度 / 完整动画所需高度」收缩、下限 0.2 的做法。
+
+**HyperMusicCover** — <https://github.com/zyl6932/HyperMusicCover>
+提供通往 Lyricon 与上述致谢清单的线索。其歌词**渲染**由 Lyricon 的 `LyricView` 承担，
+本仓库未从中取用代码；其 `LyricParse` 的歌词数据归一化思路（译文按时间就近匹配、
+缺失时间的尾巴闭合）在对比中作为参照。
+
+### 未取用代码的项目
+
+**Cloth Config**、**owo-lib**、**Mekanism** — 颜色选择器设计阶段参考，见「颜色选择器」一节。
+三者都强绑各自的 UI 框架，可借鉴的是交互细节而非实现。
+
+### 与上游的差异
+
+以下几处是**刻意不照搬**的，原因见「强调动画」一节：
+
+- 不做缩放（AMLL 的 1.1 倍）。原版字体是位图图集，非整数倍缩放会让 9px 的字重新采样而发虚。
+- 发光用原位提亮，不用光晕。四向偏移在 9px 字形上等于四份错位副本互相覆盖，字会糊。
+- CJK 组加 5 字、2.4 秒双上限。AMLL 的「词」天然限制在几个字，本项目按单字切分，必须自己设窗口。
+
+### 许可证
+
+本仓库**按文件分许可**，不是单一许可证：
+
+| 范围 | 许可证 |
+| --- | --- |
+| 除下表所列文件外的全部代码 | MIT（见 `LICENSE`） |
+| `effect/EmphasizeGlowEffect`、`EmphasisGroup`、`EmphasisLayout`、`WaveLiftEffect`、`EmpEasing` | Apache-2.0（派生自 Lyricon） |
+
+派生文件在 `NOTICE` 中逐个点名，头部另注出处与修改内容（Apache-2.0 第 4 条要求）。
+Apache-2.0 全文在 `third_party/lyricon/LICENSE`。
+
+上游许可证：
+
+| 项目 | 许可证 |
+| --- | --- |
+| applemusic-like-lyrics | AGPL-3.0 |
+| Lyricon | Apache-2.0 |
+| HyperMusicCover | AGPL-3.0 |
+
+Lyricon 的每个源文件都带 `Copyright 2026 Proify, Tomakino / Apache-2.0` 头，
+并在 `EmphasizeGlowEffect.kt` 中声明移植自 AMLL。本项目据此沿 Lyricon 的授权链行事；
+若 AMLL 一方对「参数体系与方法结构」的移植主张 AGPL 覆盖，争议落在这条链上。
+上面「与上游的差异」不只关乎观感，也影响与上游实现的距离。
+
+**为什么不能整仓 MIT。** 派生文件的标识符（去关键字后）与上游重合度：
+`EmphasizeGlowEffect` 79%、`EmphasisGroup` 62%、`WaveLiftEffect` 52%，
+其中 `first_frame_x`、`spread_factor`、`lift_factor` 等并非通用命名。
+这些文件按「自有代码」处理会与事实不符。
 
 ## 桌面端适配器顺序（重要）
 

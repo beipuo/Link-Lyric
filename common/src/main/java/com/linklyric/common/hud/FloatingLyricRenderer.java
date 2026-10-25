@@ -1,5 +1,7 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.hud.effect.LyricEffectEngine;
+import com.linklyric.common.hud.effect.LyricUnitEffect;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
@@ -159,6 +161,9 @@ public final class FloatingLyricRenderer {
     /** 位置外推器：把每秒一次的上报插值成帧级连续位置。 */
     private final PositionTracker positions = new PositionTracker();
 
+    /** 逐字动画特效链；默认浮动上浮 + 强调辉光。 */
+    private final LyricEffectEngine effects = LyricEffectEngine.defaults();
+
     /** 用户拖动产生的水平偏移（像素），以屏幕中线为原点，向右为正。 */
     private int offsetX;
     /** 用户拖动产生的垂直偏移（像素），相对默认底部位置，向下为正。 */
@@ -256,9 +261,14 @@ public final class FloatingLyricRenderer {
         return drawable;
     }
 
-    /** 按当前样式构造绘制器。 */
+    /** 逐字动画特效链，可按名字增删。 */
+    public LyricEffectEngine effects() {
+        return effects;
+    }
+
+    /** 按当前样式构造绘制器；特效引擎跨帧复用，避免每帧重建。 */
     private LyricPainter textPainter(Painter painter) {
-        return new LyricPainter(painter, style.weight(), style.shadow());
+        return new LyricPainter(painter, style.weight(), style.shadow(), effects);
     }
 
     /** 两个矩形的交集；无重叠时返回空区域。 */
