@@ -138,6 +138,96 @@ val verifyMirroredRender = tasks.register("verifyMirroredRender") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 语言键三向校验
+//
+// 键名登记在 LangKeys 常量里，文案分散在四个 json（两平台 × 两语言）。
+// 这两边一旦不一致，症状**不会报错**：缺键的位置会直接把
+// "linklyric.config.foo" 这种原始键名画到界面上，混在中文里很难被发现，
+// 且只影响其中一种语言时更隐蔽。
+//
+// 因此把「常量集 == 每份 json 的键集」做成构建检查。
+// ---------------------------------------------------------------------------
+val langKeysSource = File(
+    rootDir,
+    "common/src/main/java/com/linklyric/common/i18n/LangKeys.java"
+)
+
+val langJsonFiles = listOf("fabric", "neoforge").flatMap { platform ->
+    listOf("zh_cn", "en_us").map { lang ->
+        "$platform/$lang" to File(
+            rootDir,
+            "$platform/src/main/resources/assets/linklyric/lang/$lang.json"
+        )
+    }
+}
+
+/** 从 LangKeys 里抽出所有字符串字面量。只认 public static final String 行。 */
+fun declaredLangKeys(file: File): Set<String> =
+    Regex("""public static final String [A-Z0-9_]+\s*=\s*"([^"]+)"""")
+        .findAll(file.readText())
+        .map { it.groupValues[1] }
+        .toSet()
+
+/** 抽出 json 的顶层键。用正则而非 json 库，避免给构建脚本加依赖。 */
+fun langJsonKeys(file: File): Set<String> =
+    Regex("""^\s*"([^"]+)"\s*:""", RegexOption.MULTILINE)
+        .findAll(file.readText())
+        .map { it.groupValues[1] }
+        .toSet()
+
+val verifyLangKeys = tasks.register("verifyLangKeys") {
+    group = "verification"
+    description = "校验 LangKeys 常量与四个 lang json 的键完全一致"
+
+    doLast {
+        val declared = declaredLangKeys(langKeysSource)
+        val problems = mutableListOf<String>()
+
+        if (declared.isEmpty()) {
+            problems += "没有从 LangKeys 里解析出任何键，正则可能已失效"
+        }
+        // 常量值重复意味着两份文案共用一个键，改一处会影响两处。
+        //
+        // 必须从**未去重**的序列里统计：declared 是 toSet() 的结果，
+        // 用它对重复值计数永远是 1，这条检查会静默失效。
+        val duplicated = Regex("""public static final String ([A-Z0-9_]+)\s*=\s*"([^"]+)"""")
+            .findAll(langKeysSource.readText())
+            .map { it.groupValues[2] }
+            .toList()
+            .groupingBy { it }.eachCount()
+            .filterValues { it > 1 }
+        for ((key, count) in duplicated) {
+            problems += "LangKeys 里键值重复（" + count + " 处）: " + key
+        }
+
+        for ((label, file) in langJsonFiles) {
+            if (!file.isFile) {
+                problems += label + ": 缺少文件 " + file.path
+                continue
+            }
+            val present = langJsonKeys(file)
+            val missing = (declared - present).sorted()
+            val extra = (present - declared).sorted()
+            if (missing.isNotEmpty()) {
+                problems += label + ": json 缺少 " + missing.size + " 个键 -> " + missing.joinToString(", ")
+            }
+            if (extra.isNotEmpty()) {
+                problems += label + ": json 多出 " + extra.size + " 个键 -> " + extra.joinToString(", ")
+            }
+        }
+
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "语言键必须与 LangKeys 完全一致：\n" + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle(
+            "语言键一致：" + declared.size + " 个键 × " + langJsonFiles.size + " 份文案"
+        )
+    }
+}
+
 tasks.named("check") {
-    dependsOn(verifyMirroredRender)
+    dependsOn(verifyMirroredRender, verifyLangKeys)
 }
