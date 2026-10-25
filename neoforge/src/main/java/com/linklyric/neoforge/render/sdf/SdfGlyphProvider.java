@@ -93,17 +93,12 @@ public final class SdfGlyphProvider {
     private static Field bmpOffsetY;
     private static Field bmpWidth;
     private static Field bmpHeight;
-    private static Field bmpScale;
-    private static Field bmpAscent;
 
     /** UnihexProvider$Glyph 的字段访问器。 */
     private static Field uniContents;
-    private static Field uniLeft;
-    private static Field uniRight;
 
-    /** UnihexProvider$LineData 的 line(int) / bitWidth() 方法句柄。 */
+    /** UnihexProvider$LineData 的 line(int) 方法句柄。 */
     private static MethodHandle lineOf;
-    private static MethodHandle bitWidthOf;
 
     private SdfGlyphProvider() {
     }
