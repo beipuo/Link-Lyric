@@ -5,7 +5,6 @@ import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.fabric.render.GradientPainter;
-import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.fabric.render.sdf.SdfGlyphProvider;
 import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.common.config.LayoutConfig;
@@ -21,6 +20,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackType;
@@ -129,6 +129,10 @@ public final class LinkLyricFabric implements ClientModInitializer {
         if (client.options != null && client.options.hideGui) {
             return;
         }
+        // 先处理待打开的界面：这一步必须在渲染之前，
+        // 否则新界面装上的那一帧还会多画一次旧 HUD。
+        flushPendingScreen(client);
+
         if (renderer == null) {
             return;
         }
@@ -160,6 +164,31 @@ public final class LinkLyricFabric implements ClientModInitializer {
         return renderer;
     }
 
+    /**
+     * 待打开的界面。下一帧的 HUD 回调里真正装上。
+     *
+     * <p>**不能立刻 {@code setScreen}。** 指令是从聊天栏发出的，
+     * 而原版 {@code ChatScreen.keyPressed} 在回车分支里的顺序是：
+     * <pre>
+     *   handleChatInput(...)          // 指令在这里执行，我们会 setScreen
+     *   minecraft.setScreen(null)     // 把聊天栏关掉
+     * </pre>
+     * 第二条会把刚装上的界面顶掉，表现为「指令生效了、提示也出来了，
+     * 但界面一闪而过或者根本没出现」。整个聊天栏的执行期间都没机会插进去，
+     * 只能推迟到下一帧。
+     */
+    private static Screen pendingScreen;
+
+    /**
+     * 在下一帧打开界面。
+     *
+     * <p>覆盖式赋值：连续发两次指令时只有最后一次生效，
+     * 不会留下一个永远打不开的残留请求。
+     */
+    private static void openNextFrame(Screen screen) {
+        pendingScreen = screen;
+    }
+
     static void openConfigScreen() {
         Minecraft client = Minecraft.getInstance();
         if (client == null || renderer == null || dragController == null) {
@@ -167,7 +196,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         }
         renderer.setPreviewForced(true);
         dragController.enable();
-        client.setScreen(new LyricConfigScreen(renderer, dragController, null));
+        openNextFrame(new LyricConfigScreen(renderer, dragController, null));
     }
 
     static void openLocationScreen() {
@@ -177,7 +206,17 @@ public final class LinkLyricFabric implements ClientModInitializer {
         }
         // 进入前先确保歌词可见，否则调位置时是一片空白。
         dragController.enable();
-        client.setScreen(new LyricLocationScreen(renderer, dragController, null));
+        openNextFrame(new LyricLocationScreen(renderer, dragController, null));
+    }
+
+    /** 装上待打开的界面。在游戏线程上执行，因此可以安全 setScreen。 */
+    private static void flushPendingScreen(Minecraft client) {
+        if (pendingScreen == null) {
+            return;
+        }
+        Screen next = pendingScreen;
+        pendingScreen = null;
+        client.setScreen(next);
     }
 
     /** {@link GuiGraphics} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
