@@ -44,6 +44,13 @@ tasks.test {
 // ---------------------------------------------------------------------------
 // 平台之间**允许**不一致的文件，必须在此显式登记并写明理由。
 // 除此之外，两侧的文件集与内容都必须完全一致。
+//
+// 覆盖边界（重要）：本任务只扫 render/ 目录。平台包下的入口
+// （LinkLyricFabric / LinkLyricNeoForge）、三个界面
+// （LyricConfigScreen / ColorPickerScreen / LyricLocationScreen）
+// 与指令类**不在**保护范围内，它们本来就允许按平台 API 各自书写。
+// 其中 Painter 适配层的「方法集必须相同」由 verifyPainterParity 负责，
+// 其余一致性没有机械守卫——不要以为挂了 check 就全覆盖了。
 val platformOnlyRenderFiles = mapOf(
     "sdf/SdfShaderRegistration.java" to
         "装载时机不同：Fabric 挂资源重载，NeoForge 必须用 RegisterShadersEvent",
@@ -542,9 +549,106 @@ val verifyPreviewGeometry = tasks.register("verifyPreviewGeometry") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 着色器 uniform 声明守卫
+//
+// 着色器 JSON 的 uniforms 数组是 GLSL 与 Java 之间的唯一契约，但它是一个
+// 独立文件，编译器、verifyMirroredRender、verifyNoDroppedParams 都看不见它。
+//
+// 已经踩过：StrokeWidth / StrokeColor 两个 uniform 在 .fsh 与 SdfRenderType
+// 里都用上了，json 里却从未声明。safeGetUniform 对缺失 uniform 返回空实现、
+// 不抛异常，于是描边宽度恒为 0——功能整体失效而构建全绿。
+//
+// 这类缺陷的共同形态是「两端都在，只有声明漏了」，因此这里比三方：
+//   .fsh 里声明的 uniform、json 里声明的 uniform、其中采样器除外。
+// 两端的 .fsh 本身还要求逐字一致（同 verifyMirroredRender 的理由）。
+// ---------------------------------------------------------------------------
+val shaderNames = listOf("linklyric_sdf_text")
+
+fun shaderFile(platform: String, ext: String) =
+    File(rootDir, "$platform/src/main/resources/assets/minecraft/shaders/core/$name.$ext")
+
+val verifyShaderUniforms = tasks.register("verifyShaderUniforms") {
+    group = "verification"
+    description = "校验着色器 .fsh 里用到的 uniform 都在 json 里声明了"
+
+    doLast {
+        val problems = mutableListOf<String>()
+        for (name in shaderNames) {
+            val fsh = listOf("fabric", "neoforge").map {
+                it to File(rootDir, it + "/src/main/resources/assets/minecraft/shaders/core/" + name + ".fsh")
+            }
+            for ((platform, file) in fsh) {
+                if (!file.isFile) {
+                    problems += platform + ": 缺少着色器 " + name + ".fsh"
+                }
+            }
+            if (fsh.any { !it.second.isFile }) {
+                continue
+            }
+            // 两端 .fsh 必须逐字一致：着色器是同一份代码的两个副本。
+            if (fsh[0].second.readText() != fsh[1].second.readText()) {
+                problems += name + ".fsh 两端不一致"
+            }
+
+            // 抽出 GLSL 里声明的 uniform。分成两组：
+            //   - glslUniforms：标量/向量/矩阵，必须出现在 json 的 uniforms 里；
+            //   - glslSamplers：纹理采样器，由 json 的 samplers 数组负责绑定。
+            // 两者都算「GLSL 用到了」，但只有前者参与缺失检查——
+            // 采样器写进 uniforms 数组是另一套机制，不在这里判。
+            val glslSource = fsh[0].second.readText()
+            val glslUniforms = Regex("""^uniform\s+(?!sampler)\w+\s+(\w+)\s*;""", RegexOption.MULTILINE)
+                .findAll(glslSource)
+                .map { it.groupValues[1] }
+                .toSet()
+            val glslSamplers = Regex("""^uniform\s+sampler\w+\s+(\w+)\s*;""", RegexOption.MULTILINE)
+                .findAll(glslSource)
+                .map { it.groupValues[1] }
+                .toSet()
+
+            // uniform 块里可能出现、但由渲染管线自动注入的矩阵，不要求在 GLSL 里声明。
+            val injected = setOf("ModelViewMat", "ProjMat")
+
+            for ((platform, _) in fsh) {
+                val jsonFile = File(
+                    rootDir,
+                    platform + "/src/main/resources/assets/minecraft/shaders/core/" + name + ".json"
+                )
+                if (!jsonFile.isFile) {
+                    problems += platform + ": 缺少着色器 " + name + ".json"
+                    continue
+                }
+                val declared = Regex(""""name"\s*:\s*"([^"]+)"""")
+                    .findAll(jsonFile.readText())
+                    .map { it.groupValues[1] }
+                    .toSet()
+                val missing = (glslUniforms - declared).sorted()
+                if (missing.isNotEmpty()) {
+                    problems += platform + "/" + name + ".json 缺少 uniform: " + missing.joinToString(", ")
+                }
+                val stale = (declared - glslUniforms - glslSamplers - injected).sorted()
+                if (stale.isNotEmpty()) {
+                    problems.add(
+                        platform + "/" + name + ".json 声明了 GLSL 未使用的 uniform: "
+                            + stale.joinToString(", ")
+                    )
+                }
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "着色器 uniform 声明与 GLSL 不一致（缺失会让对应功能静默失效）：\n"
+                    + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle("着色器 uniform 一致：" + shaderNames.size + " 个着色器 × 2 端")
+    }
+}
+
 tasks.named("check") {
     dependsOn(
         verifyMirroredRender, verifyLangKeys, verifyPainterParity,
-        verifyNoDroppedParams, verifyConstantsReferenced, verifyPreviewGeometry
+        verifyNoDroppedParams, verifyConstantsReferenced, verifyPreviewGeometry,
+        verifyShaderUniforms
     )
 }

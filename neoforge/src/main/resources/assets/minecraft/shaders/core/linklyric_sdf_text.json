@@ -111,6 +111,25 @@
       "values": [
         2
       ]
+    },
+    {
+      "name": "StrokeWidth",
+      "type": "float",
+      "count": 1,
+      "values": [
+        0
+      ]
+    },
+    {
+      "name": "StrokeColor",
+      "type": "float",
+      "count": 4,
+      "values": [
+        0,
+        0,
+        0,
+        0
+      ]
     }
   ]
 }
