@@ -48,7 +48,24 @@ final class ColorPickerScreen extends Screen {
     private EditBox hexBox;
 
     private static final int PREVIEW_TOP = 26;
-    private static final int PREVIEW_HEIGHT = 56;
+    /** 与配置界面的两列同宽，预览框才能和下方控件对齐。 */
+    private static final int COLUMN_WIDTH = 150;
+    private static final int COLUMN_GAP = 20;
+
+    /**
+     * 预览框高度：与配置界面共用同一条计算。
+     *
+     * <p>这里原本也是写死的 56，于是调色页与配置页看到的预览高度
+     * 可能不一致——同一个渲染器被摆在两个不同尺寸的框里。
+     * 高度取决于样式里的行数与行距，必须现算。
+     */
+    private int previewHeight() {
+        var style = controller().style();
+        return com.linklyric.common.hud.LyricGeometry.previewHeight(
+                style.lineCount(), style.lineGapPx(),
+                com.linklyric.common.hud.LyricGeometry.LIFT_HEADROOM,
+                com.linklyric.common.hud.LyricGeometry.SHADOW_HEADROOM);
+    }
     /** 取色区与色相条尺寸。 */
     private static final int SQUARE_SIZE = 96;
     private static final int HUE_HEIGHT = 12;
@@ -109,13 +126,14 @@ final class ColorPickerScreen extends Screen {
     protected void init() {
         FloatingLyricRenderer renderer = LinkLyricFabric.renderer();
         renderer.setPreviewForced(true);
-        int previewWidth = Math.min(width - 40, 360);
+        // 宽度取「两列 + 间隙」，与配置界面的设置区同宽。
+        int previewWidth = Math.min(width - 40, COLUMN_WIDTH * 2 + COLUMN_GAP);
         renderer.setPreviewArea(new FloatingLyricRenderer.Bounds(
-                width / 2 - previewWidth / 2, PREVIEW_TOP, previewWidth, PREVIEW_HEIGHT));
+                width / 2 - previewWidth / 2, PREVIEW_TOP, previewWidth, previewHeight()));
 
         buttons.clear();
         int leftX = Math.max(12, width / 2 - 190);
-        int y = PREVIEW_TOP + PREVIEW_HEIGHT + 16;
+        int y = PREVIEW_TOP + previewHeight() + 16;
         for (Slot candidate : Slot.values()) {
             addOwned(Button.builder(Component.translatable(candidate.labelKey), btn -> {
                 if (candidate == Slot.RESET) {
@@ -130,7 +148,7 @@ final class ColorPickerScreen extends Screen {
 
         // 右侧：方形取色区在上，色相条在下，输入框再下。
         squareX = leftX + BUTTON_W + 28;
-        squareY = PREVIEW_TOP + PREVIEW_HEIGHT + 16;
+        squareY = PREVIEW_TOP + previewHeight() + 16;
         hueY = squareY + SQUARE_SIZE + GAP;
 
         hexBox = new EditBox(font, squareX, hueY + HUE_HEIGHT + GAP, 96, 18,

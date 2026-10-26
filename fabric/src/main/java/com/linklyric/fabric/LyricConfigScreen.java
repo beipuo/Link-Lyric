@@ -10,6 +10,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
+import com.linklyric.common.hud.LyricGeometry;
 import net.minecraft.client.gui.components.OptionsList;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
@@ -78,8 +79,26 @@ final class LyricConfigScreen extends OptionsSubScreen {
         return 0;
     }
 
-    /** 预览占位：只为占住一行，本身不画任何东西。 */
+    /** 预览占位：只为占住若干行，本身不画任何东西。 */
     private AbstractWidget previewAnchor;
+
+    /**
+     * 除首行外，预览还需要额外占几行。
+     *
+     * <p>由渲染侧同一个 {@link LyricGeometry#previewHeight} 算出目标高度，
+     * 再折算成 OptionsList 的整数行数。写死 56 的做法在行数被调大后
+     * 会让副行被裁掉，调小时又会空出一大截。
+     */
+    private int previewExtraRows() {
+        int rowStride = 20 + 4;
+        int want = LyricGeometry.previewHeight(
+                controller.style().lineCount(),
+                controller.style().lineGapPx(),
+                LyricGeometry.LIFT_HEADROOM,
+                LyricGeometry.SHADOW_HEADROOM);
+        int rows = (want + 4 + rowStride - 1) / rowStride;
+        return Math.max(0, rows - 1);
+    }
 
     LyricConfigScreen(FloatingLyricRenderer renderer,
                       LyricDragController controller, Screen parent) {
@@ -102,8 +121,18 @@ final class LyricConfigScreen extends OptionsSubScreen {
             return;
         }
 
+        // 预览占位：按当前行数算出需要多高，再折算成 OptionsList 的行数。
+        //
+        // OptionsList 的行高由 Entry.render 写死 20 像素，无法给单个控件
+        // 更高空间。这里的办法是让占位控件连续占 N 行，列表自然把后续
+        // 控件整体下推——不会盖住任何东西，也不需要自绘一套滚动。
+        // 高度随「行数」与「行距」实时变化，滑条一动预览就跟着长高。
         previewAnchor = hidden();
         list.addSmall(previewAnchor, null);
+        int extraRows = previewExtraRows();
+        for (int i = 0; i < extraRows; i++) {
+            list.addSmall(hidden(), null);
+        }
 
         section(LangKeys.GROUP_DISPLAY);
 
@@ -381,7 +410,10 @@ final class LyricConfigScreen extends OptionsSubScreen {
         if (anchor == null) {
             return;
         }
-        int height = anchor.getHeight();
+        // 高度取「占位那几行」的总跨度：占位控件本身仍是 20 像素高，
+        // 但它在列表中连续占住 extraRows + 1 行，这段纵向空间归预览使用。
+        int rowStride = 20 + 4; // OptionsList 的行高与行距，与原版一致
+        int height = Math.max(20, (previewExtraRows() + 1) * rowStride - 4);
         int x = anchor.getX();
         int y = anchor.getY();
         int width = anchor.getWidth();

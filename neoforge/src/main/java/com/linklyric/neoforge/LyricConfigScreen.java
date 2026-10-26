@@ -4,6 +4,7 @@ import com.linklyric.common.config.LyricOptions;
 import com.linklyric.common.config.LyricOptions.Option;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
+import com.linklyric.common.hud.LyricGeometry;
 import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 import net.minecraft.client.Minecraft;
@@ -35,11 +36,16 @@ final class LyricConfigScreen extends Screen {
     private final Screen parent;
 
     private static final int COLUMN_WIDTH = 150;
+    /** 两列之间的间隙。 */
+    private static final int COLUMN_GAP = 20;
     private static final int ROW_HEIGHT = 20;
     private static final int ROW_GAP = 4;
 
-    /** 预览框高度：容纳两行歌词加抬升余量。 */
-    private static final int PREVIEW_HEIGHT = 56;
+    /** 两列加上中间间隙的总宽度，预览框与设置区共用这个尺度。 */
+    private static int columnSpan() {
+        return COLUMN_WIDTH * 2 + COLUMN_GAP;
+    }
+
     private static final int PREVIEW_TOP = 26;
 
     /** 底部按钮区高度。 */
@@ -58,9 +64,24 @@ final class LyricConfigScreen extends Screen {
         this.parent = parent;
     }
 
+    /**
+     * 预览框高度：由当前「行数」实时算出，而不是写死 56。
+     *
+     * <p>写死的 56 是按两行手算的，玩家把行数调到 3 以上时副行会被裁掉，
+     * 调到 1 行时上下空一大截——调那个滑条时预览毫无反应，
+     * 恰恰把这个选项的效果藏住了。
+     */
+    private int previewHeight() {
+        return LyricGeometry.previewHeight(
+                controller.style().lineCount(),
+                controller.style().lineGapPx(),
+                LyricGeometry.LIFT_HEADROOM,
+                LyricGeometry.SHADOW_HEADROOM);
+    }
+
     /** 滚动区上边界：紧贴预览框下方。 */
     private int viewTop() {
-        return PREVIEW_TOP + PREVIEW_HEIGHT + 10;
+        return PREVIEW_TOP + previewHeight() + 10;
     }
 
     /** 滚动区下边界：让开底部按钮。 */
@@ -81,10 +102,12 @@ final class LyricConfigScreen extends Screen {
         // 配置期间强制预览：即使歌词被关闭也要看得见改动。
         renderer.setPreviewForced(true);
 
-        int previewWidth = Math.min(width - 40, 360);
+        // 宽度取「两列 + 中间间隙」，与下方设置区同宽：
+        // 预览比设置区窄会让整个界面看起来是两截拼的。
+        int previewWidth = Math.min(width - 40, columnSpan());
         int previewX = width / 2 - previewWidth / 2;
         renderer.setPreviewArea(new FloatingLyricRenderer.Bounds(
-                previewX, PREVIEW_TOP, previewWidth, PREVIEW_HEIGHT));
+                previewX, PREVIEW_TOP, previewWidth, previewHeight()));
 
         scrollWidgets.clear();
         footerWidgets.clear();
@@ -92,8 +115,8 @@ final class LyricConfigScreen extends Screen {
         // 否则 IdentityHashMap 会随每次 rebuild 无限增长。
         contentY.clear();
 
-        int left = width / 2 - COLUMN_WIDTH - 10;
-        int right = width / 2 + 10;
+        int left = width / 2 - COLUMN_WIDTH - COLUMN_GAP / 2;
+        int right = width / 2 + COLUMN_GAP / 2;
         // 内容坐标从 0 开始，绘制时统一加 viewTop() 与滚动量。
         int y = 0;
 

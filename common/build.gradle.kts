@@ -492,9 +492,59 @@ val verifyConstantsReferenced = tasks.register("verifyConstantsReferenced") {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 预览几何守卫
+//
+// 四个界面（两个 LyricConfigScreen、两个 ColorPickerScreen）此前各写一个
+// "PREVIEW_HEIGHT = 56"。那是按两行手算的数字，于是：
+//   - 行数调到 3 以上，副行被裁掉一半；
+//   - 调到 1 行，上下空一大截；
+//   - 调「行数」滑条时预览毫无反应，正好把这个选项的效果藏住。
+//
+// 现在高度一律由 LyricGeometry.previewHeight 现算。这道守卫禁止界面层
+// 再出现写死的预览高度——那是最容易被复制粘贴回四个文件的一类常量。
+// ---------------------------------------------------------------------------
+val verifyPreviewGeometry = tasks.register("verifyPreviewGeometry") {
+    group = "verification"
+    description = "校验预览高度由 LyricGeometry.previewHeight 统一计算"
+
+    val screens = listOf(
+        File(rootDir, "fabric/src/main/java/com/linklyric/fabric/LyricConfigScreen.java"),
+        File(rootDir, "neoforge/src/main/java/com/linklyric/neoforge/LyricConfigScreen.java"),
+        File(rootDir, "fabric/src/main/java/com/linklyric/fabric/ColorPickerScreen.java"),
+        File(rootDir, "neoforge/src/main/java/com/linklyric/neoforge/ColorPickerScreen.java"),
+    )
+
+    doLast {
+        val problems = mutableListOf<String>()
+        // Kotlin 的原始字符串里 \s 会被 gradle 的插值处理吃掉反斜杠，
+        // 用字符类绕开：空白字符直接写出，避免反斜杠转义问题。
+        val hardcoded = Regex("PREVIEW_HEIGHT[ ]*=[^=]")
+        for (file in screens) {
+            if (!file.isFile) {
+                problems += "找不到界面源文件: " + file.path
+                continue
+            }
+            val text = file.readText()
+            if (hardcoded.containsMatchIn(text)) {
+                problems += file.name + ": 预览高度被写死；应调用 LyricGeometry.previewHeight(...)"
+            }
+            if (!text.contains("previewHeight(")) {
+                problems += file.name + ": 没有调用 previewHeight(...)，预览高度可能与行数脱钩"
+            }
+        }
+        if (problems.isNotEmpty()) {
+            throw GradleException(
+                "预览几何不统一：\n" + problems.joinToString("\n")
+            )
+        }
+        logger.lifecycle("预览高度统一：4 个界面均由 previewHeight 计算")
+    }
+}
+
 tasks.named("check") {
     dependsOn(
         verifyMirroredRender, verifyLangKeys, verifyPainterParity,
-        verifyNoDroppedParams, verifyConstantsReferenced
+        verifyNoDroppedParams, verifyConstantsReferenced, verifyPreviewGeometry
     )
 }

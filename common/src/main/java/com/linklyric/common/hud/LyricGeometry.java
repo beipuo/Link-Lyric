@@ -86,9 +86,44 @@ public final class LyricGeometry {
     private LyricGeometry() {
     }
 
+    /** 副行相对主行的字号比例，与渲染器绘制副行时用的值必须一致。 */
+    public static final float SUB_TEXT_FONT_SCALE = 0.8f;
+
     /** 歌词块的横向可用宽度。 */
     public static int maxWidth(int screenWidth) {
         return Math.max(40, screenWidth / 2);
+    }
+
+    /**
+     * 预览框应有的高度：恰好装下 {@code lines} 行歌词，不多不少。
+     *
+     * <p>此前四个界面各写一个 {@code PREVIEW_HEIGHT = 56}。那是按「两行」
+     * 手算的结果，于是 1 行时上下空一大截、3 行以上时副行被裁掉一半，
+     * 而玩家调「行数」滑条时预览毫无反应——恰恰把这个选项的效果藏住了。
+     *
+     * <p>算法与渲染器的 {@code LineLayout.compute} 完全对齐：主行取
+     * {@link #LINE_HEIGHT}，副行按 {@link #SUB_TEXT_FONT_SCALE} 缩小，
+     * 行间取真实行距，最后加上抬升与阴影所需的余量。
+     *
+     * @param lines         要显示的行数，至少按 1 行算
+     * @param lineGapPx     行间距，像素
+     * @param liftHeadroom  抬升余量，像素
+     * @param shadowHeadroom 阴影余量，像素
+     */
+    public static int previewHeight(int lines, int lineGapPx,
+                                    int liftHeadroom, int shadowHeadroom) {
+        int count = Math.max(1, lines);
+        // 与 LineLayout.compute 同构：逐行累加浮点，最后只取整一次。
+        float text = 0f;
+        for (int i = 0; i < count; i++) {
+            text += i == 0 ? LINE_HEIGHT : Math.max(1f, LINE_HEIGHT * SUB_TEXT_FONT_SCALE);
+        }
+        if (count > 1) {
+            text += (float) lineGapPx * (count - 1);
+        }
+        int block = Math.round(text);
+        // 上下各留余量：抬升让字向上走，阴影向右下偏，两侧都要容得下。
+        return block + liftHeadroom + shadowHeadroom;
     }
 
     /** 歌词块的横向中心。 */
