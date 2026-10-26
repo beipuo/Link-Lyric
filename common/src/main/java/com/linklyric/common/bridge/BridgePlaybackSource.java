@@ -61,6 +61,14 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private volatile boolean enabled = true;
     private volatile int consecutiveFailures;
     private volatile int lyricSignature;
+    /**
+     * 上次收到的歌词指纹（服务端 ETag），用于条件请求。
+     *
+     * <p>null 表示还没有可用的指纹，此时不发 {@code If-None-Match}。
+     * 刻意与 {@link #lyricSignature} 分开：前者是服务端算的、
+     * 用来省流量的字符串，后者是本端算的、用来决定要不要重解析的整数。
+     */
+    private volatile String lyricEtag;
     private volatile boolean started;
     private volatile boolean stopRequested;
     private Thread worker;
@@ -181,10 +189,16 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         // 路径取自协议常量。此前这里写死 "/lyric"，而 Protocol.WS_PATH
         // 定义着同一个字符串却没有任何消费者——适配器侧要改端点时，
         // 改协议常量不会有任何效果，得再去改这一行。
-        String body = get(Protocol.WS_PATH);
-        if (body == null) {
+        Fetch fetch = get(Protocol.WS_PATH);
+        if (fetch == null) {
             onFailure();
             return;
+        }
+        String body = fetch.body();
+        // 服务端给的指纹是下一轮条件请求的依据；没有就保持原样，
+        // 旧适配器不回 ETag，于是永远是完整响应，行为与改动前一致。
+        if (fetch.etag() != null) {
+            lyricEtag = fetch.etag();
         }
         consecutiveFailures = 0;
         alive = true;
@@ -201,8 +215,14 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         // 副作用是高亮每帧都被直接赋成目标值、跳过平滑推进，
         // 观感就是「整行瞬间变色」而不是连续染色。
         // 改用歌词 JSON 的哈希作为指纹后，只有真正换曲或换歌词才会重建。
+        // 服务端在歌词未变时不再下发子树，只回 lyricOmitted: true。
+        //
+        // 这里**不能**用 lyricContentSignature 判定：歌词被省略时那个方法
+        // 因为找不到 lyric 对象而返回 0，指纹从旧值跳到 0 会被当成「歌词变了」，
+        // 于是 parseLyric 解出空时间轴，正在显示的歌词当场消失。
+        // 必须显式读 lyricOmitted 标志。
         int contentSignature = lyricContentSignature(body);
-        if (contentSignature != lyricSignature) {
+        if (needsReparse(body, contentSignature, lyricSignature)) {
             LyricTimeline timeline = SnapshotParser.parseLyric(body);
             latestLyric.set(timeline);
             lyricSignature = contentSignature;
@@ -341,7 +361,11 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
      * 响应体没读完就 {@code disconnect()}（连接已污染，不能复用），
      * 读完了就让它自然归还。漏掉这一步会泄漏连接，比关掉 keep-alive 更糟。
      */
-    private String get(String path) {
+    /** 一次 GET 的结果：正文与服务端声明的歌词指纹。 */
+    private record Fetch(String body, String etag) {
+    }
+
+    private Fetch get(String path) {
         HttpURLConnection connection = null;
         boolean bodyFullyRead = false;
         try {
@@ -350,9 +374,13 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
             connection.setReadTimeout(READ_TIMEOUT_MS);
             connection.setUseCaches(false);
-            // 明确要求长连接；默认就是 keep-alive，但显式写上可以避免
-            // 中间层（代理、插件自带的 HTTP 服务器）把它降级而无人察觉。
-            connection.setRequestProperty("Connection", "keep-alive");
+            // 条件请求：告诉服务端上一份歌词的指纹，未变时它只回一个省略标记，
+            // 省掉整份歌词子树（实测 25 KB / 次）。服务端不认识这个头时
+            // 会照常返回完整内容，因此对旧适配器安全。
+            String knownEtag = lyricEtag;
+            if (knownEtag != null) {
+                connection.setRequestProperty("If-None-Match", "\"" + knownEtag + "\"");
+            }
 
             int code = connection.getResponseCode();
             if (code != 200) {
@@ -360,12 +388,13 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
                 drainQuietly(connection.getErrorStream());
                 return null;
             }
+            String etag = connection.getHeaderField("ETag");
             try (InputStream in = connection.getInputStream()) {
                 String body = readBounded(in);
                 // readBounded 返回 null 表示超限，此时流里还有未读字节，
                 // 连接不能复用，交给 finally 去 disconnect。
                 bodyFullyRead = body != null;
-                return body;
+                return body == null ? null : new Fetch(body, stripEtag(etag));
             }
         } catch (Throwable t) {
             return null;
@@ -374,6 +403,78 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
                 connection.disconnect();
             }
         }
+    }
+
+    /**
+     * 读一个布尔字段。
+     *
+     * <p>与 {@link SnapshotParser} 里的同名私有方法同语义：找到键且其后
+     * 紧跟 {@code true} 才算真。解析器那个是私有的，这里只需要服务端
+     * 承诺的那一个字段，不值得为它把解析器内部打开。
+     */
+    private static boolean boolField(String json, String key) {
+        if (json == null) {
+            return false;
+        }
+        String needle = "\"" + key + "\"";
+        int idx = json.indexOf(needle);
+        if (idx < 0) {
+            return false;
+        }
+        int cursor = idx + needle.length();
+        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+            cursor++;
+        }
+        if (cursor < json.length() && json.charAt(cursor) == ':') {
+            cursor++;
+            while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
+                cursor++;
+            }
+        }
+        return json.startsWith("true", cursor);
+    }
+
+    /** 去掉 ETag 两侧的引号与弱校验前缀；无值时返回 null。 */
+    static String stripEtag(String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String v = raw.trim();
+        if (v.startsWith("W/")) {
+            v = v.substring(2).trim();
+        }
+        if (v.length() >= 2 && v.charAt(0) == '"' && v.charAt(v.length() - 1) == '"') {
+            v = v.substring(1, v.length() - 1);
+        }
+        return v.isEmpty() ? null : v;
+    }
+
+    /** 服务端是否声明本轮省略了歌词子树。包级可见，供测试直接验证。 */
+    static boolean lyricOmitted(String body) {
+        return boolField(body, "lyricOmitted");
+    }
+
+    /**
+     * 是否需要用本轮响应重建歌词时间轴。
+     *
+     * <p>抽成纯函数是为了能被测到。此前这段判定直接写在 {@code pollOnce}
+     * 里，而它是私有的、依赖 HTTP 与后台线程，测试根本走不进去——
+     * 于是「把判定改回指纹比较」这种致命退化能安然通过全部测试。
+     *
+     * <p>三条规则，顺序有意义：
+     * 1. 服务端说省略了 → 不重建。此时指纹必为 0，绝不能让 0 参与比较。
+     * 2. 指纹与上轮相同 → 不重建（歌词确实没变）。
+     * 3. 其余情况 → 重建。
+     *
+     * @param body        本轮响应正文
+     * @param signature   本轮算出的歌词指纹
+     * @param lastSignature 上轮采用的指纹
+     */
+    static boolean needsReparse(String body, int signature, int lastSignature) {
+        if (lyricOmitted(body)) {
+            return false;
+        }
+        return signature != lastSignature;
     }
 
     /** 读空并关闭一个流，用于把错误响应体消费掉以便复用连接。 */
