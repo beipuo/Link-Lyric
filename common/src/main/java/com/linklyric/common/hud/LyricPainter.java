@@ -48,6 +48,37 @@ final class LyricPainter {
     private static final float CLIP_TOLERANCE = 1f;
 
     /**
+     * 单字缩放的生效阈值。
+     *
+     * <p>与 {@code FloatingLyricRenderer} 里整块 {@code lineScale} 的判定
+     * 用同一个数（0.001）。两处必须一致：块已经按 1.0004 缩放了、
+     * 字却因为阈值更小而没缩，切换动画的边界帧上会看到字块内部错位。
+     *
+     * <p>阈值本身的作用是让「没有特效动缩放」这个最常见的情形稳定走
+     * 无变换分支——那条分支与加缩放之前逐字节等价，不能被浮点噪声打破。
+     */
+    private static final float SCALE_EPSILON = 0.001f;
+
+    /**
+     * 单字旋转的生效阈值，单位度。
+     *
+     * <p>9 像素的字转 0.01 度，最远角点的位移约
+     * {@code (9/2)·sin(0.01°) ≈ 0.0008} 像素——比一个像素小三个数量级，
+     * 光栅化与肉眼都分辨不出。取这个量级既能漏掉无意义的浮点残值，
+     * 又不会吞掉真实的微小旋转。
+     */
+    private static final float ROTATE_EPSILON_DEGREES = 0.01f;
+
+    /**
+     * 透明度改写的生效阈值。
+     *
+     * <p>差小于千分之一时换算到 8 位 alpha 上不足 0.26 个色阶，
+     * 取整后与不透明完全相同。因此这个区间内直接跳过改写，
+     * 让默认值走「颜色数组原样传递」的路径。
+     */
+    private static final float ALPHA_EPSILON = 0.001f;
+
+    /**
      * 未唱文字的透明度。
      *
      * <p>引用共享常量：整段路径（渲染器）与本类必须一致，
@@ -202,8 +233,7 @@ final class LyricPainter {
             GlyphSpan[] spans = GradientColorizer.spansForChar(
                     charX, charRight, edge, sung, unsung, lineWidth, feather);
             glyph(ch, charWidth, charX, textY, lifts[i] + transform.dy,
-                    viewportLeft, viewRight, spans, transform.dx, transform.bloom,
-                    transform.glowRadius, transform.glowAlpha);
+                    viewportLeft, viewRight, spans, transform);
         }
     }
 
@@ -223,100 +253,260 @@ final class LyricPainter {
     }
 
     /**
-     * 绘制单个字，左右两端可不同色，可带位移与辉光。
+     * 绘制单个字，左右两端可不同色，可带位移、提亮、光晕、缩放与旋转。
      *
-     * <p>位移由特效给出，渐变由染色给出：前者动字形，后者动颜色，两者互不干扰。
+     * <p>分工：位移（{@code dx}/{@code dy}）进坐标、渐变由染色给出、
+     * 缩放与旋转走姿态栈。位移与姿态都动字形，但层次不同：
+     * 位移是屏幕空间的平移，不改变字形朝向；缩放与旋转以字形中心为原点，
+     * 不影响相邻字的位置。颜色一侧则完全由染色负责，两条链路互不干扰。
+     *
+     * <p>缩放必须走姿态栈而不能改字号：字号一变就要重新取字形，
+     * 而图集是按原字号烘焙的，改字号等于换一套字形，
+     * 要么糊、要么得重烘焙整批。姿态变换只是改顶点矩阵，字形始终取自图集。
+     *
+     * @param lift      抬升量，像素；绘制语义为 {@code y - lift}
+     * @param spans     染色段，坐标以 {@code charX} 为原点
+     * @param transform 本单元的呈现变换；{@code dx} 在此消费，{@code dy} 已由调用方并入 {@code lift}
      */
     private void glyph(String ch, int charWidth, int charX, int textY, float lift,
                        int viewportLeft, int viewRight, GlyphSpan[] spans,
-                       float dx, float bloomLevel, float glowRadius, float glowAlpha) {
+                       UnitTransform transform) {
+
+        float drawX = charX + transform.dx;
+
+        float scale = transform.scale;
+        float rotate = transform.rotate;
+        boolean scaling = Math.abs(scale - 1f) > SCALE_EPSILON;
+        boolean rotating = Math.abs(rotate) > ROTATE_EPSILON_DEGREES;
+        boolean transformed = scaling || rotating;
+
+        // 变换中心 = 字形盒中心。
+        //
+        // 横向取**步进宽度**的中点，不是墨迹中点：步进宽度是这个字的格子，
+        // 逐字围绕格子中心缩放时字距保持不变；改用墨迹中点则每个字的重心
+        // 各不相同，同一行放大后会显得疏密不均。
+        //
+        // 纵向取**文字盒**中心，盒顶就是传入的 textY。依据有两条：
+        // 一是 {@code drawTextLifted} 的语义就是 {@code y - lift}，
+        // 二是一旦进入裁剪分支，本类的裁剪框一直以 textY 作为文字上缘
+        // （见下方 enableScissor 的参数）——若 textY 是基线，抬起的字顶部
+        // 早就被那个框切掉了。盒高取平台真实行高：本类已经把它当文字盒高度用，
+        // 这里沿用同一个定义，旋转中心才不会与裁剪框错开。
+        //
+        // lift 必须计入：平台层是在自身的姿态栈里 translate(0, -lift) 之后
+        // 才绘制的，字形最终落在 textY - lift 处，而外层变换作用在**最终屏幕坐标**上。
+        // 漏掉这一项，字被抬起时就会绕自己下方那一点旋转，观感是「边转边飘」。
+        float boxHeight = textSizePx();
+        float centerX = drawX + charWidth * 0.5f;
+        float centerY = textY - lift + boxHeight * 0.5f;
         // 保留浮点坐标，不取整。
         //
         // 9px 位图字形在非整数位置会糊，所以过去这里必须 Math.round；
         // 代价是 1px 以内的位移会被整成 0 或 1，动画看起来一跳一跳。
         // 改用 SDF 后字形在任意小数位置都锐利，取整只带来跳变，因此去掉。
         // 整数平移仍由下面的 scissor 判断保证不越界。
-        float drawX = charX + dx;
-        int left = Math.max((int) Math.floor(drawX), viewportLeft);
-        int right = Math.min((int) Math.ceil(drawX + charWidth), viewRight);
-        if (right - left <= 0) {
-            return;
-        }
+        //
+        // 裁剪边界分两条路径算。
+        //
+        // 未变换时**严格沿用原式**：默认值（scale=1、rotate=0）下像素结果
+        // 必须与加变换之前逐字节一致，而原式里的 left/right 是夹过视口的整数、
+        // 纵向裁剪框另有固定留白。换成统一公式哪怕只差半个像素，
+        // 也会平移所有既有画面——这条判据没法靠「看起来差不多」验收。
+        //
+        // 变换时代之以**变换后的外接矩形**。这一步不能省：裁剪框若仍按未变换的
+        // charWidth 给，旋转过去的那两个角就落在框外，
+        // 表现为「转起来的字被斜切成直边」。
+        boolean full;
+        int scissorLeft;
+        int scissorTop;
+        int scissorWidth;
+        int scissorHeight;
+        if (transformed) {
+            // 矩形绕自身中心旋转，外接矩形半宽 = (w·|cos| + h·|sin|)/2，
+            // 半高把两项对调。缩放先作用于盒，所以宽高先乘 scale。
+            float radians = (float) Math.toRadians(rotate);
+            float cos = Math.abs((float) Math.cos(radians));
+            float sin = Math.abs((float) Math.sin(radians));
+            float grow = Math.max(0f, scale);
+            float margin = outwardMargin();
+            float boxW = (charWidth + 2f * margin) * grow;
+            float boxH = (boxHeight + 2f * margin) * grow;
+            float halfW = (boxW * cos + boxH * sin) * 0.5f;
+            float halfH = (boxW * sin + boxH * cos) * 0.5f;
 
-        // 「这个字完整在视口内吗」的判定必须带容差。
-        //
-        // 实测故障：每句的**最后一个字**没有阴影，倒数第二个正常。
-        // 原因是末字坐标带着特效的亚像素位移（实测 468.10135），
-        // 右缘 477.10135 比整数 viewRight=477 大了 0.1 像素，
-        // 于是只有它被判为越界而进入裁剪分支；又因为阴影是向右偏
-        // 1 像素画的，裁剪框右边界一压，被切掉的正好是阴影。
-        //
-        // 0.1 像素不是「越界」，是取整与浮动位移的噪声。留 1 像素容差
-        // 即可覆盖亚像素位移，同时不影响真正越界的字被裁掉。
-        boolean full = drawX >= viewportLeft - CLIP_TOLERANCE
-                && drawX + charWidth <= viewRight + CLIP_TOLERANCE;
-        if (!full) {
+            int inkLeft = (int) Math.floor(centerX - halfW);
+            int inkRight = (int) Math.ceil(centerX + halfW);
+            int left = Math.max(inkLeft, viewportLeft);
+            int right = Math.min(inkRight, viewRight);
+            if (right - left <= 0) {
+                return;
+            }
+            full = inkLeft >= viewportLeft - CLIP_TOLERANCE
+                    && inkRight <= viewRight + CLIP_TOLERANCE;
+            scissorLeft = left;
+            scissorWidth = right - left;
+            // 纵向同样要放宽：旋转把字向上顶出原来那圈留白，
+            // 缩放则按比例放大墨迹。裁剪框取外接矩形的上下缘。
+            scissorTop = (int) Math.floor(centerY - halfH);
+            scissorHeight = (int) Math.ceil(centerY + halfH) - scissorTop;
+        } else {
+            int left = Math.max((int) Math.floor(drawX), viewportLeft);
+            int right = Math.min((int) Math.ceil(drawX + charWidth), viewRight);
+            if (right - left <= 0) {
+                return;
+            }
+
+            // 「这个字完整在视口内吗」的判定必须带容差。
+            //
+            // 实测故障：每句的**最后一个字**没有阴影，倒数第二个正常。
+            // 原因是末字坐标带着特效的亚像素位移（实测 468.10135），
+            // 右缘 477.10135 比整数 viewRight=477 大了 0.1 像素，
+            // 于是只有它被判为越界而进入裁剪分支；又因为阴影是向右偏
+            // 1 像素画的，裁剪框右边界一压，被切掉的正好是阴影。
+            //
+            // 0.1 像素不是「越界」，是取整与浮动位移的噪声。留 1 像素容差
+            // 即可覆盖亚像素位移，同时不影响真正越界的字被裁掉。
+            full = drawX >= viewportLeft - CLIP_TOLERANCE
+                    && drawX + charWidth <= viewRight + CLIP_TOLERANCE;
             // 真正越界的字仍要裁，但裁剪框要含住向外伸出的墨迹，
             // 否则滚动时边缘那圈阴影与描边会被切成直边。
             int margin = (int) Math.ceil(outwardMargin());
-            enableScissor(Math.max(left - margin, viewportLeft), textY,
-                    right - left + margin);
+            scissorLeft = Math.max(left - margin, viewportLeft);
+            scissorWidth = right - left + margin;
+            scissorTop = textY - LIFT_HEADROOM;
+            scissorHeight = painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM;
         }
 
-        // 一律按常规字重绘制。
+        // 颜色侧的变换：提亮与透明度都在这一步落进段颜色。
+        GlyphSpan[] shown = shade(spans, transform.bloom, transform.alpha);
+
+        // 姿态只在真的需要时压栈。
         //
-        // 加粗已移除：MC 的粗体是同一字形右移一个纹素再画一遍，
-        // 在 9px 位图字形上两份轮廓只错开 1px，叠出 8px，
-        // 看起来就是同一个字重了一次。逐字绘制路径没有原版
-        // drawString 那样能让两份合成一个观感的余地。
-        GlyphSpan[] shown = bloom(spans, bloomLevel);
-        if (shown.length == 1 && shown[0].isSolid()) {
-            // 单色：走平台原有的整字绘制，省掉逐顶点写入。
-            // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
-            painter.drawGlyphGradient(ch, drawX, textY, lift,
-                    new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow,
-                    glowRadius, glowAlpha, strokeWidth, strokeArgb);
-        } else {
-            // 段边界落在前沿函数的折点上，段内插值即精确。
-            //
-            // originX 必须传 charX：spans 是以 charX 为原点生成的
-            // （spansForChar(charX, charRight, ...)），减去它正好得到
-            // 字形局部坐标。若改传 textX（行首），每个字会多偏移
-            // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
-            painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX),
-                    shadow, glowRadius, glowAlpha, strokeWidth, strokeArgb);
+        // 一句 30 字、每帧一次，无变换时白做 60 次矩阵栈操作；而压栈/出栈
+        // 本身不是免费的：平台层每次都要复制一份 4×4 矩阵。阈值与
+        // {@code FloatingLyricRenderer} 里整块 lineScale 的判定一致（0.001），
+        // 两处若各用一套阈值，同一帧里会出现「块已缩放、字还没跟上」的边界帧。
+        Pose2D pose = null;
+        if (transformed) {
+            // 绕字形中心的变换：三步写法，与 Pose2D 注释里的标准模式一致。
+            // 先到中心、再旋转缩放、最后移回来——直接调用 rotate 会绕屏幕左上角转，
+            // 字会沿一个很大的圆弧甩出去。
+            pose = painter.pose();
+            pose.pushPose();
+            pose.translate(centerX, centerY);
+            if (rotating) {
+                pose.rotate(rotate);
+            }
+            if (scaling) {
+                pose.scale(scale, scale);
+            }
+            pose.translate(-centerX, -centerY);
         }
 
-        if (!full) {
-            painter.disableScissor();
+        try {
+            if (!full) {
+                painter.enableScissor(scissorLeft, scissorTop, scissorWidth, scissorHeight);
+            }
+
+            // 一律按常规字重绘制。
+            //
+            // 加粗已移除：MC 的粗体是同一字形右移一个纹素再画一遍，
+            // 在 9px 位图字形上两份轮廓只错开 1px，叠出 8px，
+            // 看起来就是同一个字重了一次。逐字绘制路径没有原版
+            // drawString 那样能让两份合成一个观感的余地。
+            if (shown.length == 1 && shown[0].isSolid()) {
+                // 单色：走平台原有的整字绘制，省掉逐顶点写入。
+                // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
+                painter.drawGlyphGradient(ch, drawX, textY, lift,
+                        new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow,
+                        transform.glowRadius, transform.glowAlpha, strokeWidth, strokeArgb);
+            } else {
+                // 段边界落在前沿函数的折点上，段内插值即精确。
+                //
+                // originX 必须传 charX：spans 是以 charX 为原点生成的
+                // （spansForChar(charX, charRight, ...)），减去它正好得到
+                // 字形局部坐标。若改传 textX（行首），每个字会多偏移
+                // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
+                painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX),
+                        shadow, transform.glowRadius, transform.glowAlpha,
+                        strokeWidth, strokeArgb);
+            }
+        } finally {
+            // 出栈放在 finally：绘制抛异常时若漏了 popPose，
+            // 之后所有字的矩阵都会带着这个变换，一帧之内画面全毁。
+            if (!full) {
+                painter.disableScissor();
+            }
+            if (pose != null) {
+                pose.popPose();
+            }
         }
     }
 
     /**
-     * 把颜色朝白色提亮。
+     * 把提亮与透明度一次性写进段颜色。
      *
-     * <p>提亮只作用于字形本身的颜色：沿 RGB 三通道向 255 插值、保留原 alpha，
-     * 字形边缘仍取自图集，所以字始终清晰。
+     * <p>两件事合在一个循环里：它们都是「只改颜色、不动几何」，各走一遍
+     * 就是多一次数组分配、多一轮对象创建，而这里在逐字热路径上，
+     * 一句 30 字就是 30 次。提亮改 RGB、透明度改 A，通道互不重叠，
+     * 因此先做哪一步都得到同一结果。
      *
-     * <p>它与外发光分工不同：提亮让<b>笔画变白</b>，光晕让<b>轮廓外散开一圈</b>。
-     * 只有提亮时看起来像字被漂白，配上光晕才是被点亮。
+     * <p>恒等时必须返回<b>原数组引用</b>，不能照抄一份值相同的副本：
+     * 默认值（{@code bloom=0}、{@code alpha=1}）下像素结果必须与加这两个
+     * 字段之前逐字节一致，而「返回同一引用」是这条判据唯一可机械验证的形态。
      */
-    private static GlyphSpan[] bloom(GlyphSpan[] spans, float level) {
-        if (level <= 0f || spans.length == 0) {
+    private static GlyphSpan[] shade(GlyphSpan[] spans, float bloomLevel, float alpha) {
+        boolean lift = bloomLevel > 0f;
+        boolean fade = alpha < 1f - ALPHA_EPSILON;
+        if ((!lift && !fade) || spans.length == 0) {
             return spans;
         }
-        float t = Math.min(1f, level);
+        float t = Math.min(1f, bloomLevel);
         GlyphSpan[] out = new GlyphSpan[spans.length];
         for (int i = 0; i < spans.length; i++) {
             GlyphSpan s = spans[i];
-            out[i] = new GlyphSpan(s.startX(), s.endX(),
-                    liftTowardWhite(s.startColor(), t),
-                    liftTowardWhite(s.endColor(), t));
+            int start = s.startColor();
+            int end = s.endColor();
+            if (lift) {
+                start = liftTowardWhite(start, t);
+                end = liftTowardWhite(end, t);
+            }
+            if (fade) {
+                start = scaleAlpha(start, alpha);
+                end = scaleAlpha(end, alpha);
+            }
+            out[i] = new GlyphSpan(s.startX(), s.endX(), start, end);
         }
         return out;
     }
 
-    /** 保留旧的整字提亮入口，供整行绘制路径使用。 */
+    /**
+     * 按比例缩放 ARGB 的 alpha 通道，RGB 不动。
+     *
+     * <p><b>乘</b>而不是覆盖：段颜色里的 alpha 已经带上了整行不透明度
+     * （{@code karaoke} 生成段时乘过 {@code opacity} 与未唱浓度），
+     * 直接赋值会让「整行半透明」与「这个字被特效淡出」互相抹掉——
+     * 表现为调了单元透明度之后，整行的透明度设置失效。
+     */
+    private static int scaleAlpha(int argb, float factor) {
+        int a = Math.round(((argb >>> 24) & 0xFF) * factor);
+        a = a < 0 ? 0 : Math.min(a, 255);
+        return (argb & 0x00FFFFFF) | (a << 24);
+    }
+
+    /**
+     * 保留旧的整字提亮入口，供整行绘制路径使用。
+     *
+     * <p>逐字路径已改走 {@link #shade}（提亮与透明度同一个循环），
+     * 这里只剩 {@link GlyphColors} 这一种入参形态——整行路径的
+     * {@code wholeLine} 与 {@code colorLayer} 不经过 {@code glyph()}，
+     * 因此拿不到 {@code UnitTransform}，也没有逐单元透明度可言。
+     *
+     * <p>提亮只作用于字形本身的颜色：沿 RGB 三通道向 255 插值、保留原 alpha，
+     * 字形边缘仍取自图集，所以字始终清晰。它与外发光分工不同：
+     * 提亮让<b>笔画变白</b>，光晕让<b>轮廓外散开一圈</b>。
+     * 只有提亮时看起来像字被漂白，配上光晕才是被点亮。
+     */
     private static GlyphColors bloom(GlyphColors colors, float level) {
         if (level <= 0f) {
             return colors;
@@ -446,7 +636,6 @@ final class LyricPainter {
         painter.enableScissor(left, textY - LIFT_HEADROOM, width,
                 painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM);
     }
-
     /**
      * 整行绘制的文本准备。
      *

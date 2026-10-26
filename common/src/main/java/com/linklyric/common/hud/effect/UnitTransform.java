@@ -24,6 +24,21 @@ public final class UnitTransform {
     public float scale = 1f;
 
     /**
+     * 旋转角度，单位为度，<b>顺时针为正</b>，围绕字形中心。
+     *
+     * <p>符号与 {@link com.linklyric.common.hud.Pose2D#rotate} 完全一致，
+     * 绘制层原样传入、不做取反：两端平台层已各自把「正角 = 顺时针」
+     * 钉在实现里（依据见 {@code Pose2D.rotate} 的注释——底层
+     * {@code Axis.ZP.rotationDegrees} 把 +X 基推向 +Y，而 GUI 的正交投影
+     * 里 +Y 指向屏幕下方）。若在这里取反，旋转方向就会与
+     * {@code FloatingLyricRenderer} 已有的两处姿态变换相反，
+     * 同一个角度在两处转出两个方向。
+     *
+     * <p>0 表示不旋转，也是 {@link #reset()} 恢复的值。
+     */
+    public float rotate;
+
+    /**
      * 提亮强度，0..1。
      *
      * <p>只把字形颜色朝白色推，不改像素位置。与 {@link #glowAlpha} 分工不同：
@@ -57,6 +72,13 @@ public final class UnitTransform {
         dy = 0f;
         alpha = 1f;
         scale = 1f;
+        // 新字段必须在这里归零，否则会跨帧残留。
+        //
+        // 这个对象是复用的（{@code LyricEffectEngine} 只有一个实例，
+        // 每帧每单元 reset 一次以避免分配），因此任何「忘了重置」的字段
+        // 都会带着上一帧、上一个字的值继续被绘制层读取：
+        // 表现为某个字突然保持旋转，且只在特定特效开启时才复现。
+        rotate = 0f;
         bloom = 0f;
         glowRadius = 0f;
         glowAlpha = 0f;
