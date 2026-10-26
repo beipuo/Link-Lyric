@@ -63,6 +63,16 @@ final class FabricLyricCommand {
                             ctx.getSource().sendFeedback(
                                     Component.translatable(LangKeys.COMMAND_RESET));
                             return 1;
+                        })))
+                // 【spike】离屏 framebuffer 可行性探针。只在排查渲染路线时手动打开，
+                // 打开后屏幕右侧会出现一个采样自离屏缓冲的方块。
+                .then(literal("spike")
+                        .then(literal("glow").executes(ctx -> {
+                            boolean on = com.linklyric.fabric.spike.OffscreenGlowProbe.toggle();
+                            ctx.getSource().sendFeedback(Component.literal(
+                                    on ? "离屏探针：开（屏幕右侧出现离屏采样方块）"
+                                       : "离屏探针：关"));
+                            return 1;
                         })));
         dispatcher.register(root);
     }

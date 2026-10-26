@@ -1,5 +1,6 @@
 package com.linklyric.common.hud;
 
+import com.linklyric.common.hud.LyricPlacement.PlacedLine;
 import com.linklyric.common.hud.effect.LyricEffectEngine;
 import com.linklyric.common.hud.effect.LyricUnitEffect;
 import com.linklyric.core.lyric.LyricLine;
@@ -7,7 +8,6 @@ import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.LyricStyleConfig;
-import com.linklyric.common.style.LyricStyleConfig.Align;
 import com.linklyric.common.i18n.TextResolver;
 import com.linklyric.common.style.LyricEasing;
 import com.linklyric.core.sync.PlayerSnapshot;
@@ -137,6 +137,22 @@ public final class FloatingLyricRenderer {
     }
 
     private final LyricFeed source;
+
+    /** 默认放置策略的单例：无状态，不需要每帧新建。 */
+    private static final PlacementStrategy DEFAULT_PLACEMENT = new LinearStackPlacement();
+
+    /**
+     * 放置策略：决定「本帧每一行画在哪」。
+     *
+     * <p>默认是横排堆叠。渲染器自己不保留任何布局算式——算式在策略里，
+     * 这里只把结果交给绘制。这样换排布（弧形、环形）不必碰绘制链路，
+     * 而绘制链路的正确性恰好是最难用测试钉住的部分。
+     *
+     * <p>声明成 volatile：界面线程可以换策略（例如将来的主题预设），
+     * 渲染在客户端线程读。策略必须无状态，因此换引用是原子的，
+     * 不存在「读到一半旧一半新」的组合。
+     */
+    private volatile PlacementStrategy placement = DEFAULT_PLACEMENT;
 
 
     /** 位置外推器：把每秒一次的上报插值成帧级连续位置。 */
@@ -365,51 +381,38 @@ public final class FloatingLyricRenderer {
         return previewArea;
     }
 
-    /** 当前生效的水平中心：预览区内居中，否则全屏居中并叠加用户偏移。 */
+    /**
+     * 当前生效的水平中心：预览区内居中，否则全屏居中并叠加用户偏移。
+     *
+     * <p>公式本体在 {@link LyricGeometry#anchorX}——放置策略要用同一条，
+     * 而间奏提示这条独立路径也要用同一条。留一个实例入口是为了让
+     * 「锚点读的是哪几个字段」在本类里可见。
+     */
     private int layoutCenterX(int screenWidth) {
-        if (previewArea != null && !previewArea.isEmpty()) {
-            return previewArea.x() + previewArea.width() / 2;
-        }
-        return LyricGeometry.centerX(screenWidth) + offsetX;
+        return LyricGeometry.anchorX(screenWidth, offsetX, previewArea);
     }
 
-    /** 当前生效的基线 y：预览区内垂直居中，否则贴底部并叠加用户偏移。 */
+    /** 当前生效的块心 y：预览区内垂直居中，否则贴底部并叠加用户偏移。 */
     private int layoutCenterY(int screenHeight) {
-        if (previewArea != null && !previewArea.isEmpty()) {
-            return previewArea.y() + previewArea.height() / 2;
-        }
-        return LyricGeometry.centerY(screenHeight) + LyricGeometry.LINE_HEIGHT + offsetY;
+        return LyricGeometry.anchorY(screenHeight, offsetY, previewArea);
     }
 
     /**
-     * 按对齐方式把行宽换算成左边界。
+     * 替换放置策略。
      *
-     * <p>居中沿用原有的中心锚点；左/右对齐则改成以可用区间的两端为锚。
-     * 用端点而不是「中心减半宽」重算，是为了让左右对齐在滚动时也稳定——
-     * 滚动会改变可见宽度，若每帧以中心反推，边界会跟着抖。
+     * <p>换策略等于换整个「歌词以什么形状占屏」的规则，但绘制、命中检测、
+     * 底板都不必跟着改——它们只读 {@link LyricPlacement}。
+     * 传 null 视为恢复默认横排堆叠：策略缺失时渲染器只能整帧不出画，
+     * 那种失败在现场看起来是「歌词消失了」，与样式问题难以区分，
+     * 不值得为一个不该发生的入参留这种症状。
      */
-    private int layoutLeft(Align align, int centerX, int maxWidth, int lineWidth) {
-        return LyricGeometry.left(align, centerX, maxWidth, lineWidth);
+    public void setPlacementStrategy(PlacementStrategy strategy) {
+        this.placement = strategy == null ? DEFAULT_PLACEMENT : strategy;
     }
 
-    /**
-     * 单行可用宽度。
-     *
-     * <p>两种情形走**同一条公式**，只把「屏幕宽度」换成「预览框宽度」：
-     * 都没绕开 {@code maxWidthRatio}。
-     *
-     * <p>此前预览分支直接取 {@code previewArea.width() - 8}，
-     * 把宽度比例整个跳过了——拖动「最大宽度」滑条时预览毫无变化，
-     * 而上面 {@link #setPreviewArea} 的注释偏偏写着「宽度照常生效」。
-     * 玩家据此调出来的宽度，进游戏才发现不是那个样子。
-     */
-    private int layoutMaxWidth(int screenWidth) {
-        if (previewArea != null && !previewArea.isEmpty()) {
-            return Math.max(40, (int) (previewArea.width()
-                    * style.maxWidthRatio()));
-        }
-        return Math.max(40, (int) (LyricGeometry.maxWidth(screenWidth)
-                * style.maxWidthRatio() * 2f));
+    /** 当前放置策略，供界面或测试确认接缝生效。 */
+    public PlacementStrategy placementStrategy() {
+        return placement;
     }
 
     public int offsetX() {
@@ -544,14 +547,11 @@ public final class FloatingLyricRenderer {
 
         int screenWidth = painter.screenWidth();
         int screenHeight = painter.screenHeight();
-        int maxWidth = layoutMaxWidth(screenWidth);
-
-        // 位置由用户偏移量决定，默认居中偏下。
-        //
-        // 偏移以屏幕中心为原点：x 向右为正、y 向下为正。
-        // 存成相对量而不是绝对坐标，换分辨率时歌词不会跑到屏幕外。
-        // 配置界面的预览区传入后，改为在框内居中。
-        int centerX = layoutCenterX(screenWidth);
+        // 可用宽度在截断与滚动判定之前就要用，因此这里先按同一公式算一次。
+        // 公式住在 LyricGeometry，放置策略内部也调它——两处必须是同一条，
+        // 否则「截到什么长度」与「按多宽居中」会各说各话。
+        int maxWidth = LyricGeometry.availableWidth(
+                style.maxWidthRatio(), previewArea, screenWidth);
 
         // 双行布局：主行（当前句）+ 副行（下一句或翻译）。
         //
@@ -578,7 +578,7 @@ public final class FloatingLyricRenderer {
         // 只有在无法裁剪的平台上才退回截断——那种情况滚动会画到面板外。
         // 预览框里不滚动：滚动会使文字横向跑出框外，
         // 而预览要看的是颜色与排版，不是滚动行为。超长时截断即可。
-        boolean inPreview = previewArea != null && !previewArea.isEmpty();
+        boolean inPreview = LyricGeometry.isUsablePreview(previewArea);
         // 「能裁剪」与「要滚动」是两件事，此前被合成一个 {@code canScroll}：
         //   1. 裁剪：逐字绘制要把每个字限制在自己的格里；
         //   2. 滚动：整行超宽时让它横向跑。
@@ -598,34 +598,88 @@ public final class FloatingLyricRenderer {
         boolean nextLineIsLyric = nextLine != null && !nextLine.text().isEmpty();
 
         int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
-        // 副行按 Salt 的 SubTextFontSizeScale 缩小，宽度必须同样缩放，
-        // 否则居中会偏，底板预留也会算多。
-        int secondaryWidth = secondaryText.isEmpty()
-                ? 0
-                : painter.textWidthScaled(secondaryText, SUB_TEXT_FONT_SCALE);
 
-        int centerTextY = layoutCenterY(screenHeight);
-        // 左右留白取自几何常量。此前这里写死 6，而 LyricGeometry.PAD_X
-        // 定义着同一个值却没有任何消费者——调那个常量不会有任何效果。
-        int padX = LyricGeometry.PAD_X;
-        // 底板上下留白必须容纳最大抬升，否则抬起字的顶部会顶出底板、
-        // 在画面上变成「文字浮在框外」。
-        int padY = Math.max(3, LIFT_HEADROOM + 1);
+        // 换行或时间轴变更时重置进度，避免沿用上一行的。
+        //
+        // 这一步必须在放置之前：滚动偏移由已唱宽度推出，而放置要把
+        // 「推到哪儿了」作为输入的一部分。反过来先排位置再算进度，
+        // 滚动量就会永远落后一帧，唱到的字与视口边缘错开半个字。
+        if (index != lastLineIndex) {
+            sungWidth = targetWidthAt(painter, line, visible, positionMs);
+            lastLineIndex = index;
+        } else {
+            float target = targetWidthAt(painter, line, visible, positionMs);
+            sungWidth = advance(sungWidth, target, frameDelta);
+        }
+        float clampedSung = Math.max(0f, Math.min(sungWidth, primaryWidth));
 
-        // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在 centerTextY。
+        // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在锚点上。
         boolean hasSecondary = !secondaryText.isEmpty();
         int drawableLines = drawableLineCount(timeline, index, concurrent);
-        LineLayout.Block block = LineLayout.compute(centerTextY, drawableLines, 0,
-                LyricGeometry.LINE_HEIGHT, this.style.lineGapPx(), SUB_TEXT_FONT_SCALE);
+
+        // 逐行内容先备好再交给放置策略。
+        //
+        // 策略算不出字宽（那是平台能力），因此截断与量宽必须在外面做；
+        // 而「第 1 行可能是翻译兜底、其余行取后续歌词」这条规则属于内容选择，
+        // 同样与位置无关，留在渲染器里才不会被每个策略各实现一遍。
+        //
+        // 空槽位仍然计入行数：块高按槽位数算，某一格暂时没内容时
+        // 也不让整块跳一下。
+        java.util.List<String> lineTexts = new java.util.ArrayList<>(drawableLines);
+        int[] lineWidths = new int[drawableLines];
+        int[] lineColors = new int[drawableLines];
+        float[] lineScales = new float[drawableLines];
+        lineTexts.add(visible);
+        // 主行宽度填原始值：策略里「非滚动时视口等于主行宽」读的是单独字段，
+        // 这里保持一致，避免两处对「主行多宽」各有一个说法。
+        lineWidths[0] = primaryWidth;
+        lineColors[0] = sungColor();
+        lineScales[0] = 1f;
+        for (int i = 1; i < drawableLines; i++) {
+            String text = "";
+            if (hasSecondary) {
+                boolean firstExtra = i == 1;
+                // 首条副行可能来自翻译兜底，其余行一律取后续歌词。
+                LyricLine upcoming = firstExtra && !nextLineIsLyric
+                        ? null : timeline.line(index + i);
+                text = firstExtra
+                        ? secondaryText
+                        : (upcoming == null ? "" : clip(painter, upcoming.text(), maxWidth));
+            }
+            // 副行按 Salt 的 SubTextFontSizeScale 缩小，宽度必须同样缩放，
+            // 否则居中会偏，底板预留也会算多。
+            lineTexts.add(text);
+            lineWidths[i] = text.isEmpty() ? 0 : painter.textWidthScaled(text, SUB_TEXT_FONT_SCALE);
+            lineColors[i] = i == 1 && !nextLineIsLyric
+                    ? translationColor() : nextLineColor();
+            lineScales[i] = SUB_TEXT_FONT_SCALE;
+        }
 
         // 行切换：其余行连续上移一行补位。旧主行直接在换行瞬间消失，
         // 理由见 {@link LineTransition} 的类注释。
         long durationMs = style.lineTransitionMs();
-        // 位移步长取真实行步长（行高 + 当前行距），与上面 LineLayout.compute
-        // 用的是同一个 gap。写死常量的话，改行距后收起的那一像素会以跳格收尾。
+        // 位移步长取真实行步长（行高 + 当前行距），与放置策略内部
+        // LineLayout.compute 用的是同一个 gap。写死常量的话，
+        // 改行距后收起的那一像素会以跳格收尾。
         int lineStep = LyricGeometry.LINE_HEIGHT + this.style.lineGapPx();
         int blockShift = transition.blockShift(durationMs, lineStep);
-        int mainBaselineY = block.baseline() + blockShift;
+
+        // 位置编排交给策略：几何算式全部搬出去，这里只读结果。
+        //
+        // 策略拿不到绘制器，也算不出字宽——量宽与排版分开，
+        // 是「换一种排布不必碰绘制链路」的前提。
+        PlacementInput placementInput = new PlacementInput(screenWidth, screenHeight,
+                previewArea, offsetX, offsetY, style, lineTexts, lineWidths,
+                lineColors, lineScales, primaryWidth, clampedSung, scrolling, blockShift);
+        LyricPlacement placed = placement.place(placementInput);
+
+        // 只取绘制真正需要的几项。留白与块边界不再单独取局部变量：
+        // 它们只经由 footprint 使用，多留一份副本就多一次「两份对不上」的机会。
+        int centerX = placed.centerX();
+        int centerTextY = placed.centerY();
+        int viewWidth = placed.viewWidth();
+        int viewportLeft = placed.viewportLeft();
+        int textX = placed.textX();
 
         // 字号缩放：整块（主行 + 副行）一起放大缩小。
         //
@@ -646,62 +700,33 @@ public final class FloatingLyricRenderer {
             pose.translate(-centerX, -centerTextY);
         }
 
-        int viewWidth = scrolling ? maxWidth : primaryWidth;
-        // 视口跟随对齐方式：左对齐时贴左端、右对齐时贴右端，
-        // 否则滚动起点会偏，正在唱的字会跑出可视区。
-        int viewportLeft = layoutLeft(this.style.align(), centerX, maxWidth, viewWidth);
-        int viewportRight = viewportLeft + viewWidth;
-
-        // 换行或时间轴变更时重置进度，避免沿用上一行的。
-        if (index != lastLineIndex) {
-            sungWidth = targetWidthAt(painter, line, visible, positionMs);
-            lastLineIndex = index;
-        } else {
-            float target = targetWidthAt(painter, line, visible, positionMs);
-            sungWidth = advance(sungWidth, target, frameDelta);
-        }
-        float clampedSung = Math.max(0f, Math.min(sungWidth, primaryWidth));
-
-        // 滚动偏移由已唱宽度直接决定，不额外维护动画状态：
-        // sungWidth 本身已经平滑过，偏移自然跟着平滑。
-        int scroll = scrolling
-                ? Math.round(scrollOffsetFor(clampedSung, viewWidth, primaryWidth))
-                : 0;
-        int textX = viewportLeft + scroll;
-
-
         // 歌词整体的屏幕包围盒。
         //
         // 无论是否拖动都要算：命中检测（悬停、点击）依赖它，
         // 而悬停恰恰发生在「看不见底板」的平常状态。
         // 高度覆盖主行与副行，横向覆盖实际绘制宽度（滚动时是整个视口），
         // 这样点到边上的字也算命中。
-        // 包围盒按**块的稳定位置**算，不含切换偏移。
-        // 否则换行那几帧区域会跟着位移，悬停命中框抖动。
-        int stableMainY = block.baseline();
-        int blockTop = stableMainY - padY;
-        int blockBottom = stableMainY + block.height() + padY;
-        Bounds own = new Bounds(viewportLeft - padX, blockTop,
-                viewWidth + padX * 2, blockBottom - blockTop);
+        // 矩形由放置结果派生，与下面底板**共用同一个**，
+        // 不再各写一遍「left-padX / blockTop / width+2padX」。
         // 预览时把包围盒裁进框内：命中检测与描边都不该超出预览区。
-        bounds = inPreview ? intersect(own, previewArea) : own;
+        Bounds footprint = placed.footprint();
+        bounds = inPreview ? intersect(footprint, previewArea) : footprint;
 
         // 底板默认关闭：歌词直接浮在画面上。
         //
         // 只有拖动时才显示，作为可拖区域的视觉提示；
         // 平时留一块半透明底会压住画面，也违背「不打扰」的默认。
         if (dragging) {
-            painter.fillRect(viewportLeft - padX, blockTop,
-                    viewWidth + padX * 2, blockBottom - blockTop, COLOR_BACKDROP);
+            painter.fillRect(footprint.x(), footprint.y(),
+                    footprint.width(), footprint.height(), COLOR_BACKDROP);
             // 描一圈边，拖动态下手感更明确，也标出可拖范围。
-            painter.fillRect(viewportLeft - padX, blockTop,
-                    viewWidth + padX * 2, 1, COLOR_DRAG_BORDER);
-            painter.fillRect(viewportLeft - padX, blockBottom - 1,
-                    viewWidth + padX * 2, 1, COLOR_DRAG_BORDER);
-            painter.fillRect(viewportLeft - padX, blockTop, 1,
-                    blockBottom - blockTop, COLOR_DRAG_BORDER);
-            painter.fillRect(viewportLeft + padX + viewWidth - 1, blockTop, 1,
-                    blockBottom - blockTop, COLOR_DRAG_BORDER);
+            painter.fillRect(footprint.x(), footprint.y(), footprint.width(), 1, COLOR_DRAG_BORDER);
+            painter.fillRect(footprint.x(), footprint.y() + footprint.height() - 1,
+                    footprint.width(), 1, COLOR_DRAG_BORDER);
+            painter.fillRect(footprint.x(), footprint.y(), 1,
+                    footprint.height(), COLOR_DRAG_BORDER);
+            painter.fillRect(footprint.x() + footprint.width() - 1, footprint.y(), 1,
+                    footprint.height(), COLOR_DRAG_BORDER);
         }
 
         // 逐字偏移表：底色层与高亮层必须共用同一份。
@@ -732,11 +757,18 @@ public final class FloatingLyricRenderer {
         // 块上移补位不受影响，各行仍然连续移动。
 
         // 主行越出块顶就不画：这是上移到底后旧行彻底让出位置的落点。
-        boolean mainVisible = mainBaselineY >= blockTop - 1;
+        // 判据读的是放置结果里的落笔位置与块顶，二者本来就同源。
+        PlacedLine mainLine = placed.primary();
+        int mainBaselineY = mainLine == null ? placed.blockTop() : mainLine.y();
+        boolean mainVisible = mainBaselineY >= placed.blockTop() - 1;
         if (mainVisible) {
             if (canScissor) {
+                // 裁剪右界取「视口右边界」与「视口左 + 视口宽」的较小值。
+                // 两者在横排策略下恒等，但保留这次取小是个不变式：
+                // 将来若策略给出彼此不一致的 viewportRight/viewWidth，
+                // 逐字裁剪应偏保守（少露一点），而不是把字画到视口外。
                 textPainter(painter).karaoke(visible, textX, mainBaselineY, clampedSung,
-                        viewportLeft, Math.min(viewportRight, viewportLeft + viewWidth),
+                        viewportLeft, Math.min(placed.viewportRight(), viewportLeft + viewWidth),
                         lifts, opacity, sungColor(), unsungColor(), line, positionMs);
             } else {
                 drawByWholeUnit(painter, line, visible, textX, mainBaselineY,
@@ -746,55 +778,22 @@ public final class FloatingLyricRenderer {
 
         // 后续各行：静态预览，不做逐字染色，字号统一收一档。
         // 它们不参与淡入，否则同一句在过渡期与稳定期的颜色不一致。
-        if (hasSecondary) {
-            for (int i = 1; i < drawableLines; i++) {
-                boolean firstExtra = i == 1;
-                // 首条副行可能来自翻译兜底，其余行一律取后续歌词。
-                LyricLine upcoming = firstExtra && !nextLineIsLyric
-                        ? null : timeline.line(index + i);
-                String text = firstExtra
-                        ? secondaryText
-                        : (upcoming == null ? "" : clip(painter, upcoming.text(), maxWidth));
-                if (text.isEmpty()) {
-                    continue;
-                }
-                int color = firstExtra && !nextLineIsLyric
-                        ? translationColor() : nextLineColor();
-                // 左边界按**缩放后宽度**算，因为 drawTextScaled 以 (x, y)
-                // 为原点缩放，缩放后文字实际占据 [x, x + width*scale]。
-                //
-                // 若用未缩放宽度居中，居中算出来的左边会偏左，
-                // 而副行实际更窄，于是它的中心比主行偏左
-                // (width - width*0.8)/2 像素。行数越多越明显，
-                // 看起来就是「多行歌词不居中」。
-                int width = painter.textWidthScaled(text, SUB_TEXT_FONT_SCALE);
-                int x = layoutLeft(this.style.align(), centerX, maxWidth, width);
-                int y = LineLayout.lineTop(block, i, 0, LyricGeometry.LINE_HEIGHT,
-                        this.style.lineGapPx(), SUB_TEXT_FONT_SCALE) + blockShift;
-                // 副行同样应用字重与阴影设置。
-                textPainter(painter).textScaled(text, x, y,
-                        SUB_TEXT_FONT_SCALE, color);
+        //
+        // 位置、宽度、颜色、缩放全部来自放置结果：此处不再算任何居中。
+        // 空槽位在放置阶段就已剔除（占高度但不出画），因此这里只管画。
+        for (PlacedLine linePlacement : placed.lines()) {
+            if (linePlacement.isPrimary()) {
+                continue;
             }
+            // 副行同样应用字重与阴影设置。
+            textPainter(painter).textScaled(linePlacement.text(), linePlacement.x(),
+                    linePlacement.y(), linePlacement.scale(), linePlacement.color());
         }
 
         if (scaling) {
             painter.pose().popPose();
         }
         return true;
-    }
-
-    /**
-     * 滚动偏移：演唱点越过中线后才推动文本。
-     *
-     * <p>取自 HyperLyric 的 {@code ScrollStepper}。规则是
-     * 「高亮超过视口中线多少，就向左推多少」，并夹在
-     * {@code [-(行宽-视口宽), 0]} 之间，因此开头不会提前滚、结尾不会滚过头。
-     *
-     * <p>这样演唱中的字始终停在中线附近，读起来最省力；
-     * 若改成按时间匀速滚，速度会与演唱速度脱节，反而更难跟。
-     */
-    private static float scrollOffsetFor(float sungWidth, int viewWidth, int lineWidth) {
-        return LyricGeometry.scrollOffset(sungWidth, viewWidth, lineWidth);
     }
 
     /**

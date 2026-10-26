@@ -130,6 +130,10 @@ public final class LinkLyricFabric implements ClientModInitializer {
         if (client == null || client.font == null) {
             return;
         }
+        // 【spike】离屏探针的唯一接入点。关闭态下 current() 是一个空实现，
+        // 开销为一次虚调用；探针自身出错会自我熔断，不会波及下面的歌词渲染。
+        com.linklyric.fabric.spike.OffscreenGlowProbe.current()
+                .render(graphics, deltaTracker.getGameTimeDeltaPartialTick(false));
         // 待打开的界面必须在 hideGui 判断**之前**处理。
         //
         // 曾经放在后面，于是玩家按着 F1 时发 /linklyric config：

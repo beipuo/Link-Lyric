@@ -95,6 +95,77 @@ public final class LyricGeometry {
     }
 
     /**
+     * 预览区是否真的可用。
+     *
+     * <p>判据只有一条：非 null 且非空。此前这条判据在渲染器里写了四遍
+     * （居中、垂直居中、可用宽度、包围盒裁切），任何一处漏写，
+     * 就有一条路径会把预览当全屏算，或者反过来。收成一处后，
+     * 「哪些地方受预览约束」变成一个可以数的问题。
+     */
+    public static boolean isUsablePreview(FloatingLyricRenderer.Bounds previewArea) {
+        return previewArea != null && !previewArea.isEmpty();
+    }
+
+    /**
+     * 单行可用宽度。
+     *
+     * <p>预览与全屏走**同一条公式**，只把「屏幕宽度」换成「预览框宽度」：
+     * 都没绕开 {@code maxWidthRatio}。
+     *
+     * <p>此前预览分支直接取 {@code 框宽 - 8}，把宽度比例整个跳过了——
+     * 拖动「最大宽度」滑条时预览毫无变化，而样式接口的注释偏偏写着
+     * 「预览里宽度照常生效」。玩家据此调出来的宽度，进游戏才发现不是那个样子。
+     *
+     * <p>全屏分支里的 {@code * 2f} 是历史包袱：{@link #maxWidth(int)} 返回的是
+     * 半屏宽，这里再乘回来。两个半屏叠在一起看着费解，但改动会平移所有既有像素，
+     * 因此原样保留，只把公式集中到这里。
+     *
+     * <p>下限 40 像素：再窄的话一句中文只剩两三个字，
+     * 滚动视口也窄到读不出上下文。
+     */
+    public static int availableWidth(float maxWidthRatio,
+                                     FloatingLyricRenderer.Bounds previewArea,
+                                     int screenWidth) {
+        if (isUsablePreview(previewArea)) {
+            return Math.max(40, (int) (previewArea.width() * maxWidthRatio));
+        }
+        return Math.max(40, (int) (maxWidth(screenWidth) * maxWidthRatio * 2f));
+    }
+
+    /**
+     * 纵向锚点：预览区内垂直居中，否则贴底部加用户偏移。
+     *
+     * <p>全屏分支在 {@link #centerY(int)} 之上再补一个 {@link #LINE_HEIGHT}，
+     * 因为那里给的是「字形底再往上留出物品栏」的位置，而这里要的是**块心**。
+     * 少补这一下歌词整体差一行高——只有把新旧截图逐像素叠起来才看得出来，
+     * 属于那种「看起来对、其实一直偏了 9 像素」的历史包袱，照原样保留。
+     *
+     * <p>预览时用户偏移必须被忽略：偏移描述的是「相对全屏底部的位置」，
+     * 在预览框里没有意义，而且几十像素就能把文字顶出框外。
+     */
+    public static int anchorY(int screenHeight, int offsetY,
+                              FloatingLyricRenderer.Bounds previewArea) {
+        if (isUsablePreview(previewArea)) {
+            return previewArea.y() + previewArea.height() / 2;
+        }
+        return centerY(screenHeight) + LINE_HEIGHT + offsetY;
+    }
+
+    /**
+     * 横向锚点：预览区内居中，否则全屏居中加用户偏移。
+     *
+     * <p>与 {@link #anchorY} 成对：两个锚点若一处认预览、一处不认，
+     * 画面上就是「水平按框算、垂直按全屏算」的斜向错位。
+     */
+    public static int anchorX(int screenWidth, int offsetX,
+                              FloatingLyricRenderer.Bounds previewArea) {
+        if (isUsablePreview(previewArea)) {
+            return previewArea.x() + previewArea.width() / 2;
+        }
+        return centerX(screenWidth) + offsetX;
+    }
+
+    /**
      * 预览框应有的高度：恰好装下 {@code lines} 行歌词，不多不少。
      *
      * <p>此前四个界面各写一个 {@code PREVIEW_HEIGHT = 56}。那是按「两行」
