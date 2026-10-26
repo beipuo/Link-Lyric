@@ -61,20 +61,30 @@ public final class LinearStackPlacement implements PlacementStrategy {
         int maxWidth = LyricGeometry.availableWidth(
                 style.maxWidthRatio(), in.previewArea(), in.screenWidth());
 
+        // 块高必须先于锚点：锚点比例描述的是「块心落在纵向哪一处」，
+        // 而「贴顶」那一档要把块顶换算成块心，需要块高。
+        // 这里用的 LineLayout.blockHeight 与下面 LineLayout.compute 用的是
+        // 同一个方法、同一组实参，因此锚点里的块高与实际块高不可能不一致。
+        int slots = Math.max(1, in.lineCount());
+        int span = in.primarySpan();
+        int blockHeight = LineLayout.blockHeight(slots, span,
+                LyricGeometry.LINE_HEIGHT, style.lineGapPx(), SUB_SCALE);
+
         int centerX = LyricGeometry.anchorX(
                 in.screenWidth(), in.offsetX(), in.previewArea());
         int centerY = LyricGeometry.anchorY(
-                in.screenHeight(), in.offsetY(), in.previewArea());
+                in.screenHeight(), in.offsetY(), in.previewArea(),
+                style.anchorRatio(), blockHeight);
 
-        int padX = LyricGeometry.PAD_X;
+        // 左右留白读样式而不是常量：三个策略此前各抄一份 PAD_X，
+        // 想让它可调就得改三处，漏一处的症状是「底板比包围盒窄」。
+        int padX = style.padXPx();
         // 上下留白必须容纳最大抬升，否则抬起的字顶部会顶出底板，
         // 画面上就是「文字浮在框外」。+1 是抗锯齿的那一行。
         int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
 
         // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在 centerY。
         // 前 primarySpan 行是同一句（折行段），与主行同字号；其余副行缩一档。
-        int slots = Math.max(1, in.lineCount());
-        int span = in.primarySpan();
         LineLayout.Block block = LineLayout.compute(centerY, slots, span,
                 LyricGeometry.LINE_HEIGHT, style.lineGapPx(), SUB_SCALE);
 

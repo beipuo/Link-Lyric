@@ -70,6 +70,20 @@ public final class LayoutConfig {
     private static final String KEY_MIXED_ENABLED = "mixedScript";
     private static final String KEY_MIXED_SCALE = "mixedScriptScale";
     private static final String KEY_MIXED_BASELINE = "mixedScriptBaseline";
+    /**
+     * 纵向锚点比例与左右留白。
+     *
+     * <p>两个键都**缺键即默认**，且默认值恰好等于改造前的硬编码行为
+     * （贴底、留白 6）。于是旧配置文件升级后画面逐像素不变——
+     * 这不是靠「写进文件里的值恰好相同」，而是靠缺键时返回的
+     * {@code LyricStyleConfig.DEFAULT} 里那两个字段本身就是旧值。
+     *
+     * <p>锚点比例存浮点十进制（{@code Float.toString}）：它要能被手改，
+     * 而百分比整数会让「0.15」这种常用值变成 15、从而多一层换算。
+     * 留白是整数像素，像素本来就没有小数。
+     */
+    private static final String KEY_ANCHOR_RATIO = "anchorRatio";
+    private static final String KEY_PAD_X = "padX";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -165,7 +179,13 @@ public final class LayoutConfig {
                         parseInt(props.getProperty(KEY_MIXED_SCALE),
                                 MixedScript.DEFAULT_SCALE_PERCENT),
                         parseInt(props.getProperty(KEY_MIXED_BASELINE),
-                                MixedScript.DEFAULT_BASELINE_SHIFT_PX)));
+                                MixedScript.DEFAULT_BASELINE_SHIFT_PX)),
+                // 锚点比例与左右留白：缺键即回落到样式默认值（贴底 + 留白 6），
+                // 与改造前的硬编码行为相同。这里不做「读到 0 才贴底」之类的
+                // 特判：0 是合法值，用它当「缺键」的哨兵会让显式写成 0 的用户
+                // 在升级后被改回别的值。
+                parseFloat(props.getProperty(KEY_ANCHOR_RATIO), d.anchorRatio()),
+                parseInt(props.getProperty(KEY_PAD_X), d.padXPx()));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -310,6 +330,11 @@ public final class LayoutConfig {
                 Integer.toString(style.mixed().cjkScalePercent()));
         props.setProperty(KEY_MIXED_BASELINE,
                 Integer.toString(style.mixed().baselineShiftPx()));
+        // 锚点比例用 Float.toString 而不是格式化到固定小数位：
+        // 往返必须无损，否则手改配置文件写成 0.15 的用户在下次保存后
+        // 会看到 0.2——数字莫名其妙地变了，而他没改过任何东西。
+        props.setProperty(KEY_ANCHOR_RATIO, Float.toString(style.anchorRatio()));
+        props.setProperty(KEY_PAD_X, Integer.toString(style.padXPx()));
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();

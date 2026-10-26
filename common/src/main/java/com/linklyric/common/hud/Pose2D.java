@@ -66,9 +66,9 @@ public interface Pose2D {
      * 而世界点那一套在前一层变换不是恒等时会算错——嵌套时几乎必然如此。
      *
      * <p>绕任意中心点旋转的标准写法是三步，项目里已经用了三次同一模式：
-     * {@code FloatingLyricRenderer} 第 697-700 行（整块按 {@code lineScale} 缩放，
-     * 以块心为原点）与第 835-839 行（间奏提示同样处理），
-     * 以及 {@link LyricCanvas#drawTextScaled} 第 165-169 行（以 {@code (x,y)} 为原点）：
+     * {@code FloatingLyricRenderer.pushLineRotation}（整块按 {@code lineScale}
+     * 缩放，以块心为原点）与它的间奏提示分支（同样处理），
+     * 以及 {@link LyricCanvas#drawTextScaled}（以 {@code (x,y)} 为原点）：
      * <pre>{@code
      * pose.pushPose();
      * pose.translate(cx, cy);   // 移到中心，此时原点在中心
@@ -86,13 +86,14 @@ public interface Pose2D {
      *
      * <p>本接口有 {@link #IDENTITY} 常量、可能被第三方实现与测试替身实现。
      * 新增抽象方法会让这些实现全部编译失败，而它们中的多数根本不需要旋转。
-     * 这与 {@link LyricCanvas} 里那批 {@code default} 方法（见该文件第 20-35 行
-     * {@code charWidth} 的注释）是同一约定：<b>默认实现必须退化，不许报错</b>。
+     * 这与 {@link LyricCanvas} 里那批 {@code default} 方法（见
+     * {@code LyricCanvas.charWidth} 的注释）是同一约定：
+     * <b>默认实现必须退化，不许报错</b>。
      *
      * <p>但退化只保证「不崩」，不保证「生效」。两端的真实实现
      * （{@code LinkLyricFabric} 与 {@code LinkLyricNeoForge} 的 {@code pose()}）
      * 必须逐个覆写，否则旋转会静默失效——这正是
-     * {@link LyricCanvas#drawTextScaled} 注释（第 147-159 行）记下的那种坑：
+     * {@link LyricCanvas#drawTextScaled} 注释记下的那种坑：
      * 默认实现看着像实现了，实际把参数丢掉，只有一端漏覆写就变成两端表现不一致。
      *
      * @param degrees 角度，顺时针为正

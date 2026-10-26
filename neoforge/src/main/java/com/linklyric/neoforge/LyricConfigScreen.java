@@ -123,7 +123,19 @@ final class LyricConfigScreen extends Screen {
         int y = 0;
 
         for (Option option : Option.values()) {
-            addScrollWidget(new OptionSlider(left, y, COLUMN_WIDTH, option));
+            AbstractWidget slider = new OptionSlider(left, y, COLUMN_WIDTH, option);
+            // 两个新刻度需要说明，否则滑条上只有「纵向位置 37%」这种
+            // 读不出含义的数字：37% 是相对谁的 37%？贴顶之后会撞上什么？
+            // 其余选项的说明写在原版控件自己的 tooltip 里，这里不重复。
+            String tooltip = switch (option) {
+                case ANCHOR_RATIO -> LangKeys.TIP_ANCHOR_RATIO;
+                case PAD_X -> LangKeys.TIP_PAD_X;
+                default -> null;
+            };
+            if (tooltip != null) {
+                slider.setTooltip(Tooltip.create(Component.translatable(tooltip)));
+            }
+            addScrollWidget(slider);
             y += ROW_HEIGHT + ROW_GAP;
         }
 

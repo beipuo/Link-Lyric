@@ -115,6 +115,26 @@ public final class LangKeys {
     /** 行间距。 */
     public static final String OPTION_LINE_GAP = "linklyric.config.line_gap";
 
+    /**
+     * 纵向锚点位置。
+     *
+     * <p>滑条上是百分比（0% 贴底、100% 贴顶），但配置文件与
+     * {@code LyricStyleConfig.anchorRatio()} 里存的是 0..1 的浮点比例。
+     * 两者之间只隔一次乘 100，界面上不写「比例 0.37」这种读不出来的数字。
+     */
+    public static final String OPTION_ANCHOR_RATIO = "linklyric.config.anchor_ratio";
+    public static final String TIP_ANCHOR_RATIO = "linklyric.tip.anchorRatio";
+
+    /**
+     * 左右留白。
+     *
+     * <p>与行间距分开命名（{@code pad_x} 而不是复用 {@code line_gap}）：
+     * 两者都是像素，但一个是纵向的一个是横向的，合成一个键后
+     * 界面上会出现两个同名的滑条。
+     */
+    public static final String OPTION_PAD_X = "linklyric.config.pad_x";
+    public static final String TIP_PAD_X = "linklyric.tip.padX";
+
     /** 像素单位。 */
     public static final String UNIT_PX = "linklyric.config.unit_px";
 

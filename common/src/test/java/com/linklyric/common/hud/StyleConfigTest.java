@@ -30,7 +30,9 @@ class StyleConfigTest {
                 // 末位是排布形态。传 null 是为了同时验证构造器会兜底成横排。
                 null,
                 // 混排校正同样传 null，验证它兜底成关闭态而非「开启 + 默认刻度」。
-                null);
+                null,
+                // 锚点比例与留白同样越界，验证构造器夹取。
+                99f, 99_999);
 
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, s.offsetMs());
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, s.lineTransitionMs());
@@ -38,6 +40,31 @@ class StyleConfigTest {
         assertEquals(LyricStyleConfig.MAX_WIDTH_RATIO, s.maxWidthRatio());
         assertEquals(com.linklyric.common.hud.LayoutMode.LINEAR, s.layout(),
                 "null 排布形态必须兜底成横排，否则切形态后会一片空白");
+        assertEquals(LyricStyleConfig.MAX_ANCHOR_RATIO, s.anchorRatio(), 1e-6f,
+                "锚点比例应夹到上限 1（贴顶）");
+        assertEquals(LyricStyleConfig.MAX_PAD_X, s.padXPx(),
+                "左右留白应夹到上限");
+    }
+
+    /**
+     * 锚点比例与留白在负向、NaN 两侧都要夹住。
+     *
+     * <p>NaN 是一个**真会从配置文件里进来**的值：{@code Float.parseFloat("NaN")}
+     * 不抛异常，返回 NaN，于是 {@code LayoutConfig.read()} 会把它一路送到构造器。
+     * 若构造器不兜住，{@code LyricGeometry.anchorRatioY} 里的比较会两边都不成立，
+     * 插值出一个无意义的坐标——歌词整块消失，且没有任何报错。
+     */
+    @Test
+    void 锚点与留白负向越界及NaN被夹紧() {
+        assertEquals(LyricStyleConfig.MIN_ANCHOR_RATIO,
+                LyricStyleConfig.DEFAULT.withAnchorRatio(-5f).anchorRatio(), 1e-6f,
+                "负比例应夹到 0（贴底）");
+        assertEquals(LyricStyleConfig.MIN_ANCHOR_RATIO,
+                LyricStyleConfig.DEFAULT.withAnchorRatio(Float.NaN).anchorRatio(), 1e-6f,
+                "NaN 应兜到 0（贴底），与 clampFloat 的既有约定一致");
+        assertEquals(LyricStyleConfig.MIN_PAD_X,
+                LyricStyleConfig.DEFAULT.withPadXPx(-5).padXPx(),
+                "负留白应夹到 0");
     }
 
     /** 负数侧同样要夹紧。 */

@@ -44,6 +44,22 @@ public final class LyricOptions {
         /** 行间距，像素。 */
         LINE_GAP(LangKeys.OPTION_LINE_GAP, LangKeys.UNIT_PX,
                 LyricStyleConfig.MIN_LINE_GAP, LyricStyleConfig.MAX_LINE_GAP, 1),
+        /**
+         * 纵向锚点位置，百分比。
+         *
+         * <p>滑条刻度是 0..100 的百分比，写回样式时除以 100 变成
+         * {@code anchorRatio} 的 0..1 浮点。这与 {@code LINE_SCALE}、
+         * {@code WIDTH_RATIO} 的做法一致：滑条只认整数，比例住在样式里。
+         *
+         * <p>单位取 {@code UNIT_PERCENT} 而不是像素：这个量的语义是
+         * 「屏幕纵向的哪个位置」，与屏幕高度成正比；写成像素的话
+         * 同一个值在 720p 与 4K 上落在完全不同的地方。
+         */
+        ANCHOR_RATIO(LangKeys.OPTION_ANCHOR_RATIO, LangKeys.UNIT_PERCENT,
+                0, 100, 1),
+        /** 左右留白，像素。 */
+        PAD_X(LangKeys.OPTION_PAD_X, LangKeys.UNIT_PX,
+                LyricStyleConfig.MIN_PAD_X, LyricStyleConfig.MAX_PAD_X, 1),
         /** 描边宽度，像素。 */
         STROKE_PX(LangKeys.OPTION_STROKE_PX, LangKeys.UNIT_PX,
                 LyricStyleConfig.MIN_STROKE_PX, LyricStyleConfig.MAX_STROKE_PX, 1),
@@ -100,6 +116,8 @@ public final class LyricOptions {
                 case OPACITY -> Math.round(style.opacity() * 100f);
                 case WEIGHT_PERCENT -> style.weightPercent();
                 case LINE_GAP -> style.lineGapPx();
+                case ANCHOR_RATIO -> Math.round(style.anchorRatio() * 100f);
+                case PAD_X -> style.padXPx();
                 case STROKE_PX -> style.strokePx();
                 case STROKE_ALPHA -> style.strokeAlphaPercent();
                 case MIXED_SCALE -> style.mixed().cjkScalePercent();
@@ -119,6 +137,8 @@ public final class LyricOptions {
                 case OPACITY -> style.withOpacity(raw / 100f);
                 case WEIGHT_PERCENT -> style.withWeightPercent(raw);
                 case LINE_GAP -> style.withLineGapPx(raw);
+                case ANCHOR_RATIO -> style.withAnchorRatio(raw / 100f);
+                case PAD_X -> style.withPadXPx(raw);
                 case STROKE_PX -> style.withStrokePx(raw);
                 case STROKE_ALPHA -> style.withStrokeAlphaPercent(raw);
                 case MIXED_SCALE ->
