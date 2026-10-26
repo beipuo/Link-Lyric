@@ -10,6 +10,7 @@ import com.linklyric.fabric.render.sdf.SdfRenderType;
 import com.linklyric.common.config.LayoutConfig;
 import com.linklyric.common.hud.LyricDragController;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.math.Axis;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
@@ -25,6 +26,7 @@ import net.minecraft.client.renderer.ShaderInstance;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
+import org.joml.Matrix4f;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -552,6 +554,57 @@ public final class LinkLyricFabric implements ClientModInitializer {
                 @Override
                 public void scale(float x, float y) {
                     stack.scale(x, y, 1f);
+                }
+
+                /**
+                 * 顺时针为正。
+                 *
+                 * <p>{@code Axis.ZP} 在 1.21.1 是 {@code com.mojang.math.Axis} 的常量
+                 * （1.19.x 那套 {@code Vector3f.XP} 已经没了），它等价于
+                 * {@code new Quaternionf().rotationZ(toRadians(degrees))}。
+                 * {@code rotationZ} 把单位基映射成 {@code (1,0) -> (cos, sin)}，
+                 * 而 GUI 的正交投影把 +Y 指向屏幕下方
+                 * （{@code setOrtho(0, w, h, 0, ...)}），
+                 * 所以正角把「右」转向「下」，即肉眼可见的顺时针。
+                 *
+                 * <p>实测：绕 (200,200) 转 +90°，中心右侧的 (300,200) 落到 (200,300)，
+                 * 从 3 点钟到 6 点钟。因此这里<b>直接传正号，不取负</b>；
+                 * 若哪天换了坐标系，符号会在这里一次性纠正。
+                 */
+                @Override
+                public void rotate(float degrees) {
+                    stack.mulPose(Axis.ZP.rotationDegrees(degrees));
+                }
+
+                /**
+                 * 斜切：{@code x' = x + sx * y}、{@code y' = y + sy * x}。
+                 *
+                 * <p>原版 {@code PoseStack} 没有 shear，只能手工构造矩阵。
+                 * JOML 的 {@code m??} 字段布局容易记反：{@code m10} 是
+                 * <b>第 0 列第 1 行</b>（列主序，第一个下标记列），实测
+                 * {@code setRowColumn(1, 0, v)} 写的是 {@code m01}、而
+                 * {@code m10(v)} 才能让 (0,1) 基向量产生 x 方向的偏移。
+                 *
+                 * <p>这里用 16 参数构造器按<b>列主序</b>填，不用字段名，
+                 * 免得后来者再被 {@code m10}/{@code m01} 绕一次。目标矩阵
+                 * <pre>
+                 * | 1   sx  0  0 |
+                 * | sy  1   0  0 |
+                 * | 0   0   1  0 |
+                 * | 0   0   0  1 |
+                 * </pre>
+                 * 列主序即「先写完第 0 列的四个分量，再写第 1 列……」，
+                 * 所以第 0 列是 {@code (1, sy, 0, 0)}，第 1 列是 {@code (sx, 1, 0, 0)}。
+                 * 已用 JOML 实跑验证：{@code sx=0.5} 时 (0,1) 基映射到 (0.5, 1)，
+                 * 中心下方 100 像素的点右移 50 像素，与约定一致。
+                 */
+                @Override
+                public void shear(float x, float y) {
+                    stack.mulPose(new Matrix4f(
+                            1f, y, 0f, 0f,
+                            x, 1f, 0f, 0f,
+                            0f, 0f, 1f, 0f,
+                            0f, 0f, 0f, 1f));
                 }
             };
         }
