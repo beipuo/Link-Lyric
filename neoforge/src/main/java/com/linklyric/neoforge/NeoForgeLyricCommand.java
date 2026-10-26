@@ -11,8 +11,9 @@ import net.minecraft.network.chat.Component;
 /**
  * NeoForge 侧的 {@code /linklyric} 指令。
  *
- * <p>三个子命令各管一件事：{@code on} 打开、{@code off} 关闭、
- * {@code location} 进入位置调整。状态由 {@link LyricDragController}
+ * <p>子命令各管一件事：{@code on} 打开、{@code off} 关闭、
+ * {@code config} 打开配置界面、{@code location} 进入位置调整
+ * （{@code location reset} 复位）。状态由 {@link LyricDragController}
  * 统一维护并落盘，与 Fabric 侧共用同一份实现。
  *
  * <p>{@code RegisterClientCommandsEvent} 给出的命令源是
@@ -28,7 +29,7 @@ final class NeoForgeLyricCommand {
         LiteralArgumentBuilder<CommandSourceStack> root = Commands.literal("linklyric")
                 .executes(ctx -> {
                     ctx.getSource().sendSuccess(() -> Component.literal(
-                            "用法：/linklyric on | off | location [reset]"), false);
+                            "用法：/linklyric on | off | config | location [reset]"), false);
                     return 1;
                 })
                 .then(Commands.literal("on").executes(ctx -> {

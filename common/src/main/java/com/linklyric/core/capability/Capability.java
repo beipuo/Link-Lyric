@@ -3,10 +3,16 @@ package com.linklyric.core.capability;
 /**
  * 数据源能力标记。
  *
- * <p>不同数据源能提供的功能差异极大：Salt Player 插件能给逐字时间轴与播放队列，
+ * <p>不同数据源能提供的功能差异极大：Salt Player 插件能给逐字时间轴，
  * Windows SMTC 只能给元数据和是否在播放，本地 LRC 文件连进度都没有。
  * 把差异显式建模成能力集合，渲染层与 UI 按能力降级，避免代码里散落
  * {@code if (source == ...)} 这种一旦加第三个数据源就会失控的判断。
+ *
+ * <p>**能力是「可能提供」的声明，不是「当前数据源已提供」的事实。**
+ * 具体到 Salt Player：其插件 API 只暴露播放 / 暂停 / 上一首 / 下一首 /
+ * 跳转，**没有队列访问**，因此 {@link #QUEUE} 与 {@link #PLAY_BY_INDEX}
+ * 对它是恒为 ✗ 的（见 README 的能力表）。这两个常量保留，是给将来
+ * 真能读到队列的数据源用的——声明式降级的前提是枚举本身完整。
  */
 public enum Capability {
 

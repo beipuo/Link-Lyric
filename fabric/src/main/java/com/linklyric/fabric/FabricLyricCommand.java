@@ -12,9 +12,13 @@ import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.lit
 /**
  * Fabric 侧的 {@code /linklyric} 指令。
  *
- * <p>三个子命令各管一件事：{@code on} 打开、{@code off} 关闭、
- * {@code location} 进入位置调整。状态由 {@link LyricDragController}
+ * <p>子命令各管一件事：{@code on} 打开、{@code off} 关闭、
+ * {@code config} 打开配置界面、{@code location} 进入位置调整
+ * （{@code location reset} 复位）。状态由 {@link LyricDragController}
  * 统一维护并落盘，NeoForge 侧复用同一份。
+ *
+ * <p>Fabric 侧另有一条 {@code spike glow}：离屏 framebuffer 的可行性探针，
+ * 仅供排查渲染路线时手动打开，NeoForge 侧没有对应实现。
  *
  * <p>使用客户端命令源：显示开关与位置都是本机偏好，
  * 服务端没有对应状态。
@@ -29,7 +33,7 @@ final class FabricLyricCommand {
         LiteralArgumentBuilder<FabricClientCommandSource> root = literal("linklyric")
                 .executes(ctx -> {
                     ctx.getSource().sendFeedback(Component.literal(
-                            "用法：/linklyric on | off | location [reset]"));
+                            "用法：/linklyric on | off | config | location [reset]"));
                     return 1;
                 })
                 .then(literal("on").executes(ctx -> {

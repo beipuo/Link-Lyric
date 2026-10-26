@@ -36,7 +36,7 @@ Link Lyric/
 这条规则的代价是：真正依赖 Mojang 类型的渲染层代码（`RenderType`、
 `GlyphProvider`、`VertexFormat` 这些）没法收进 `common`，只能在两个
 加载器模块里各放一份。这 8 个文件（约 2100 行）是**结构性重复**，
-合并会让 `common` 失去零依赖性质、连带 400 余个单测全部需要启动游戏运行时。
+合并会让 `common` 失去零依赖性质、连带 500 余个单测全部需要启动游戏运行时。
 
 重复本身不危险，危险的是**静默分叉**——改了 fabric 忘了改 neoforge，
 两个平台行为开始不同而编译器一声不响。因此 `:common:verifyMirroredRender`
@@ -47,6 +47,22 @@ Link Lyric/
 ```
 
 漂移当场失败并指出行号，不必等人肉比对两份两千行的目录。
+
+`check` 上共挂 7 道静态守卫，每一道都对应一类「编译通过、运行却不报错」的失效：
+
+| 任务 | 抓什么 |
+| --- | --- |
+| `verifyMirroredRender` | 两端渲染层副本静默分叉 |
+| `verifyLangKeys` | `LangKeys` 常量与四份 lang json 键不一致（界面露出原始键名） |
+| `verifyPainterParity` | 两端 `GuiPainter` 少实现一个重载（特效凭空消失） |
+| `verifyNoDroppedParams` | 签名对但形参整段丢弃（形同虚设） |
+| `verifyConstantsReferenced` | 常量定义了却无人引用（实际值在别处硬编码） |
+| `verifyPreviewGeometry` | 界面层写死预览高度（与行数脱钩） |
+| `verifyShaderUniforms` | `.fsh` 用到的 uniform 未在 json 声明（该功能恒为 0） |
+
+最后一道是补上来的：`StrokeWidth` / `StrokeColor` 曾在 GLSL 与 `SdfRenderType`
+里都用上、json 里却从未声明，而 `safeGetUniform` 对缺失 uniform 返回空实现、
+不抛异常，于是描边整体失效而构建依然全绿。
 
 ## 已实现：悬浮歌词
 
@@ -87,12 +103,12 @@ Fabric 与 NeoForge 各自只有约一百行接线代码，排版与状态计算
 
 ### 歌词位置与拖动
 
-平时**不画底板**，歌词直接浮在画面上。三条指令：
+平时**不画底板**，歌词直接浮在画面上。三条主指令：
 
 `/linklyric on` 打开歌词，`/linklyric off` 关闭，
 `/linklyric location` 进入位置调整（`location reset` 复位）。
 
-`/linklyric config` 打开个性化配置页，全部使用 Minecraft 原版控件：
+此外 `/linklyric config` 打开个性化配置页，全部使用 Minecraft 原版控件：
 
 左栏调歌词文字：时间偏移、切换时长、字号、最大宽度四根滑条，
 外加羽化开关、字重、对齐、阴影三个开关与一个「字体颜色…」入口。
@@ -498,7 +514,10 @@ jar 里不会有 common 的类，装进游戏立刻 `NoClassDefFoundError`。
 .\gradlew.bat :common:test
 ```
 
-276 项，覆盖布局几何、逐字染色、行切换两段式、位置外推、配置持久化、语言键、强调动画与歌词时间修补。
+实测 **76 个测试类、521 个用例**（0 失败、1 跳过），覆盖布局几何、逐字染色、
+行切换两段式、位置外推、配置持久化、语言键、强调动画、着色器 uniform 声明与歌词时间修补。
+
+数量会随代码变化，以实际输出为准；这里不写死死数字以外的承诺。
 
 其中 `LiveSampleTest` 使用**真实抓取的 `/lyric` 响应**（`live-sample.json`）
 做端到端验证：手写样例永远会漏掉真实数据里的格式细节，切片截断导致括号不配平、
@@ -522,7 +541,7 @@ common/src/main/java/com/linklyric/core/
 因此可以在没有游戏运行时的 JVM 里直接测。编排与渲染在 `common`，
 平台适配在 `fabric` / `neoforge`。
 
-这条界线的实际用途是保证测试可跑：`common:test` 里 400 余个用例
+这条界线的实际用途是保证测试可跑：`common:test` 里 500 余个用例
 全部不需要启动游戏。一旦有 Minecraft 类型漏进 `core`，整条测试链立刻失效。
 
 这里曾有一整套未被使用的编排层（`LyricSession` / `ScrollModel` /

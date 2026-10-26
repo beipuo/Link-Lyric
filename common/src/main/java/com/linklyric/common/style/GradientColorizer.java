@@ -91,10 +91,14 @@ public final class GradientColorizer {
      * 带羽化开关的版本。
      *
      * <p>{@code feather=false} 时传 0 给下游，走「硬边界」分支：最多两段，
-     * 切点就是前沿。这条分支本来就在 {@link #spansForCharWithFeather} 里，
-     * 但没有入口能到达它——样式里的 {@code feather} 开关一直是个死开关：
-     * 配置界面能改、能存盘，渲染侧却始终按 {@link #featherFor} 算出的
-     * 非零宽度画渐变，关掉之后画面毫无变化。
+     * 切点就是前沿。
+     *
+     * <p>这个重载的存在本身修掉了一个历史缺陷：此前样式里的
+     * {@code feather} 开关是个死开关——配置界面能改、能存盘，
+     * 渲染侧却始终按 {@link #featherFor} 算出的非零宽度画渐变，
+     * 关掉之后画面毫无变化，因为根本没有任何调用点把该开关传下来。
+     * 现在渲染器在逐字路径上传入 {@code style.feather()}，
+     * 关闭态才真正落到硬切分支。
      *
      * @param feather 是否启用交界羽化；false 表示硬切
      */

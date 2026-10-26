@@ -131,9 +131,15 @@ public final class ArcPlacement implements PlacementStrategy {
         float halfRad = (float) Math.toRadians(wantedSpanDegrees) * 0.5f;
         float radius = totalLength / Math.max(1e-4f, halfRad * 2f);
         float spanDegrees = (float) Math.toDegrees(halfRad * 2f);
-        // 圆心：弧的最低点落在「默认横排的中心行」上，整块因此与默认位置同高。
-        // 上拱把两端往下拉，若把圆心直接放在锚点上，整块会整体上移半弧高，
+        // 圆心：让弧的最低点落在「默认横排的中心行」上，整块因此与默认位置同高。
+        //
+        // 两步补偿缺一不可：
+        //   - steps[0] * 0.5：锚点给的是**块心**，而弧排要的是首行中心到弧顶的距离；
+        //   - arcSagitta = R * (1 - cos(半张角))：上拱的矢高。
+        // 少掉矢高这一项时，圆心落在锚点上，整块会整体上移一个矢高，
         // 表现为「切到弧形后歌词忽然跳高一截」。
+        // 矢高随行数增大（张角变宽），所以这个补偿必须按实际张角算，
+        // 不能写成与行高挂钩的经验常量。
         float arcSagitta = radius * (1f - (float) Math.cos(halfRad));
         float arcCenterY = anchorY + steps[0] * 0.5f + arcSagitta;
 

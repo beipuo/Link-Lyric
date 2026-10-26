@@ -22,11 +22,13 @@ import com.linklyric.common.i18n.LangKeys;
  * @param lineScale       当前行字号缩放
  * @param maxWidthRatio   歌词最大宽度占屏幕比例
  * @param feather         是否启用交界羽化过渡
- * @param weight          字重，见 {@link Weight}
+ * @param weight          字重档位，见 {@link Weight}（只剩常规一档）
  * @param align           水平对齐，见 {@link Align}
  * @param shadow          是否绘制文字阴影
  * @param liftCurve       上浮曲线形状，见 {@link LiftCurve}
- * @param weightPercent   笔画加粗，0..100，0 为不加粗
+ * @param weightPercent   笔画加粗，0..100，0 为不加粗。**这才是真正生效的
+ *                        字重旋钮**：经 SDF 距离场把笔画推粗，
+ *                        与上面那个只剩一档的 {@code weight} 无关
  * @param softShadow      阴影是否柔和。关闭则退回原版的硬边投影
  * @param lineGapPx       行间距，像素。指两行字形之间的真实空白
  * @param stroke          是否给字形描边
@@ -120,7 +122,16 @@ public record LyricStyleConfig(
     /** 整体不透明度下限：再低就接近不可见，没有实际意义。 */
     public static final float MIN_OPACITY = 0.1f;
 
-    /** 笔画加粗范围，单位为百分比。上限压在 15%：再高笔画会粘连。 */
+    /**
+     * 笔画加粗范围，单位为百分比。
+     *
+     * <p>这里的 100 是**界面刻度**的满值，不是着色器的加粗量。绘制层由
+     * {@code SdfRenderType.weightFor} 把它线性映射到距离场阈值偏移，
+     * 满值只对应 {@code 0.15}（见那里 {@code MAX_WEIGHT} 的注释）——
+     * 一个像素在 9px 的字上已占十分之一高度，直接按百分比加会粘连。
+     *
+     * <p>因此「上限压在 15%」说的是着色器那一侧的量纲，不是本常量。
+     */
     public static final int MIN_WEIGHT_PERCENT = 0;
     public static final int MAX_WEIGHT_PERCENT = 100;
 
@@ -200,14 +211,21 @@ public record LyricStyleConfig(
     public static final int DEFAULT_STROKE_ALPHA = 70;
 
     /**
-     * 字重。
+     * 字重档位。
      *
-     * <p>**只保留常规一档。** 加粗在逐字绘制路径上无法正确实现：
-     * MC 的粗体是同一字形右移一个纹素再画一遍，在 9px 的位图字形上
-     * 这份错位副本会形成肉眼可见的第二个轮廓，看起来像两个字重叠。
+     * <p>**只保留常规一档。** MC 原版的粗体是把同一字形右移一个纹素
+     * 再画一遍，在 9px 的位图字形上这份错位副本会形成肉眼可见的第二个
+     * 轮廓，看起来像两个字重叠——因此那条路不可用。
      *
-     * <p>保留枚举本身是为了配置文件与界面选项的结构不变：
-     * 旧配置里的 {@code BOLD} 由解析器回退到 {@link #REGULAR}，不影响启动。
+     * <p>但「字重」这件事本身并没有消失：真正的加粗走的是
+     * {@link #weightPercent} 与 SDF 距离场（把覆盖率阈值向外推，
+     * 笔画等宽变粗而字距不变，见 {@code SdfRenderType.weightFor}
+     * 与 {@code linklyric_sdf_text.fsh} 里的 {@code Weight} uniform）。
+     * 本枚举管的是**原版字形路径**，那条路已裁到只剩常规，
+     * 保留枚举是为了配置文件与界面选项的结构不变：旧配置里的
+     * {@code BOLD} 由解析器回退到 {@link #REGULAR}，不影响启动。
+     *
+     * <p>换句话说：想加字重请调 {@code weightPercent}，不要指望这里。
      */
     public enum Weight {
         /** 常规字重。 */
