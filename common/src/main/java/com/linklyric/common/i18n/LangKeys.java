@@ -13,6 +13,8 @@ public final class LangKeys {
     public static final String FEATHER = "linklyric.config.feather";
     public static final String FEATHER_ON = "linklyric.config.feather.on";
     public static final String FEATHER_OFF = "linklyric.config.feather.off";
+    /** 超长行折行开关。 */
+    public static final String WRAP = "linklyric.config.wrap";
     public static final String TRANSITION = "linklyric.config.transition";
     public static final String SHADOW = "linklyric.config.shadow";
     public static final String SHADOW_ON = "linklyric.config.shadow.on";

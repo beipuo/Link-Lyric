@@ -84,6 +84,17 @@ public record LyricPlacement(
     }
 
     /**
+     * 按行序号取放置结果；越界返回 null。
+     *
+     * <p>折行时同一句会占前若干格，逐段绘制要按段序号取，
+     * 而不是按 {@link #primary()} 只拿第一段。返回 null 而非抛异常，
+     * 理由与 {@link #primary()} 相同：诊断代码不该因为本帧少一行就炸。
+     */
+    public PlacedLine line(int index) {
+        return index >= 0 && index < lines.size() ? lines.get(index) : null;
+    }
+
+    /**
      * 包围盒要覆盖的矩形（**不含**预览裁切）。
      *
      * <p>横向覆盖整个视口：滚动时可见的正是这一整段，只按文字宽度算会让

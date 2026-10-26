@@ -34,6 +34,15 @@ import java.util.List;
  * 后续行缺失）时它仍然占一行高度。这不是浪费：块心固定，若某一格
  * 突然不占高度，整块会跳一下。因此输入里空串的槽位照样参与
  * {@link LineLayout#compute}，只是不出画。
+ *
+ * <h2>折行让「全字号行」不再只有一行</h2>
+ *
+ * <p>不折行时 {@code current = 0}——逐字染色的永远是第一行，
+ * 其余都是副行，按 {@code SUB_SCALE} 缩。折行把一句拆成连续几段，
+ * 这几段是**同一句**，字号必须一致；只有后面的真副行才缩。
+ * 因此行槽位改由 {@link PlacementInput#primarySpan()} 决定，
+ * 而该值不折行时恒为 1，把 {@code 1} 代进 {@code index < 1}
+ * 与旧的 {@code index == 0} 是同一个集合——旧画面因此逐像素不变。
  */
 public final class LinearStackPlacement implements PlacementStrategy {
 
@@ -63,9 +72,10 @@ public final class LinearStackPlacement implements PlacementStrategy {
         int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
 
         // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在 centerY。
-        // current 恒为 0——逐字染色的永远是第一行，因此基线就是块顶。
+        // 前 primarySpan 行是同一句（折行段），与主行同字号；其余副行缩一档。
         int slots = Math.max(1, in.lineCount());
-        LineLayout.Block block = LineLayout.compute(centerY, slots, 0,
+        int span = in.primarySpan();
+        LineLayout.Block block = LineLayout.compute(centerY, slots, span,
                 LyricGeometry.LINE_HEIGHT, style.lineGapPx(), SUB_SCALE);
 
         // 视口宽度：滚动时铺满可用宽度，否则就是主行自身宽度。
@@ -105,6 +115,18 @@ public final class LinearStackPlacement implements PlacementStrategy {
                         text, style.sungColor(), 1.0f, true));
                 continue;
             }
+            if (i < span) {
+                // 折行的其余段：同样是这句的一部分，因此 isPrimary 也为真，
+                // 全字号、按自身宽度居中。落笔点不能用 textX——那是为
+                // 滚动准备的视口起点；折行不滚动，各段按自己的宽度各自居中。
+                int width = in.widthAt(i);
+                int x = LyricGeometry.left(style.align(), centerX, maxWidth, width);
+                int y = LineLayout.lineTop(block, i, span, LyricGeometry.LINE_HEIGHT,
+                        style.lineGapPx(), SUB_SCALE) + in.blockShift();
+                lines.add(new LyricPlacement.PlacedLine(i, x, y, width, text,
+                        style.sungColor(), 1.0f, true));
+                continue;
+            }
             if (text.isEmpty()) {
                 // 空槽位只占高度，不出画。与原先循环里的 continue 等价。
                 continue;
@@ -115,7 +137,7 @@ public final class LinearStackPlacement implements PlacementStrategy {
             // 行数越多越明显，看起来就是「多行歌词不居中」。
             int width = in.widthAt(i);
             int x = LyricGeometry.left(style.align(), centerX, maxWidth, width);
-            int y = LineLayout.lineTop(block, i, 0, LyricGeometry.LINE_HEIGHT,
+            int y = LineLayout.lineTop(block, i, span, LyricGeometry.LINE_HEIGHT,
                     style.lineGapPx(), SUB_SCALE) + in.blockShift();
             lines.add(new LyricPlacement.PlacedLine(i, x, y, width, text,
                     in.colorAt(i), in.scaleAt(i), false));

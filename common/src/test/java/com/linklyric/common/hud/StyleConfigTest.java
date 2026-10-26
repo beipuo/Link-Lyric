@@ -26,7 +26,7 @@ class StyleConfigTest {
         LyricStyleConfig s = new LyricStyleConfig(
                 0xFFFFFFFF, 0xFF000000, 0xFF888888,
                 99_999, 99_999, 99f, 99f, true,
-                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70);
+                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false);
 
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, s.offsetMs());
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, s.lineTransitionMs());

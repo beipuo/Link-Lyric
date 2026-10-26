@@ -170,6 +170,19 @@ final class LyricConfigScreen extends Screen {
                         }));
         y += ROW_HEIGHT + ROW_GAP;
 
+        // 超长行折行：默认关。开启后超宽不再滚动，而是换成多行，
+        // 行数随之增加，与「行数」滑条不冲突（段数多时以段数为准）。
+        addScrollWidget(CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF))
+                .withInitialValue(controller.style().wrap())
+                .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
+                        Component.translatable(LangKeys.WRAP),
+                        (button, value) -> {
+                            apply(style -> style.withWrap(value));
+                            rebuildWidgets();
+                        }));
+        y += ROW_HEIGHT + ROW_GAP;
+
         // 整体不透明度：10% 到 100%。
         addScrollWidget(new OptionSlider(left, y, COLUMN_WIDTH,
                 LyricOptions.Option.OPACITY));

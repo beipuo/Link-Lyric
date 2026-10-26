@@ -242,7 +242,104 @@ public final class FloatingLyricRenderer {
     }
 
     /**
+     * 绘制折行后的主行各段。
+     *
+     * <h2>为什么每段都走完整的卡拉 OK 路径</h2>
+     *
+     * <p>折行只是把一句排成几行，染色、上浮、渐变、强调这些**都不该消失**。
+     * 若把第 2 段起当作普通副行用 {@code textScaled} 画，
+     * 那段就变成静态灰字：唱到它时不变色、不上浮，
+     * 观感是「一句话的后半段是别人的歌词」。
+     *
+     * <h2>前沿换算</h2>
+     *
+     * <p>全局前沿 {@code globalSung} 是「唱到整句的第几像素」，跨段连续。
+     * 每段只取自己那一截：{@code clamp(globalSung - startPx, 0, width)}。
+     * 这比「每段各自维护一个平滑量」稳得多——后者在换段那帧会从 0 重爬，
+     * 表现为唱到行尾倒退重来。理由写在 {@link LyricWrap.Segment#localSung}。
+     *
+     * <h2>字序对齐</h2>
+     *
+     * <p>逐字上浮与强调都按「字在整句里的位置」查表。段内的字从
+     * {@code segment.start()} 开始，因此抬升表与词映射都要整体后移这个偏移；
+     * 否则第二段会拿第一段的字序取值，看起来是第二段在演第一段的动画。
+     */
+    private void drawWrappedMain(Painter painter, LyricPlacement placed,
+                                 java.util.List<LyricWrap.Segment> segments, String fullText,
+                                 float globalSung, float opacity, boolean canScissor,
+                                 int clipRight,
+                                 LyricLine line, long positionMs) {
+        // 折行时各段都不滚动，落笔点即视口左界；同一句各段水平居中对齐，
+        // 因此每段各自按自己的宽度算左边，短段不会贴着最长段左端。
+        for (int i = 0; i < segments.size(); i++) {
+            LyricWrap.Segment segment = segments.get(i);
+            PlacedLine placementForSegment = placed.line(i);
+            if (placementForSegment == null) {
+                continue;
+            }
+            int y = placementForSegment.y();
+            // 与不折行同样的判据：越出块顶的那段不再画。
+            if (y < placed.blockTop() - 1) {
+                continue;
+            }
+            int x = placementForSegment.x();
+            float localSung = segment.localSung(globalSung);
+
+            if (!canScissor) {
+                // 平台不能裁剪：退回整单元覆盖。段内仍按局部前沿推进，
+                // 只是无法把已唱与未唱叠在同一格字形上。
+                drawByWholeUnit(painter, line, segment.text(), x, y, localSung, opacity);
+                continue;
+            }
+
+            float[] lifts = localSung >= 0.5f
+                    ? buildSegmentLifts(painter, segment, fullText, line, positionMs, localSung)
+                    : null;
+            // 裁剪右界取本段自己的末尾与外部视口右界的较小值。
+            // 用段宽而非最宽段宽：否则短段右侧会漏出一片视口空白，
+            // 逐字的强调辉光会在那里散开，看起来像段外有字。
+            int segmentRight = Math.min(clipRight, x + segment.width());
+            textPainter(painter).karaoke(segment.text(), x, y, localSung,
+                    x, segmentRight, lifts, opacity, sungColor(), unsungColor(), line, positionMs);
+        }
+    }
+
+    /**
+     * 折行某一段的逐字抬升表。
+     *
+     * <p>与 {@link #buildLifts} 的差别只在坐标基准：那里第 0 个字就是行首，
+     * 这里第 0 个字是整句的第 {@code segment.start()} 个字。两者必须用
+     * 同一个全局前沿来定相位，否则同一句在两段上的抬升会在交界处错位半拍。
+     */
+    private float[] buildSegmentLifts(Painter painter, LyricWrap.Segment segment,
+                                      String fullText, LyricLine line, long positionMs,
+                                      float localSung) {
+        int[] starts = LyricProgress.charStarts(painter, segment.text());
+        int[] widths = new int[starts.length];
+        for (int i = 0; i < starts.length; i++) {
+            int next = i + 1 < starts.length ? starts[i + 1] : segment.width();
+            widths[i] = Math.max(1, next - starts[i]);
+        }
+        float fontSize = LyricProgress.referenceSize(widths);
+        if (fontSize <= 0f) {
+            fontSize = LyricProgress.referenceSize(segment.width(), segment.text().length());
+        }
+        if (style.liftCurve() == com.linklyric.common.style.LyricStyleConfig.LiftCurve.LINEAR) {
+            // 线性曲线按每个字自身的染色进度取值，所以切出本段那一截即可。
+            float[] whole = LyricProgress.charProgress(line, fullText, positionMs);
+            float[] slice = new float[segment.text().length()];
+            for (int i = 0; i < slice.length; i++) {
+                int at = segment.start() + i;
+                slice[i] = at < whole.length ? whole[at] : 0f;
+            }
+            return LyricProgress.lifts(slice.length, fontSize, slice);
+        }
+        return LyricProgress.cosineLifts(starts, widths, localSung, fontSize);
+    }
+
+    /**
      * 副行内容：正在同时演唱的另一句 &gt; 下一句 &gt; 当前行的翻译。
+
      *
      * <p>时间重叠优先，因为那是**此刻正在唱**的词：主唱一句未落、伴唱已经进来时，
      * 只按开始时间取一行会让另一句连词带译文一起消失。
@@ -260,22 +357,62 @@ public final class FloatingLyricRenderer {
     }
 
     /**
+     * 本帧主行折成几段；不折行时返回 {@code null}。
+     *
+     * <h2>折行与滚动互斥</h2>
+     *
+     * <p>两者都为了「读到超出一行的字」，但手段相反：折行换行加高，
+     * 滚动横推。同时启用时一行既被切成几段、每段又各自横推，
+     * 观感是文字在两处同时在动，且段内横推会把已唱前沿推出段外。
+     * 因此折行时不再滚动：整句已在纵向上铺开，横推没有收益。
+     * 这也让 {@code primaryWidth} 的语义在两种模式下都保持单一：
+     * 折行时不滚动，主行宽度就是各段宽度里最宽那条。
+     *
+     * @param painter  用于量字宽
+     * @param fullText 整句原文
+     * @param maxWidth 单段可用宽度
+     * @return 按顺序排列的段；不折行时为 {@code null}
+     */
+    private java.util.List<LyricWrap.Segment> primarySegments(
+            Painter painter, String fullText, int maxWidth) {
+        if (!style.wrap()) {
+            // 不折行：直接返回 null，连一次量宽都不做。
+            // 关闭折行的代码路径必须与加这个开关之前完全一致，
+            // 多量一次宽虽然不改变像素，却会让「零变化」多一个不可验证的前提。
+            return null;
+        }
+        // IntUnaryOperator 传 int，而 Painter 收 char：这里显式收窄。
+        // 折行按 UTF-16 码元切分，与逐字绘制用的是同一粒度，
+        // 因此代理对会被当成两个码元——与 {@code clip} 及 {@code charStarts}
+        // 的现有行为一致，不额外引入码点语义。
+        return LyricWrap.wrap(fullText, maxWidth, cp -> painter.charWidth((char) cp));
+    }
+
+    /**
      * 实际可画的行数。
      *
      * <p>受时间轴剩余行数限制，不能凭空补空行。
+     *
+     * <p>折行把「行」拆成两类：前 {@code span} 格属于当前句（折行段），
+     * 其后的格子才是副行。段是内容的结果，必须全部画出——少画一段
+     * 就等于把那几个字吞掉；副行则仍然受配置行数与时间轴剩余行数限制。
+     *
+     * @param slots 槽位总数上限（折行段数与配置行数取大）
+     * @param span  前几格属于当前句；不折行恒为 1
      */
-    private int drawableLineCount(LyricTimeline timeline, int index, LyricLine concurrent) {
-        int total = Math.max(1, style.lineCount());
-        int drawable = 1;
-        // 重叠行占用第一格副行槽位，且它不受「后续行是否存在」的限制：
+    private int drawableLineCount(LyricTimeline timeline, int index,
+                                  LyricLine concurrent, int slots, int span) {
+        int total = Math.max(1, slots);
+        int drawable = Math.max(1, span);
+        if (drawable >= total) {
+            return total;
+        }
+        // 重叠行占用第一条副行槽位，且它不受「后续行是否存在」的限制：
         // 重叠可能发生在歌曲最后一句上，那时根本没有下一行。
         if (concurrent != null) {
             drawable++;
         }
-        for (int i = 1; i < total; i++) {
-            if (drawable >= total) {
-                break;
-            }
+        for (int i = 1; drawable < total; i++) {
             LyricLine upcoming = timeline.line(index + i);
             if (upcoming == null || upcoming.text().isEmpty()) {
                 break;
@@ -587,35 +724,70 @@ public final class FloatingLyricRenderer {
         // 上浮、渐变、强调全部看不到，与进游戏后判若两样。
         // 现在只让「滚动」受预览限制，裁剪仍按平台能力判断。
         boolean canScissor = painter.supportsScissor();
-        boolean scrolling = canScissor && !inPreview && fullWidth > maxWidth;
+
+        // 折行：开启时把整句切成若干段，段数决定主行占几个槽位。
+        // 关闭时为 null，后面的代码走的就是原路径。
+        java.util.List<LyricWrap.Segment> segments = primarySegments(painter, fullText, maxWidth);
+
+        // 折行与滚动互斥：折行已经把整句在纵向上铺开，再横推没有收益，
+        // 且段内横推会把已唱前沿推出段外。理由见 primarySegments 的注释。
+        boolean wrapping = segments != null && !segments.isEmpty();
+        boolean scrolling = !wrapping && canScissor && !inPreview && fullWidth > maxWidth;
 
         // 滚动时不截断文本：坐标必须和完整文本保持一致，
         // 否则 sungWidth 与实际绘制位置对不上，高亮会错位。
-        String visible = scrolling ? fullText : clip(painter, fullText, maxWidth);
+        // 折行时每段已在切分时按 maxWidth 截好，不再走 clip。
+        String visible = scrolling ? fullText
+                : (wrapping ? "" : clip(painter, fullText, maxWidth));
+
+        // 主行宽度有两个用途：滚动的推动长度、非滚动时的视口宽度。
+        // 折行时取最宽的一段——各段已经都不超过 maxWidth，用最宽段做视口，
+        // 逐字裁剪的右界恰好落在最长那段的末尾，短段两侧不会多出空白。
+        int primaryWidth;
+        if (wrapping) {
+            int widest = 0;
+            for (LyricWrap.Segment segment : segments) {
+                if (segment.width() > widest) {
+                    widest = segment.width();
+                }
+            }
+            primaryWidth = widest;
+        } else {
+            primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
+        }
 
         String secondaryText = secondaryTextOf(painter, line, nextLine, maxWidth);
         // 重叠行是歌词而不是译文，上色必须按后续歌词走，否则会淡成译文色。
         boolean nextLineIsLyric = nextLine != null && !nextLine.text().isEmpty();
 
-        int primaryWidth = scrolling ? fullWidth : painter.textWidth(visible);
+        // 主行占几个行槽位：折行时等于段数，否则恒为 1。
+        int span = wrapping ? segments.size() : 1;
 
         // 换行或时间轴变更时重置进度，避免沿用上一行的。
         //
         // 这一步必须在放置之前：滚动偏移由已唱宽度推出，而放置要把
         // 「推到哪儿了」作为输入的一部分。反过来先排位置再算进度，
         // 滚动量就会永远落后一帧，唱到的字与视口边缘错开半个字。
+        //
+        // 折行时前沿按**整句**算一次，各段再由 startPx 换算成本段局部值。
+        // 若按段分别算，每段的前沿都从 0 起爬，第二段会在交界处倒退。
+        String progressText = wrapping ? fullText : visible;
         if (index != lastLineIndex) {
-            sungWidth = targetWidthAt(painter, line, visible, positionMs);
+            sungWidth = targetWidthAt(painter, line, progressText, positionMs);
             lastLineIndex = index;
         } else {
-            float target = targetWidthAt(painter, line, visible, positionMs);
+            float target = targetWidthAt(painter, line, progressText, positionMs);
             sungWidth = advance(sungWidth, target, frameDelta);
         }
         float clampedSung = Math.max(0f, Math.min(sungWidth, primaryWidth));
 
         // 多行堆叠：把当前行与后续若干行当作一整块，块心固定在锚点上。
         boolean hasSecondary = !secondaryText.isEmpty();
-        int drawableLines = drawableLineCount(timeline, index, concurrent);
+        // 折行时段数可能超过配置行数：段是内容的后果，不能因为行数滑条
+        // 调小而把句子截掉一半。槽位总数取两者较大值，副行只在还有
+        // 剩余槽位时出现——这正好保住了「行数就是我想要的总行数」的本意。
+        int slotCount = Math.max(span, Math.max(1, style.lineCount()));
+        int drawableLines = drawableLineCount(timeline, index, concurrent, slotCount, span);
 
         // 逐行内容先备好再交给放置策略。
         //
@@ -629,31 +801,51 @@ public final class FloatingLyricRenderer {
         int[] lineWidths = new int[drawableLines];
         int[] lineColors = new int[drawableLines];
         float[] lineScales = new float[drawableLines];
-        lineTexts.add(visible);
-        // 主行宽度填原始值：策略里「非滚动时视口等于主行宽」读的是单独字段，
-        // 这里保持一致，避免两处对「主行多宽」各有一个说法。
-        lineWidths[0] = primaryWidth;
-        lineColors[0] = sungColor();
-        lineScales[0] = 1f;
-        for (int i = 1; i < drawableLines; i++) {
+        if (wrapping) {
+            // 折行：前 span 格是同一句的各段，宽度各按自己量。
+            for (int i = 0; i < drawableLines; i++) {
+                if (i >= span) {
+                    break;
+                }
+                LyricWrap.Segment segment = segments.get(i);
+                lineTexts.add(segment.text());
+                lineWidths[i] = segment.width();
+                lineColors[i] = sungColor();
+                lineScales[i] = 1f;
+            }
+        } else {
+            lineTexts.add(visible);
+            // 主行宽度填原始值：策略里「非滚动时视口等于主行宽」读的是单独字段，
+            // 这里保持一致，避免两处对「主行多宽」各有一个说法。
+            lineWidths[0] = primaryWidth;
+            lineColors[0] = sungColor();
+            lineScales[0] = 1f;
+        }
+        for (int i = span; i < drawableLines; i++) {
             String text = "";
             if (hasSecondary) {
-                boolean firstExtra = i == 1;
-                // 首条副行可能来自翻译兜底，其余行一律取后续歌词。
+                // 折行时副行起点后移：第 span 格才是第一条副行，
+                // 它可能来自翻译兜底，其余格一律取后续歌词。
+                int extra = i - span;
+                boolean firstExtra = extra == 0;
                 LyricLine upcoming = firstExtra && !nextLineIsLyric
-                        ? null : timeline.line(index + i);
+                        ? null : timeline.line(index + extra);
                 text = firstExtra
                         ? secondaryText
                         : (upcoming == null ? "" : clip(painter, upcoming.text(), maxWidth));
             }
+            while (lineTexts.size() <= i) {
+                lineTexts.add("");
+            }
+            lineTexts.set(i, text);
             // 副行按 Salt 的 SubTextFontSizeScale 缩小，宽度必须同样缩放，
             // 否则居中会偏，底板预留也会算多。
-            lineTexts.add(text);
             lineWidths[i] = text.isEmpty() ? 0 : painter.textWidthScaled(text, SUB_TEXT_FONT_SCALE);
-            lineColors[i] = i == 1 && !nextLineIsLyric
+            lineColors[i] = i == span && !nextLineIsLyric
                     ? translationColor() : nextLineColor();
             lineScales[i] = SUB_TEXT_FONT_SCALE;
         }
+
 
         // 行切换：其余行连续上移一行补位。旧主行直接在换行瞬间消失，
         // 理由见 {@link LineTransition} 的类注释。
@@ -670,7 +862,8 @@ public final class FloatingLyricRenderer {
         // 是「换一种排布不必碰绘制链路」的前提。
         PlacementInput placementInput = new PlacementInput(screenWidth, screenHeight,
                 previewArea, offsetX, offsetY, style, lineTexts, lineWidths,
-                lineColors, lineScales, primaryWidth, clampedSung, scrolling, blockShift);
+                lineColors, lineScales, primaryWidth, clampedSung, scrolling, blockShift,
+                span);
         LyricPlacement placed = placement.place(placementInput);
 
         // 只取绘制真正需要的几项。留白与块边界不再单独取局部变量：
@@ -741,9 +934,6 @@ public final class FloatingLyricRenderer {
         // 与进游戏后看到的完全不是一回事。
         //
         // 上浮与滚动本是两件事，只是原先被同一个布尔量绑在一起。
-        float[] lifts = clampedSung >= 0.5f && canScissor
-                ? buildLifts(painter, visible, primaryWidth, clampedSung, line, positionMs)
-                : null;
 
         // 整体不透明度作用于主行、后续行与间奏，统一在这里相乘一次。
         float opacity = this.style.opacity();
@@ -761,14 +951,22 @@ public final class FloatingLyricRenderer {
         PlacedLine mainLine = placed.primary();
         int mainBaselineY = mainLine == null ? placed.blockTop() : mainLine.y();
         boolean mainVisible = mainBaselineY >= placed.blockTop() - 1;
-        if (mainVisible) {
+        // 裁剪右界取「视口右边界」与「视口左 + 视口宽」的较小值。
+        // 两者在横排策略下恒等，但保留这次取小是个不变式：
+        // 将来若策略给出彼此不一致的 viewportRight/viewWidth，
+        // 逐字裁剪应偏保守（少露一点），而不是把字画到视口外。
+        int clipRight = Math.min(placed.viewportRight(), viewportLeft + viewWidth);
+
+        if (wrapping) {
+            drawWrappedMain(painter, placed, segments, fullText, clampedSung,
+                    opacity, canScissor, clipRight, line, positionMs);
+        } else if (mainVisible) {
+            float[] lifts = clampedSung >= 0.5f && canScissor
+                    ? buildLifts(painter, visible, primaryWidth, clampedSung, line, positionMs)
+                    : null;
             if (canScissor) {
-                // 裁剪右界取「视口右边界」与「视口左 + 视口宽」的较小值。
-                // 两者在横排策略下恒等，但保留这次取小是个不变式：
-                // 将来若策略给出彼此不一致的 viewportRight/viewWidth，
-                // 逐字裁剪应偏保守（少露一点），而不是把字画到视口外。
                 textPainter(painter).karaoke(visible, textX, mainBaselineY, clampedSung,
-                        viewportLeft, Math.min(placed.viewportRight(), viewportLeft + viewWidth),
+                        viewportLeft, clipRight,
                         lifts, opacity, sungColor(), unsungColor(), line, positionMs);
             } else {
                 drawByWholeUnit(painter, line, visible, textX, mainBaselineY,

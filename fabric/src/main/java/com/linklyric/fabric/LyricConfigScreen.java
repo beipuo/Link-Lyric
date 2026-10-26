@@ -234,6 +234,12 @@ final class LyricConfigScreen extends OptionsSubScreen {
                                 Component.translatable(LangKeys.LIFT_CURVE),
                                 (b, v) -> apply(s -> s.withLiftCurve(v))));
 
+        // 超长行折行：默认关。开启后超宽不再横向滚动，而是换成多行。
+        // 单独占一行而不是与上面的开关配对，因为它会改变整块的高度，
+        // 旁边再挤一个控件容易让人误以为是同一组。
+        single(onOff(LangKeys.WRAP, controller.style().wrap(),
+                (s, v) -> s.withWrap(v)));
+
         // ——— 描边 ———
         //
         // 单开一组，因为描边是「开关 + 两个连续量」的组合：

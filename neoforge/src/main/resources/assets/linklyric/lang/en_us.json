@@ -7,6 +7,7 @@
   "linklyric.config.lift_curve.cosine": "Cosine",
   "linklyric.config.title": "Link Lyric Settings",
   "linklyric.config.feather": "Feather",
+  "linklyric.config.wrap": "Wrap long lines",
   "linklyric.config.feather.on": "Feather: On",
   "linklyric.config.feather.off": "Feather: Off",
   "linklyric.config.transition": "Transition",

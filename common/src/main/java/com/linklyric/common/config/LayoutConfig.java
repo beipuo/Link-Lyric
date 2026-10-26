@@ -48,6 +48,8 @@ public final class LayoutConfig {
     private static final String KEY_STROKE_PX = "strokePx";
     private static final String KEY_STROKE_COLOR = "strokeColor";
     private static final String KEY_STROKE_ALPHA = "strokeAlpha";
+    /** 超长行是否折行。默认 false，旧配置文件缺这一项时保持旧观感。 */
+    private static final String KEY_WRAP = "wrap";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -121,7 +123,11 @@ public final class LayoutConfig {
                         props.getProperty(KEY_STROKE, "false").trim()),
                 parseInt(props.getProperty(KEY_STROKE_PX), d.strokePx()),
                 parseColor(props.getProperty(KEY_STROKE_COLOR), d.strokeColor()),
-                parseInt(props.getProperty(KEY_STROKE_ALPHA), d.strokeAlphaPercent()));
+                parseInt(props.getProperty(KEY_STROKE_ALPHA), d.strokeAlphaPercent()),
+                // 折行的默认值是 false，且旧配置文件里没有这个键。
+                // 这里刻意用 "true" 作为默认比较值：与上面的 feather/shadow 相反，
+                // 折行是「新增能力」，缺键时必须落回关闭，画面才与升级前一致。
+                "true".equalsIgnoreCase(props.getProperty(KEY_WRAP, "false").trim()));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -259,6 +265,7 @@ public final class LayoutConfig {
         props.setProperty(KEY_STROKE_PX, Integer.toString(style.strokePx()));
         props.setProperty(KEY_STROKE_COLOR, hex(style.strokeColor()));
         props.setProperty(KEY_STROKE_ALPHA, Integer.toString(style.strokeAlphaPercent()));
+        props.setProperty(KEY_WRAP, Boolean.toString(style.wrap()));
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();

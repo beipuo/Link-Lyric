@@ -25,20 +25,26 @@ import com.linklyric.common.style.LyricStyleConfig;
  * 策略只负责摆位置——将来加弧形排布时，它改的是 {@code x/y}，
  * 不需要重新定义「多长算超宽」。
  *
+ * <p>折行同理：切分点由 {@link LyricWrap} 在调用方算好，
+ * 策略只看到若干已经切好的行。但折行让**行数与「哪几行属于同一句」**
+ * 不再是固定关系，所以多出一个 {@code primarySpan}。
+ *
  * @param screenWidth   屏幕宽，像素
  * @param screenHeight  屏幕高，像素
  * @param previewArea   预览区；null 表示按全屏布局
  * @param offsetX       用户水平偏移，像素，以屏幕中线为原点向右为正
  * @param offsetY       用户垂直偏移，像素，相对默认底部位置向下为正
  * @param style         用户可调样式；只读，策略不得替换
- * @param lineTexts     各行要画的文本，第 0 项恒为主行；已按可用宽度截断
+ * @param lineTexts     各行要画的文本，前 {@code primarySpan} 行属于演唱中的那一句
  * @param lineWidths    与 {@code lineTexts} 等长的行宽，像素，副行按缩放过
  * @param lineColors    与 {@code lineTexts} 等长的行色，ARGB
- * @param lineScales    与 {@code lineTexts} 等长的字号比例，主行 1.0、副行 0.8
+ * @param lineScales    与 {@code lineTexts} 等长的字号比例，主行段 1.0、副行 0.8
  * @param primaryWidth  主行**未截断**的原始宽度；滚动时整行要按它推
  * @param sungPx        本帧已唱宽度（已夹在 {@code [0, primaryWidth]} 之内）
  * @param scrolling     本帧是否横向滚动
  * @param blockShift    行切换的整块上移量，像素；0 表示没有过渡
+ * @param primarySpan   前几行属于演唱中的那一句；不折行时恒为 1。
+ *                      它决定行槽位高度：这些行与主行同字号，其余副行按比例缩
  */
 public record PlacementInput(
         int screenWidth,
@@ -54,7 +60,8 @@ public record PlacementInput(
         int primaryWidth,
         float sungPx,
         boolean scrolling,
-        int blockShift) {
+        int blockShift,
+        int primarySpan) {
 
     /**
      * 只读化数组。
@@ -68,6 +75,12 @@ public record PlacementInput(
         lineWidths = lineWidths == null ? new int[0] : lineWidths.clone();
         lineColors = lineColors == null ? new int[0] : lineColors.clone();
         lineScales = lineScales == null ? new float[0] : lineScales.clone();
+    }
+
+    /** 前几行与主行同字号；至少 1，且不超过实际行数。 */
+    @Override
+    public int primarySpan() {
+        return Math.max(1, Math.min(Math.max(1, lineCount()), primarySpan));
     }
 
     /** 要画的行数。以文本数量为准，其余数组按同一长度填。 */

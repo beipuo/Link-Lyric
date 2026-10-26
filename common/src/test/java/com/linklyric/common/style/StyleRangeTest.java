@@ -66,7 +66,7 @@ class StyleRangeTest {
                 true, 999, null, 99f, null, 999, true,
                 LyricStyleConfig.DEFAULT_LINE_GAP,
                 false, LyricStyleConfig.DEFAULT_STROKE_PX,
-                0, LyricStyleConfig.DEFAULT_STROKE_ALPHA);
+                0, LyricStyleConfig.DEFAULT_STROKE_ALPHA, false);
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, c.offsetMs(), "时间偏移应夹住");
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, c.lineTransitionMs(), "切换时长应夹住");
         assertEquals(LyricStyleConfig.MAX_LINE_SCALE, c.lineScale(), 1e-6f, "字号缩放应夹住");
@@ -100,6 +100,6 @@ class StyleRangeTest {
                 true, LyricStyleConfig.Weight.REGULAR, LyricStyleConfig.Align.CENTER,
                 true, 2, LyricStyleConfig.InterludeStyle.TEXT, 1f,
                 LyricStyleConfig.LiftCurve.COSINE, 0, true,
-                lineGap, true, strokePx, 0xFF000000, strokeAlpha);
+                lineGap, true, strokePx, 0xFF000000, strokeAlpha, false);
     }
 }
