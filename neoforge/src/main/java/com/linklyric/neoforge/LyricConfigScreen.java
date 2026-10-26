@@ -3,6 +3,7 @@ package com.linklyric.neoforge;
 import com.linklyric.common.config.LyricOptions;
 import com.linklyric.common.config.LyricOptions.Option;
 import com.linklyric.common.hud.FloatingLyricRenderer;
+import com.linklyric.common.hud.LayoutMode;
 import com.linklyric.common.hud.LyricDragController;
 import com.linklyric.common.hud.LyricGeometry;
 import com.linklyric.common.i18n.LangKeys;
@@ -13,6 +14,7 @@ import net.minecraft.client.gui.components.AbstractSliderButton;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 
@@ -181,6 +183,18 @@ final class LyricConfigScreen extends Screen {
                             apply(style -> style.withWrap(value));
                             rebuildWidgets();
                         }));
+        y += ROW_HEIGHT + ROW_GAP;
+
+        // 排布形态：横排、弧形、环形。
+        //
+        // 影响面比上面任何一项都大——它决定每行落在哪、以什么角度画，
+        // 因此单占一行。切成弧形后折行开关仍然有效（折行决定「有哪几行」），
+        // 但滚动会被形态否决，超长句直接截断。这一点写进提示里。
+        AbstractWidget layoutWidget = cycleEnum(LayoutMode.class, controller.style().layout(),
+                left, y, LangKeys.LAYOUT, 0, (style, value) -> style.withLayout(value));
+        layoutWidget.setTooltip(Tooltip.create(
+                Component.translatable(LangKeys.LAYOUT_TOOLTIP)));
+        addScrollWidget(layoutWidget);
         y += ROW_HEIGHT + ROW_GAP;
 
         // 整体不透明度：10% 到 100%。
@@ -360,6 +374,9 @@ final class LyricConfigScreen extends Screen {
         }
         if (type == LyricStyleConfig.InterludeStyle.class) {
             return (E) s.interlude();
+        }
+        if (type == LayoutMode.class) {
+            return (E) s.layout();
         }
         return type.getEnumConstants()[0];
     }

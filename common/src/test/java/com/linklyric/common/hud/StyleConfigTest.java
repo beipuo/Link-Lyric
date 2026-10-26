@@ -26,12 +26,16 @@ class StyleConfigTest {
         LyricStyleConfig s = new LyricStyleConfig(
                 0xFFFFFFFF, 0xFF000000, 0xFF888888,
                 99_999, 99_999, 99f, 99f, true,
-                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false);
+                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false,
+                // 末位是排布形态。传 null 是为了同时验证构造器会兜底成横排。
+                null);
 
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, s.offsetMs());
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, s.lineTransitionMs());
         assertEquals(LyricStyleConfig.MAX_LINE_SCALE, s.lineScale());
         assertEquals(LyricStyleConfig.MAX_WIDTH_RATIO, s.maxWidthRatio());
+        assertEquals(com.linklyric.common.hud.LayoutMode.LINEAR, s.layout(),
+                "null 排布形态必须兜底成横排，否则切形态后会一片空白");
     }
 
     /** 负数侧同样要夹紧。 */

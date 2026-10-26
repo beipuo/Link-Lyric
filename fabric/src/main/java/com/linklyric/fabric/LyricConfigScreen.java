@@ -2,6 +2,7 @@ package com.linklyric.fabric;
 
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
+import com.linklyric.common.hud.LayoutMode;
 import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 import net.minecraft.client.Minecraft;
@@ -239,6 +240,25 @@ final class LyricConfigScreen extends OptionsSubScreen {
         // 旁边再挤一个控件容易让人误以为是同一组。
         single(onOff(LangKeys.WRAP, controller.style().wrap(),
                 (s, v) -> s.withWrap(v)));
+
+        // 排布形态：横排、弧形、环形。
+        //
+        // 放在折行之后单独一行，因为它的影响面比上面任何一项都大：
+        // 它决定每一行落在哪、以什么角度画。切成弧形后折行开关仍然有效
+        // （折行决定「有哪几行」），但滚动会被形态否决，超长句直接截断。
+        // 这一点写进提示里，避免用户以为切过去之后长句还能滚。
+        AbstractWidget layoutButton = CycleButton.builder(
+                        (LayoutMode mode) -> Component.translatable(mode.labelKey))
+                .withValues(LayoutMode.values())
+                .withInitialValue(controller.style().layout())
+                .create(0, 0, 310, 20,
+                        Component.translatable(LangKeys.LAYOUT),
+                        (b, v) -> apply(s -> s.withLayout(v)));
+        // 提示挂在控件上而不是加一行说明文字：后者会占掉一整行高度，
+        // 而这个界面已经排满。悬停即见，也符合原版设置页的做法。
+        layoutButton.setTooltip(Tooltip.create(
+                Component.translatable(LangKeys.LAYOUT_TOOLTIP)));
+        single(layoutButton);
 
         // ——— 描边 ———
         //

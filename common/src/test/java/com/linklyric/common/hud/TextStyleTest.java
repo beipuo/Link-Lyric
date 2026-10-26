@@ -59,10 +59,14 @@ class TextStyleTest {
     void 空枚举兜底() {
         LyricStyleConfig c = new LyricStyleConfig(
                 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 1f, 0.7f, true,
-                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false);
+                null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false,
+                // 末位排布形态同样故意传 null，一并验证兜底。
+                null);
         assertNotNull(c.weight());
         assertNotNull(c.align());
         assertNotNull(c.interlude(), "间奏样式也必须兜底");
+        assertNotNull(c.layout(), "排布形态也必须兜底");
+        assertEquals(com.linklyric.common.hud.LayoutMode.LINEAR, c.layout());
         assertEquals(LyricStyleConfig.Weight.REGULAR, c.weight());
         assertEquals(LyricStyleConfig.Align.CENTER, c.align());
     }

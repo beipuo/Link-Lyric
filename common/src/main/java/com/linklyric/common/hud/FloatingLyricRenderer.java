@@ -138,21 +138,22 @@ public final class FloatingLyricRenderer {
 
     private final LyricFeed source;
 
-    /** 默认放置策略的单例：无状态，不需要每帧新建。 */
-    private static final PlacementStrategy DEFAULT_PLACEMENT = new LinearStackPlacement();
-
     /**
-     * 放置策略：决定「本帧每一行画在哪」。
+     * 放置策略的显式覆盖；null 表示按样式自动选择。
      *
-     * <p>默认是横排堆叠。渲染器自己不保留任何布局算式——算式在策略里，
+     * <p>正常路径下这里是 null，策略由 {@link LayoutMode} 按
+     * {@code style.layout()} 给出。三个实现都无状态，
+     * 因此「按样式取实例」不产生任何分配。
+     *
+     * <p>渲染器自己不保留任何布局算式——算式在策略里，
      * 这里只把结果交给绘制。这样换排布（弧形、环形）不必碰绘制链路，
      * 而绘制链路的正确性恰好是最难用测试钉住的部分。
      *
-     * <p>声明成 volatile：界面线程可以换策略（例如将来的主题预设），
+     * <p>声明成 volatile：界面线程可以设置覆盖（测试与诊断用），
      * 渲染在客户端线程读。策略必须无状态，因此换引用是原子的，
      * 不存在「读到一半旧一半新」的组合。
      */
-    private volatile PlacementStrategy placement = DEFAULT_PLACEMENT;
+    private volatile PlacementStrategy placementOverride;
 
 
     /** 位置外推器：把每秒一次的上报插值成帧级连续位置。 */
@@ -277,18 +278,35 @@ public final class FloatingLyricRenderer {
             if (placementForSegment == null) {
                 continue;
             }
-            int y = placementForSegment.y();
-            // 与不折行同样的判据：越出块顶的那段不再画。
-            if (y < placed.blockTop() - 1) {
+            float segmentY = placementForSegment.y();
+            // 与不折行同样的判据：越出块顶的那段不再画。判据留在浮点上，
+            // 理由同主行——先取整会让越界半像素的那一帧仍然出画。
+            if (segmentY < placed.blockTop() - 1) {
                 continue;
             }
-            int x = placementForSegment.x();
+            int y = Math.round(segmentY);
+            float segmentX = placementForSegment.x();
+            int x = Math.round(segmentX);
             float localSung = segment.localSung(globalSung);
+
+            // 朝向同样逐段生效：弧形排布下同一句的几段沿切线分开摆，
+            // 若只转主行不转后续段，一句话会变成「第一段斜、后面几段正」
+            // 那样明显断裂的形态。
+            boolean oriented = placementForSegment.hasOrientation();
+            if (oriented) {
+                pushLineRotation(painter,
+                        segmentX + segment.width() * 0.5f,
+                        segmentY + LyricGeometry.LINE_HEIGHT * 0.5f,
+                        placementForSegment.orientationDegrees());
+            }
 
             if (!canScissor) {
                 // 平台不能裁剪：退回整单元覆盖。段内仍按局部前沿推进，
                 // 只是无法把已唱与未唱叠在同一格字形上。
                 drawByWholeUnit(painter, line, segment.text(), x, y, localSung, opacity);
+                if (oriented) {
+                    painter.pose().popPose();
+                }
                 continue;
             }
 
@@ -298,10 +316,46 @@ public final class FloatingLyricRenderer {
             // 裁剪右界取本段自己的末尾与外部视口右界的较小值。
             // 用段宽而非最宽段宽：否则短段右侧会漏出一片视口空白，
             // 逐字的强调辉光会在那里散开，看起来像段外有字。
-            int segmentRight = Math.min(clipRight, x + segment.width());
+            int segmentRight = Math.min(clipRight, Math.round(segmentX + segment.width()));
             textPainter(painter).karaoke(segment.text(), x, y, localSung,
                     x, segmentRight, lifts, opacity, sungColor(), unsungColor(), line, positionMs);
+            if (oriented) {
+                painter.pose().popPose();
+            }
         }
+    }
+
+    /**
+     * 把一行绕自身中心转到 {@code degrees}。
+     *
+     * <h2>为什么用「移中心 → 转 → 移回」三步</h2>
+     *
+     * <p>{@link Pose2D#rotate} 只绕<b>当前原点</b>转，没有中心点参数。
+     * 直接调用会把整行绕屏幕左上角甩出去，表现为「角度一变歌词就游走」，
+     * 且不抛任何异常，很难归因。写法与 {@code LyricCanvas.drawTextScaled}
+     * 处理 {@code lineScale} 时完全一致。
+     *
+     * <h2>为什么中心由调用方给，而不是这里从落笔点推</h2>
+     *
+     * <p>绘制原语收的是落笔点（左上角），不是中心。但「这一行实际占多宽」
+     * 在不同路径上不是同一个量：主行滚动时占的是整行宽度，
+     * 副行占的是缩放后的宽度，折行段占的是该段自己的宽度。
+     * 若在这里用「落笔点 + 某个高度」反过来推，就得把三种宽度规则搬进来，
+     * 而三条规则已经分别住在各自的放置分支里。
+     * 让调用方把它手里已有的那个宽度除以二，是最短的路。
+     *
+     * @param painter  绘制器，提供 pose 栈
+     * @param centerX  该行中心横坐标
+     * @param centerY  该行中心纵坐标
+     * @param degrees  朝向角，顺时针为正
+     */
+    private void pushLineRotation(Painter painter,
+                                  float centerX, float centerY, float degrees) {
+        var pose = painter.pose();
+        pose.pushPose();
+        pose.translate(centerX, centerY);
+        pose.rotate(degrees);
+        pose.translate(-centerX, -centerY);
     }
 
     /**
@@ -535,21 +589,37 @@ public final class FloatingLyricRenderer {
     }
 
     /**
-     * 替换放置策略。
+     * 显式覆盖放置策略。
      *
-     * <p>换策略等于换整个「歌词以什么形状占屏」的规则，但绘制、命中检测、
-     * 底板都不必跟着改——它们只读 {@link LyricPlacement}。
-     * 传 null 视为恢复默认横排堆叠：策略缺失时渲染器只能整帧不出画，
-     * 那种失败在现场看起来是「歌词消失了」，与样式问题难以区分，
-     * 不值得为一个不该发生的入参留这种症状。
+     * <p>正常路径**不**走这里：策略由 {@code style.layout()} 决定，
+     * 见 {@link #activePlacement}。这个方法保留给两处真正的需要——
+     * 测试要把渲染器钉在某个特定策略上，诊断工具要临时试排布。
+     *
+     * <p>一旦调用，覆盖值优先于样式：用户下次改样式里的排布选项时，
+     * 会经由 {@link #clearPlacementOverride()} 清掉覆盖，恢复自动选择。
+     * 「永久覆盖」与「跟随配置」若都有入口却不区分，就会出现
+     * 「改了配置没反应」这种只能靠重启解决的状态。
+     *
+     * <p>传 null 等同清除覆盖。
      */
     public void setPlacementStrategy(PlacementStrategy strategy) {
-        this.placement = strategy == null ? DEFAULT_PLACEMENT : strategy;
+        this.placementOverride = strategy;
     }
 
-    /** 当前放置策略，供界面或测试确认接缝生效。 */
+    /** 清除显式覆盖，恢复按样式自动选择策略。 */
+    public void clearPlacementOverride() {
+        this.placementOverride = null;
+    }
+
+    /** 当前生效的策略：有覆盖用覆盖，否则按样式里的排布形态取。 */
     public PlacementStrategy placementStrategy() {
-        return placement;
+        PlacementStrategy override = placementOverride;
+        return override != null ? override : activePlacement();
+    }
+
+    /** 按当前样式选择策略实例；实例无状态，可直接共享。 */
+    private PlacementStrategy activePlacement() {
+        return style.layout().strategy();
     }
 
     public int offsetX() {
@@ -732,7 +802,15 @@ public final class FloatingLyricRenderer {
         // 折行与滚动互斥：折行已经把整句在纵向上铺开，再横推没有收益，
         // 且段内横推会把已唱前沿推出段外。理由见 primarySegments 的注释。
         boolean wrapping = segments != null && !segments.isEmpty();
-        boolean scrolling = !wrapping && canScissor && !inPreview && fullWidth > maxWidth;
+        // 排布形态也可以否决滚动：弧形与环形让视口完整覆盖整块以绕开
+        // 屏幕空间的轴对齐裁剪框（理由见 ArcPlacement 类注释）。
+        // 这两种形态下继续叠加滚动偏移只会把字推出视口，
+        // 因此必须在这里就关掉，而不是等策略内部忽略 scrolling——
+        // 本方法上面那行 visible 的取值依赖 scrolling：它决定用整句还是截断句，
+        // 两边判断不一致就会出现「策略不滚、文字却按整句画」的越界。
+        PlacementStrategy active = placementStrategy();
+        boolean scrolling = !wrapping && canScissor && !inPreview
+                && fullWidth > maxWidth && style.layout().scrolls();
 
         // 滚动时不截断文本：坐标必须和完整文本保持一致，
         // 否则 sungWidth 与实际绘制位置对不上，高亮会错位。
@@ -864,7 +942,7 @@ public final class FloatingLyricRenderer {
                 previewArea, offsetX, offsetY, style, lineTexts, lineWidths,
                 lineColors, lineScales, primaryWidth, clampedSung, scrolling, blockShift,
                 span);
-        LyricPlacement placed = placement.place(placementInput);
+        LyricPlacement placed = active.place(placementInput);
 
         // 只取绘制真正需要的几项。留白与块边界不再单独取局部变量：
         // 它们只经由 footprint 使用，多留一份副本就多一次「两份对不上」的机会。
@@ -949,8 +1027,10 @@ public final class FloatingLyricRenderer {
         // 主行越出块顶就不画：这是上移到底后旧行彻底让出位置的落点。
         // 判据读的是放置结果里的落笔位置与块顶，二者本来就同源。
         PlacedLine mainLine = placed.primary();
-        int mainBaselineY = mainLine == null ? placed.blockTop() : mainLine.y();
-        boolean mainVisible = mainBaselineY >= placed.blockTop() - 1;
+        float mainLineY = mainLine == null ? placed.blockTop() : mainLine.y();
+        // 判据留在浮点上比较，不先取整：取整会把 -0.4 抬到 0，
+        // 让「刚越出块顶半像素」的那一帧仍然出画，边缘闪一下。
+        boolean mainVisible = mainLineY >= placed.blockTop() - 1;
         // 裁剪右界取「视口右边界」与「视口左 + 视口宽」的较小值。
         // 两者在横排策略下恒等，但保留这次取小是个不变式：
         // 将来若策略给出彼此不一致的 viewportRight/viewWidth，
@@ -961,9 +1041,22 @@ public final class FloatingLyricRenderer {
             drawWrappedMain(painter, placed, segments, fullText, clampedSung,
                     opacity, canScissor, clipRight, line, positionMs);
         } else if (mainVisible) {
+            // 落笔位置在这里取整一次，交给只收 int 的绘制原语。
+            // 默认策略吐出的一定是整数值，Math.round 因而是恒等变换；
+            // 这条由 PlacementGoldenTest 的「坐标全为整数值」断言保证。
+            int mainBaselineY = Math.round(mainLineY);
             float[] lifts = clampedSung >= 0.5f && canScissor
                     ? buildLifts(painter, visible, primaryWidth, clampedSung, line, positionMs)
                     : null;
+            boolean oriented = mainLine != null && mainLine.hasOrientation();
+            if (oriented) {
+                // 中心按「落笔点 + 半宽半高」算：主行宽度取 primaryWidth
+                // （滚动时是整行宽度），与放置结果的 viewWidth 同源。
+                pushLineRotation(painter,
+                        textX + primaryWidth * 0.5f,
+                        mainLineY + LyricGeometry.LINE_HEIGHT * 0.5f,
+                        mainLine.orientationDegrees());
+            }
             if (canScissor) {
                 textPainter(painter).karaoke(visible, textX, mainBaselineY, clampedSung,
                         viewportLeft, clipRight,
@@ -971,6 +1064,9 @@ public final class FloatingLyricRenderer {
             } else {
                 drawByWholeUnit(painter, line, visible, textX, mainBaselineY,
                         clampedSung, opacity);
+            }
+            if (oriented) {
+                painter.pose().popPose();
             }
         }
 
@@ -984,8 +1080,22 @@ public final class FloatingLyricRenderer {
                 continue;
             }
             // 副行同样应用字重与阴影设置。
-            textPainter(painter).textScaled(linePlacement.text(), linePlacement.x(),
-                    linePlacement.y(), linePlacement.scale(), linePlacement.color());
+            boolean oriented = linePlacement.hasOrientation();
+            if (oriented) {
+                // 副行的占位宽度是缩放后的 width*scale，中心按它算才不会偏。
+                pushLineRotation(painter,
+                        linePlacement.x() + linePlacement.width() * linePlacement.scale() * 0.5f,
+                        linePlacement.y() + LyricGeometry.LINE_HEIGHT * linePlacement.scale() * 0.5f,
+                        linePlacement.orientationDegrees());
+            }
+            // 落笔坐标在这里取整一次；默认策略下同样是恒等变换。
+            textPainter(painter).textScaled(linePlacement.text(),
+                    Math.round(linePlacement.x()),
+                    Math.round(linePlacement.y()),
+                    linePlacement.scale(), linePlacement.color());
+            if (oriented) {
+                painter.pose().popPose();
+            }
         }
 
         if (scaling) {

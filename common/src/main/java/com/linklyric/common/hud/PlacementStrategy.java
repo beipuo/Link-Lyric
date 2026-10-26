@@ -22,9 +22,21 @@ package com.linklyric.common.hud;
  * <p>一、**纯函数**。同样的输入必须给同样的输出，不得缓存跨帧状态；
  * 时序相关的量（行切换偏移、已唱宽度）由调用方算好后作为输入传进来。
  *
- * <p>二、**整数落位**。当前排版下沿是整数像素，改动取整时机就会破坏
- * 逐像素快照。若将来需要亚像素，那是一次连带绘制层的独立改动，
- * 不应由某一个策略偷偷启用。
+ * <p>二、**浮点计算、边界取整一次**。这一条改自「整数落位」。
+ * 原先要求策略直接吐出整数像素，理由是「改动取整时机就会破坏逐像素快照」。
+ * 加弧形与圆环之后这条站不住了：圆弧上的坐标是 {@code r·sin θ}，
+ * 钟面上的方位角更是无理数，任何先取整的做法都会在策略内部丢一次精度，
+ * 而丢掉的精度无法在绘制端还原。
+ *
+ * <p>新的契约是：策略内部全程浮点，**只在交给绘制原语的那一刻取整**。
+ * 取整由调用方（渲染器）在调用点做，因为只有它知道下一个原语要 int 还是 float。
+ * 默认策略不受影响——{@link LinearStackPlacement} 仍走
+ * {@link LineLayout} 的整数算式，浮点化只是放宽了字段类型，
+ * 「默认观感零变化」是构造上成立的（见 {@link LyricPlacement} 类注释）。
+ *
+ * <p>块信息（{@code blockTop / blockBottom / viewportLeft / viewWidth / textX}）
+ * 仍必须是整数：它们要喂给 {@link FloatingLyricRenderer.Bounds}、
+ * {@code fillRect} 与 {@code enableScissor}，全是 int 原语。
  *
  * <p>三、**不得为空**。有内容可画时必须给出至少一行，且第 0 项必须是
  * 主行（{@link LyricPlacement.PlacedLine#isPrimary()} 为 true）。

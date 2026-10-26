@@ -18,13 +18,31 @@ import java.util.List;
  * 只负责**算出**这些数，绘制者只负责**读**这些数；块信息只算一次，
  * 包围盒与底板都从同一个 {@code blockTop} 派生。
  *
- * <h2>为什么坐标全是 int</h2>
+ * <h2>为什么块信息仍是 int，而逐行坐标是 float</h2>
  *
- * <p>{@code common} 的排版下沿至今是整数像素：{@link LineLayout} 与
- * {@link LyricGeometry} 都在落位时取整一次，绘制原语也收 int。
- * 把这里换成 float 会顺手改掉取整时机，逐像素快照立刻不一致。
- * 精度提升是一次独立改动，不该混进「结构不变」的重构里——
- * 唯一例外是 {@link PlacedLine#orientationDegrees()}，见其注释。
+ * <p>这里要分两类量：
+ *
+ * <p>**块信息**（{@code blockTop / blockBottom / viewportLeft / viewWidth / textX}）
+ * 是整数像素，而且必须继续是整数。它们同时喂给三处只认 int 的地方：
+ * {@link FloatingLyricRenderer.Bounds}（命中检测，鼠标坐标是 int）、
+ * 底板填充（{@code fillRect} 收 int）、逐字裁剪（{@code enableScissor} 收 int）。
+ * 把这些换成 float，等于要求平台层每一个 {@code fillRect} 调用点都改名，
+ * 而 {@code LyricDragController} 的 {@code bounds().contains(mouseX, mouseY)}
+ * 会失去类型依据——那条路径是整块拖动的唯一入口，改错就是「歌词看得见、拖不动」。
+ * 因此块信息维持 int，取整发生在放置结束那一刻，由策略自己负责。
+ *
+ * <p>**逐行坐标**（{@link PlacedLine#x()} / {@link PlacedLine#y()}）是 float。
+ * 原因很直接：弧形排布上的位置是 {@code r·sin θ}，圆环上更是无理数；
+ * 若在策略内部先取整再交给绘制，一个 30 行的圆环会累积出十几像素的错位，
+ * 而且每行的误差方向不一致，看起来是「字歪着，但说不出哪歪」。
+ * 浮点只保留到绘制前一步：{@code drawTextScaled} 与
+ * {@link LyricPainter#karaoke} 都收 int，转换发生在**调用点**，
+ * 而不是在策略里。
+ *
+ * <p>默认策略不受影响：{@link LinearStackPlacement} 内部仍用
+ * {@link LineLayout} 的整数算式，把 int 赋给 float 字段是**构造上无损**的。
+ * 「默认观感零变化」因此不依赖任何取整技巧，只依赖类型放宽的方向。
+ * 这一条由 {@code PlacementGoldenTest} 的逐字段快照钉住。
  *
  * @param blockTop     歌词块上边界（不含留白），像素
  * @param blockHeight  整块高度，像素；至少容纳一行
@@ -115,19 +133,19 @@ public record LyricPlacement(
      * 每一行的放置结果。
      *
      * @param index              行序号，0 恒为主行
-     * @param x                  落笔横坐标
-     * @param y                  落笔纵坐标（行顶，不是基线）
+     * @param x                  落笔横坐标；浮点，见 {@link LyricPlacement} 类注释
+     * @param y                  落笔纵坐标（行顶，不是基线）；浮点
      * @param width              该行宽度，像素；主行在滚动时是整行宽度
      * @param text               该行要画的内容，已按可用宽度截断
      * @param color              该行颜色，ARGB
      * @param scale              字号比例：主行 1.0，副行 0.8
      * @param isPrimary          是否逐字染色那行；只有它参与进度与抬升
-     * @param orientationDegrees 行朝向角，单位为度
+     * @param orientationDegrees 行朝向角，单位为度，顺时针为正，0 为水平
      */
     public record PlacedLine(
             int index,
-            int x,
-            int y,
+            float x,
+            float y,
             int width,
             String text,
             int color,
@@ -138,18 +156,54 @@ public record LyricPlacement(
         /**
          * 朝向恒为水平的构造函数。
          *
-         * <p>眼下所有编排都是横排，显式写 0.0f 会散落在每个调用点上，
+         * <p>眼下只有默认策略走这条入口，显式写 0.0f 会散落在每个调用点上，
          * 而其中任何一个手滑都不会有任何现象。留一个默认入口，
          * 让「当前恒为水平」这件事只写在类型里。
+         *
+         * <p>注意它收的是 {@code int x/y}：横排堆叠的坐标本来就是整数，
+         * 让这条入口保留 int 形参，等于在类型上再声明一次「默认排布不引入小数」。
+         * 需要小数的编排用全参构造。
          */
         public PlacedLine(int index, int x, int y, int width, String text,
                           int color, float scale, boolean isPrimary) {
-            this(index, x, y, width, text, color, scale, isPrimary, 0.0f);
+            this(index, (float) x, (float) y, width, text, color, scale, isPrimary, 0.0f);
         }
 
-        /** 该行右边界。半开区间，与裁剪语义一致。 */
-        public int right() {
+        /**
+         * 该行右边界。
+         *
+         * <p>返回 float：它唯一的消费者是逐字裁剪的右界（{@code segmentRight}），
+         * 而那里算完立刻取 {@code Math.min} 交给 {@code karaoke} 的 int 形参。
+         * 保持浮点直到那一步，斜排时段的右端才不会提前丢精度。
+         */
+        public float right() {
             return x + width;
         }
+
+        /**
+         * 该行是否带朝向。
+         *
+         * <p>阈值 0.01 度，与常量 {@code LyricPainter.ROTATE_EPSILON_DEGREES} 同源。
+         * 9 像素的字转 0.01 度，最远角点位移约 {@code (9/2)·sin(0.01°) ≈ 0.0008}
+         * 像素——比一个像素小三个数量级。用它当判据，横排堆叠永远走
+         * 无变换分支，不会因为浮点残值多做一次矩阵压栈。
+         *
+         * <p>那个常量是私有的，因此这里另立一份而不是引用；两处数值必须一致，
+         * 否则同一帧里会出现「行已转、字还没跟上」的边界帧。
+         * {@code PoseIdentityTest} 会把两者钉在一起。
+         */
+        public boolean hasOrientation() {
+            return Math.abs(orientationDegrees) > ORIENTATION_EPSILON_DEGREES;
+        }
     }
+
+    /**
+     * 朝向生效阈值，单位度。
+     *
+     * <p>放在 {@link LyricPlacement} 里而不是 {@code PlacedLine} 里：
+     * record 的嵌套 record 只能声明实例相关的东西，而这是个跨行共用的判据，
+     * 由外层持有更合语义。数值与 {@code LyricPainter} 的旋转阈值一致，
+     * 两处若各用一套，同一帧里会出现「行已转、字还没跟上」的边界帧。
+     */
+    public static final float ORIENTATION_EPSILON_DEGREES = 0.01f;
 }

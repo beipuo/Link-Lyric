@@ -170,6 +170,15 @@ public final class LangKeys {
     public static final String ALIGN_CENTER = "linklyric.align.center";
     public static final String ALIGN_RIGHT = "linklyric.align.right";
 
+    /** 排布形态：界面上的选项名，以及三种形态各自的显示名。 */
+    public static final String LAYOUT = "linklyric.config.layout";
+
+    /** 排布形态的选项说明。单独一键，因为三种形态的取舍无法压进一个短名里。 */
+    public static final String LAYOUT_TOOLTIP = "linklyric.config.layout.tooltip";
+    public static final String LAYOUT_LINEAR = "linklyric.layout.linear";
+    public static final String LAYOUT_ARC = "linklyric.layout.arc";
+    public static final String LAYOUT_RING = "linklyric.layout.ring";
+
     private LangKeys() {
     }
 }

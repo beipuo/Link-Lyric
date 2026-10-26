@@ -1,5 +1,6 @@
 package com.linklyric.common.config;
 
+import com.linklyric.common.hud.LayoutMode;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
@@ -50,6 +51,14 @@ public final class LayoutConfig {
     private static final String KEY_STROKE_ALPHA = "strokeAlpha";
     /** 超长行是否折行。默认 false，旧配置文件缺这一项时保持旧观感。 */
     private static final String KEY_WRAP = "wrap";
+    /**
+     * 排布形态。
+     *
+     * <p>存的是 {@link LayoutMode#id()} 而不是枚举名：那个 id 一旦写进用户文件
+     * 就不能再改，而枚举名是代码标识，重命名不该让老配置失效。
+     * 缺键时落回 {@code linear}，升级后画面与之前逐像素一致。
+     */
+    private static final String KEY_LAYOUT = "layout";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -127,7 +136,11 @@ public final class LayoutConfig {
                 // 折行的默认值是 false，且旧配置文件里没有这个键。
                 // 这里刻意用 "true" 作为默认比较值：与上面的 feather/shadow 相反，
                 // 折行是「新增能力」，缺键时必须落回关闭，画面才与升级前一致。
-                "true".equalsIgnoreCase(props.getProperty(KEY_WRAP, "false").trim()));
+                "true".equalsIgnoreCase(props.getProperty(KEY_WRAP, "false").trim()),
+                // 排布形态走 id 反查而不是 parseEnum：id 是稳定标识，
+                // 与枚举名解耦（理由见 LayoutMode 类注释）。
+                // fromId 自身在无法识别时退回 LINEAR，因此旧配置缺键即横排。
+                LayoutMode.fromId(props.getProperty(KEY_LAYOUT)));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -266,6 +279,7 @@ public final class LayoutConfig {
         props.setProperty(KEY_STROKE_COLOR, hex(style.strokeColor()));
         props.setProperty(KEY_STROKE_ALPHA, Integer.toString(style.strokeAlphaPercent()));
         props.setProperty(KEY_WRAP, Boolean.toString(style.wrap()));
+        props.setProperty(KEY_LAYOUT, style.layout().id());
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();
