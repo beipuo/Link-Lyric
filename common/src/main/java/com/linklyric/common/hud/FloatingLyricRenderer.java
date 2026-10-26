@@ -392,10 +392,21 @@ public final class FloatingLyricRenderer {
         return LyricGeometry.left(align, centerX, maxWidth, lineWidth);
     }
 
-    /** 单行可用宽度：预览区内按框宽收窄，否则按屏幕比例。 */
+    /**
+     * 单行可用宽度。
+     *
+     * <p>两种情形走**同一条公式**，只把「屏幕宽度」换成「预览框宽度」：
+     * 都没绕开 {@code maxWidthRatio}。
+     *
+     * <p>此前预览分支直接取 {@code previewArea.width() - 8}，
+     * 把宽度比例整个跳过了——拖动「最大宽度」滑条时预览毫无变化，
+     * 而上面 {@link #setPreviewArea} 的注释偏偏写着「宽度照常生效」。
+     * 玩家据此调出来的宽度，进游戏才发现不是那个样子。
+     */
     private int layoutMaxWidth(int screenWidth) {
         if (previewArea != null && !previewArea.isEmpty()) {
-            return Math.max(40, previewArea.width() - 8);
+            return Math.max(40, (int) (previewArea.width()
+                    * style.maxWidthRatio()));
         }
         return Math.max(40, (int) (LyricGeometry.maxWidth(screenWidth)
                 * style.maxWidthRatio() * 2f));
@@ -473,7 +484,17 @@ public final class FloatingLyricRenderer {
         // 悬停命中一块已经不存在的歌词。开头统一清空可以杜绝这类遗漏。
         bounds = Bounds.EMPTY;
 
-        if (painter == null || !source.isAlive()) {
+        if (painter == null) {
+            return false;
+        }
+        // 数据源不存活时通常不出画，但预览是例外。
+        //
+        // 原条件写作 {@code !source.isAlive()}，而数据源的存活
+        // 包含「用户是否启用」——玩家把数据源关掉之后进配置界面，
+        // 预览会整块空白，所有颜色、字号、描边的调整都看不到效果。
+        // 预览要看的正是样式，与数据源此刻有没有歌词无关：
+        // 时间轴没内容时下面的分支自然会返回，不需要在这里提前挡掉。
+        if (!source.isAlive() && !previewForced) {
             return false;
         }
         // 关闭状态下完全不出画。
@@ -558,8 +579,15 @@ public final class FloatingLyricRenderer {
         // 预览框里不滚动：滚动会使文字横向跑出框外，
         // 而预览要看的是颜色与排版，不是滚动行为。超长时截断即可。
         boolean inPreview = previewArea != null && !previewArea.isEmpty();
-        boolean canScroll = painter.supportsScissor() && !inPreview;
-        boolean scrolling = canScroll && fullWidth > maxWidth;
+        // 「能裁剪」与「要滚动」是两件事，此前被合成一个 {@code canScroll}：
+        //   1. 裁剪：逐字绘制要把每个字限制在自己的格里；
+        //   2. 滚动：整行超宽时让它横向跑。
+        // 预览关掉了滚动，于是连裁剪也一起关掉，
+        // 逐字绘制路径整条被跳过——预览只剩一段静态文字，
+        // 上浮、渐变、强调全部看不到，与进游戏后判若两样。
+        // 现在只让「滚动」受预览限制，裁剪仍按平台能力判断。
+        boolean canScissor = painter.supportsScissor();
+        boolean scrolling = canScissor && !inPreview && fullWidth > maxWidth;
 
         // 滚动时不截断文本：坐标必须和完整文本保持一致，
         // 否则 sungWidth 与实际绘制位置对不上，高亮会错位。
@@ -680,7 +708,15 @@ public final class FloatingLyricRenderer {
         //
         // 若只让高亮层带偏移，唱到的字会从白色原字上方落下来，
         // 看起来像两个独立的字在打架，而不是同一个字变色并上浮。
-        float[] lifts = clampedSung >= 0.5f && canScroll
+        // 逐字上浮只要求「平台能裁剪」——裁剪用来把每个字的绘制限制在
+        // 自己的格内，与滚动无关。此前这里判的是 {@code canScroll}，
+        // 而预览把 {@code canScroll} 强制关掉了（预览不滚动），
+        // 于是**预览里永远看不到逐字上浮与渐变染色**：
+        // 玩家调字号、行距、上浮曲线时，预览是一片不会动的静态文字，
+        // 与进游戏后看到的完全不是一回事。
+        //
+        // 上浮与滚动本是两件事，只是原先被同一个布尔量绑在一起。
+        float[] lifts = clampedSung >= 0.5f && canScissor
                 ? buildLifts(painter, visible, primaryWidth, clampedSung, line, positionMs)
                 : null;
 
@@ -698,7 +734,7 @@ public final class FloatingLyricRenderer {
         // 主行越出块顶就不画：这是上移到底后旧行彻底让出位置的落点。
         boolean mainVisible = mainBaselineY >= blockTop - 1;
         if (mainVisible) {
-            if (canScroll) {
+            if (canScissor) {
                 textPainter(painter).karaoke(visible, textX, mainBaselineY, clampedSung,
                         viewportLeft, Math.min(viewportRight, viewportLeft + viewWidth),
                         lifts, opacity, sungColor(), unsungColor(), line, positionMs);
