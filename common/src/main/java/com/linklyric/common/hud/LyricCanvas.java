@@ -62,20 +62,6 @@ public interface LyricCanvas {
     }
 
     /**
-     * 带浮点抬升与字重的绘制。
-     *
-     * <p>加粗已从渲染路径移除：MC 的粗体是同一字形右移一个纹素再画一遍，
-     * 在 9px 位图字形上那份错位副本会被看成第二个字。
-     *
-     * <p>重载保留是为了不破坏既有调用点与测试替身的签名；
-     * {@code bold} 参数一律忽略。
-     */
-    default void drawTextLifted(String text, int x, int y, float lift,
-                                int color, boolean shadow, boolean bold) {
-        drawTextLifted(text, x, y, lift, color, shadow);
-    }
-
-    /**
      * 绘制单个字形，左右两端可不同色。
      *
      * <p>这是字内渐变的唯一入口：GPU 在顶点之间线性插值，
@@ -133,16 +119,6 @@ public interface LyricCanvas {
     }
 
     /**
-     * 带字重参数的版本，{@code bold} 已不再生效。
-     *
-     * <p>保留签名以免破坏调用点；实际绘制一律按常规字重。
-     */
-    default void drawGlyphGradient(String glyph, float x, int y, float lift,
-                                   GlyphColors colors, boolean shadow, boolean bold) {
-        drawGlyphGradient(glyph, x, y, lift, colors, shadow);
-    }
-
-    /**
      * 按段绘制单个字形。
      *
      * <p>前沿函数是分段线性的，段边界落在它的折点上，
@@ -162,14 +138,40 @@ public interface LyricCanvas {
                         spans[spans.length - 1].endColor()), shadow);
     }
 
-    /** 按缩放比例绘制文本。默认实现忽略缩放。 */
+    /** 带阴影开关的缩放绘制。 */
     default void drawTextScaled(String text, int x, int y, float scale,
                                 int color, boolean shadow) {
         drawTextScaled(text, x, y, scale, color);
     }
 
+    /**
+     * 按缩放比例绘制文本。
+     *
+     * <p>默认实现走姿态栈，以 {@code (x, y)} 为原点缩放后绘制：
+     * 这是**唯一**正确的退化方式。副行的纵向位置已由 {@code LineLayout}
+     * 算好，把 scale 折算成位移会把这层布局再叠加一次，
+     * 结果随 scale 漂移——那不是缩放，是错位。
+     *
+     * <p>平台层可覆写以获得更精确的缩放（例如直接改字号渲染），
+     * 但即使不覆写，这里也不会静默丢掉 {@code scale}：
+     * 此前默认实现直接 {@code drawText(text, x, y, color)}，
+     * 副行缩到 0.8 倍全靠两端各自覆写，一旦漏覆写就会静默变成主行字号。
+     */
     default void drawTextScaled(String text, int x, int y, float scale, int color) {
-        drawText(text, x, y, color);
+        if (Math.abs(scale - 1f) < 0.001f) {
+            drawText(text, x, y, color);
+            return;
+        }
+        Pose2D pose = pose();
+        pose.pushPose();
+        pose.translate(x, y);
+        pose.scale(scale, scale);
+        pose.translate(-x, -y);
+        try {
+            drawText(text, x, y, color);
+        } finally {
+            pose.popPose();
+        }
     }
 
     /** 按缩放比例测量文本宽度。 */

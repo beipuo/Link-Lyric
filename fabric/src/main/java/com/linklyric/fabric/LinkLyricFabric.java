@@ -306,14 +306,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         @Override
         public void drawTextLifted(String text, int x, int y, float lift,
                                    int color, boolean shadow) {
-            drawTextLifted(text, x, y, lift, color, shadow, false);
-        }
-
-        @Override
-        public void drawTextLifted(String text, int x, int y, float lift,
-                                   int color, boolean shadow, boolean ignoredBold) {
-            // 加粗已移除：§l 与它带来的伪粗体副本会让 9px 字形出现重影。
-            // 参数保留只为实现接口签名。
+            // 保留浮点抬升：抬升量只有约 1px，先取整会在 0 与 1 之间跳变。
             int dy = Math.round(lift);
             if (dy == 0) {
                 drawText(text, x, y, color, shadow);

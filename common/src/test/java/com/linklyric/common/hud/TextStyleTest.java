@@ -100,7 +100,6 @@ class TextStyleTest {
 
         assertTrue(painter.texts.stream().noneMatch(t -> t.contains("\u00a7")),
                 "绘制文本不得含样式符，实际=" + painter.texts);
-        assertFalse(painter.sawBold, "加粗已移除，不应再传字重");
     }
 
     /** 字号缩放必须真的进入绘制路径。 */
@@ -146,7 +145,6 @@ class TextStyleTest {
         assertTrue(!painter.texts.isEmpty(), "应至少画一次");
         assertTrue(painter.texts.stream().noneMatch(t -> t.contains("\u00a7")),
                 "绘制文本不含样式符，实际=" + painter.texts);
-        assertFalse(painter.sawBold, "加粗已移除，不应再收到字重");
     }
 
     /** 阴影开关必须逐次透传给平台层，而不是写死。 */
@@ -289,14 +287,15 @@ class TextStyleTest {
     }
 
     /**
-     * 记录绘制文本，并观察字重是否经参数到达平台层。
+     * 记录每次绘制收到的文本。
      *
-     * <p>刻意**不**覆盖无字重的旧重载：若实现仍在走旧路径，
-     * {@link #sawBold} 会保持 false，测试立刻失败。
+     * <p>旧的 {@code sawBold} 观察点已删除：接口不再有 {@code bold} 参数，
+     * 「传没传字重」不再是可观测的量。真正要守的性质是
+     * 「绘制文本不含 {@code §} 样式符」与「每个字只画一次」，
+     * 两者都在下面覆写的方法里被记录。
      */
     private static final class BoldPainter implements FloatingLyricRenderer.Painter {
         final java.util.List<String> texts = new java.util.ArrayList<>();
-        boolean sawBold;
 
         @Override
         public void drawText(String text, int x, int y, int color) {
@@ -307,20 +306,18 @@ class TextStyleTest {
 
         @Override
         public void drawTextLifted(String text, int x, int y, float lift,
-                                   int color, boolean shadow, boolean bold) {
+                                   int color, boolean shadow) {
             if (text != null && !text.isEmpty()) {
                 texts.add(text);
             }
-            sawBold |= bold;
         }
 
         @Override
         public void drawGlyphGradient(String glyph, float x, int y, float lift,
-                                      GlyphColors colors, boolean shadow, boolean bold) {
+                                      GlyphColors colors, boolean shadow) {
             if (glyph != null && !glyph.isEmpty()) {
                 texts.add(glyph);
             }
-            sawBold |= bold;
         }
 
         @Override
