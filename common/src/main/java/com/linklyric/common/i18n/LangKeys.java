@@ -160,9 +160,10 @@ public final class LangKeys {
     public static final String INTERLUDE_BLANK = "linklyric.interlude.blank";
 
     /** 样式枚举名称。 */
+    // 只保留 REGULAR：Weight 枚举已裁到只剩常规一项，BOLD / HEAVY 两键
+    // 从此没有任何 Java 引用，只是四份文案文件里的死字符串。留着它们
+    // 会让人以为还存在可选字重，而渲染层早已不认这两个值。
     public static final String WEIGHT_REGULAR = "linklyric.weight.regular";
-    public static final String WEIGHT_BOLD = "linklyric.weight.bold";
-    public static final String WEIGHT_HEAVY = "linklyric.weight.heavy";
     public static final String ALIGN_LEFT = "linklyric.align.left";
     public static final String ALIGN_CENTER = "linklyric.align.center";
     public static final String ALIGN_RIGHT = "linklyric.align.right";
