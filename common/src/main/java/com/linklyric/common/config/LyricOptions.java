@@ -2,6 +2,7 @@ package com.linklyric.common.config;
 
 import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
+import com.linklyric.common.style.MixedScript;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -49,7 +50,19 @@ public final class LyricOptions {
         /** 描边不透明度，百分比。 */
         STROKE_ALPHA(LangKeys.OPTION_STROKE_ALPHA, LangKeys.UNIT_PERCENT,
                 LyricStyleConfig.MIN_STROKE_ALPHA,
-                LyricStyleConfig.MAX_STROKE_ALPHA, 1);
+                LyricStyleConfig.MAX_STROKE_ALPHA, 1),
+        /**
+         * 中日韩字形缩放，百分比。
+         *
+         * <p>即便混排开关关着这一项也要可调：用户会先调刻度再开开关。
+         * 若关着就锁住滑条，他必须"先开、再调、再判断"，而不能"调好再开"。
+         */
+        MIXED_SCALE(LangKeys.OPTION_MIXED_SCALE, LangKeys.UNIT_PERCENT,
+                MixedScript.MIN_SCALE_PERCENT, MixedScript.MAX_SCALE_PERCENT, 1),
+        /** 中日韩基线校正，像素；正数上抬。 */
+        MIXED_BASELINE(LangKeys.OPTION_MIXED_BASELINE, LangKeys.UNIT_PX,
+                MixedScript.MIN_BASELINE_SHIFT_PX,
+                MixedScript.MAX_BASELINE_SHIFT_PX, 1);
 
         /** 名称与单位的语言键。 */
         public final String labelKey;
@@ -89,6 +102,8 @@ public final class LyricOptions {
                 case LINE_GAP -> style.lineGapPx();
                 case STROKE_PX -> style.strokePx();
                 case STROKE_ALPHA -> style.strokeAlphaPercent();
+                case MIXED_SCALE -> style.mixed().cjkScalePercent();
+                case MIXED_BASELINE -> style.mixed().baselineShiftPx();
             };
         }
 
@@ -106,6 +121,10 @@ public final class LyricOptions {
                 case LINE_GAP -> style.withLineGapPx(raw);
                 case STROKE_PX -> style.withStrokePx(raw);
                 case STROKE_ALPHA -> style.withStrokeAlphaPercent(raw);
+                case MIXED_SCALE ->
+                        style.withMixed(style.mixed().withCjkScalePercent(raw));
+                case MIXED_BASELINE ->
+                        style.withMixed(style.mixed().withBaselineShiftPx(raw));
             };
         }
 

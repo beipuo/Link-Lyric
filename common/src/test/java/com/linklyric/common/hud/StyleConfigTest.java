@@ -28,6 +28,8 @@ class StyleConfigTest {
                 99_999, 99_999, 99f, 99f, true,
                 null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false,
                 // 末位是排布形态。传 null 是为了同时验证构造器会兜底成横排。
+                null,
+                // 混排校正同样传 null，验证它兜底成关闭态而非「开启 + 默认刻度」。
                 null);
 
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, s.offsetMs());

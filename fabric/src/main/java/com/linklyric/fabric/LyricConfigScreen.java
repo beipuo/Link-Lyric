@@ -260,6 +260,42 @@ final class LyricConfigScreen extends OptionsSubScreen {
                 Component.translatable(LangKeys.LAYOUT_TOOLTIP)));
         single(layoutButton);
 
+        // ——— 中英混排校正 ———
+        //
+        // 三项一组：开关 + 两个刻度。开关放在最前，因为它决定后两项
+        // 此刻是否生效——但后两项**不联动禁用**，理由与描边那组相同：
+        // 用户会先调好刻度再打开开关，若关着就调不了，只能反过来操作，
+        // 那是个死角。
+        //
+        // 默认关闭。开启会改变所有含中日韩字符的歌词的像素位置，
+        // 因此这一项必须由用户明确选择，不能替他们决定。
+        AbstractWidget mixedButton = CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.GENERIC_ON),
+                        Component.translatable(LangKeys.GENERIC_OFF))
+                .withInitialValue(controller.style().mixed().enabled())
+                .create(0, 0, 310, 20,
+                        Component.translatable(LangKeys.MIXED_SCRIPT),
+                        (b, v) -> apply(s -> s.withMixed(s.mixed().withEnabled(v))));
+        // 提示必须挂上：这一项的效果依赖字体资源，无法在界面上说明白，
+        // 只能告诉用户「它做什么、怎么调」。
+        mixedButton.setTooltip(Tooltip.create(
+                Component.translatable(LangKeys.MIXED_SCRIPT_TOOLTIP)));
+        single(mixedButton);
+
+        single(integer(LangKeys.OPTION_MIXED_SCALE,
+                com.linklyric.common.style.MixedScript.MIN_SCALE_PERCENT,
+                com.linklyric.common.style.MixedScript.MAX_SCALE_PERCENT,
+                s -> s.mixed().cjkScalePercent(),
+                (s, v) -> s.withMixed(s.mixed().withCjkScalePercent(v)),
+                LangKeys.TIP_MIXED_SCALE));
+
+        single(integer(LangKeys.OPTION_MIXED_BASELINE,
+                com.linklyric.common.style.MixedScript.MIN_BASELINE_SHIFT_PX,
+                com.linklyric.common.style.MixedScript.MAX_BASELINE_SHIFT_PX,
+                s -> s.mixed().baselineShiftPx(),
+                (s, v) -> s.withMixed(s.mixed().withBaselineShiftPx(v)),
+                LangKeys.TIP_MIXED_BASELINE));
+
         // ——— 描边 ———
         //
         // 单开一组，因为描边是「开关 + 两个连续量」的组合：

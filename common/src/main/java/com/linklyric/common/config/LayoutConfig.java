@@ -1,8 +1,7 @@
 package com.linklyric.common.config;
 
 import com.linklyric.common.hud.LayoutMode;
-import java.io.IOException;
-import java.io.Reader;
+import java.io.IOException;import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -10,6 +9,7 @@ import java.nio.file.Path;
 import java.util.Properties;
 
 import com.linklyric.common.style.LyricStyleConfig;
+import com.linklyric.common.style.MixedScript;
 
 /**
  * 歌词位置配置的持久化。
@@ -59,6 +59,17 @@ public final class LayoutConfig {
      * 缺键时落回 {@code linear}，升级后画面与之前逐像素一致。
      */
     private static final String KEY_LAYOUT = "layout";
+    /**
+     * 中英混排校正的三项。
+     *
+     * <p>刻意拆成三个键而不是压成一个字符串：前两项是整数刻度，
+     * 用户手改配置文件时能直接改数字试效果，不必研究一种迷你语法。
+     * 三项同缺时整体退回关闭（见 {@code read()}），
+     * 于是旧配置文件升级后画面逐像素不变。
+     */
+    private static final String KEY_MIXED_ENABLED = "mixedScript";
+    private static final String KEY_MIXED_SCALE = "mixedScriptScale";
+    private static final String KEY_MIXED_BASELINE = "mixedScriptBaseline";
     /** 已禁用的数据源 id 列表，逗号分隔。 */
     private static final String KEY_DISABLED_SOURCES = "disabledSources";
 
@@ -140,7 +151,21 @@ public final class LayoutConfig {
                 // 排布形态走 id 反查而不是 parseEnum：id 是稳定标识，
                 // 与枚举名解耦（理由见 LayoutMode 类注释）。
                 // fromId 自身在无法识别时退回 LINEAR，因此旧配置缺键即横排。
-                LayoutMode.fromId(props.getProperty(KEY_LAYOUT)));
+                LayoutMode.fromId(props.getProperty(KEY_LAYOUT)),
+                // 混排校正：三个键同缺时整体关闭。
+                //
+                // 这里不用 "true".equals(getProperty(KEY, "false")) 那种单行写法，
+                // 因为三个键要**一起**决定语义：只写了 mixedScript=true
+                // 而两个刻度缺失时，刻度各自回退到默认起点（96 / 0），
+                // 那是"用户打开了但还没调"的合法状态，不该被当成缺配置而关掉。
+                // 只有连 mixedScript 这个键都没有，才是真正的旧配置文件。
+                new MixedScript(
+                        "true".equalsIgnoreCase(
+                                props.getProperty(KEY_MIXED_ENABLED, "false").trim()),
+                        parseInt(props.getProperty(KEY_MIXED_SCALE),
+                                MixedScript.DEFAULT_SCALE_PERCENT),
+                        parseInt(props.getProperty(KEY_MIXED_BASELINE),
+                                MixedScript.DEFAULT_BASELINE_SHIFT_PX)));
 
         String disabled = props.getProperty(KEY_DISABLED_SOURCES, "");
         for (String id : disabled.split(",")) {
@@ -280,6 +305,11 @@ public final class LayoutConfig {
         props.setProperty(KEY_STROKE_ALPHA, Integer.toString(style.strokeAlphaPercent()));
         props.setProperty(KEY_WRAP, Boolean.toString(style.wrap()));
         props.setProperty(KEY_LAYOUT, style.layout().id());
+        props.setProperty(KEY_MIXED_ENABLED, Boolean.toString(style.mixed().enabled()));
+        props.setProperty(KEY_MIXED_SCALE,
+                Integer.toString(style.mixed().cjkScalePercent()));
+        props.setProperty(KEY_MIXED_BASELINE,
+                Integer.toString(style.mixed().baselineShiftPx()));
         props.setProperty(KEY_DISABLED_SOURCES, String.join(",", disabledSources));
         try {
             Path parent = path.getParent();

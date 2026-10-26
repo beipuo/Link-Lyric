@@ -103,5 +103,11 @@
   "linklyric.config.layout.tooltip": "歌词以什么形状摆在屏幕上。弧形与环形不滚动，超长句会直接截断",
   "linklyric.layout.linear": "横排",
   "linklyric.layout.arc": "弧形",
-  "linklyric.layout.ring": "环形"
+  "linklyric.layout.ring": "环形",
+  "linklyric.config.mixed": "中英混排校正",
+  "linklyric.config.mixed.tooltip": "按字形来源分段，对中文略微缩放并校正基线，弥合与英文的视觉大小差。默认关闭：开启会平移所有含中文的歌词",
+  "linklyric.config.mixed_scale": "中文缩放",
+  "linklyric.tip.mixedScale": "中文字形相对英文的缩放比例，100% 为不缩放。9px 字号下 96% 约合四周各收 0.18 像素",
+  "linklyric.config.mixed_baseline": "中文基线",
+  "linklyric.tip.mixedBaseline": "中文字形的垂直校正，正数上抬。0 表示不校——这个值只能靠肉眼在游戏里对着实际画面调",
 }

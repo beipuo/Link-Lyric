@@ -488,7 +488,7 @@ public final class FloatingLyricRenderer {
         // 还在按描边几何算，只是画不出来，白算一遍。
         float stroke = style.stroke() ? style.strokePx() : 0f;
         return new LyricPainter(painter, style.weight(), style.shadow(), effects,
-                stroke, style.strokeArgb(), style.feather());
+                stroke, style.strokeArgb(), style.feather(), style.mixed());
     }
 
     /** 两个矩形的交集；无重叠时返回空区域。 */

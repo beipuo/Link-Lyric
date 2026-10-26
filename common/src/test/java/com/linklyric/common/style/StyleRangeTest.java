@@ -68,6 +68,8 @@ class StyleRangeTest {
                 false, LyricStyleConfig.DEFAULT_STROKE_PX,
                 0, LyricStyleConfig.DEFAULT_STROKE_ALPHA, false,
                 // 末位排布形态传 null，一并验证兜底。
+                null,
+                // 混排校正也传 null，一并验证兜底成关闭态。
                 null);
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, c.offsetMs(), "时间偏移应夹住");
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, c.lineTransitionMs(), "切换时长应夹住");
@@ -104,6 +106,7 @@ class StyleRangeTest {
                 LyricStyleConfig.LiftCurve.COSINE, 0, true,
                 lineGap, true, strokePx, 0xFF000000, strokeAlpha, false,
                 // 末位排布形态：这里用默认横排，让本用例只测夹取本身。
-                com.linklyric.common.hud.LayoutMode.LINEAR);
+                com.linklyric.common.hud.LayoutMode.LINEAR,
+                com.linklyric.common.style.MixedScript.OFF);
     }
 }

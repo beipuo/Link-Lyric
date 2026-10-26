@@ -197,6 +197,34 @@ final class LyricConfigScreen extends Screen {
         addScrollWidget(layoutWidget);
         y += ROW_HEIGHT + ROW_GAP;
 
+        // 中英混排校正的开关。
+        //
+        // 两个刻度（MIXED_SCALE / MIXED_BASELINE）已经由 LyricOptions.Option
+        // 枚举在上面那个循环里统一铺出来了，这里只补开关本身。
+        // 之所以不把开关也塞进 Option 枚举：那个枚举表达的是「一个 0..1 滑条
+        // 映射到区间里的整数」，布尔量塞进去要么多一个分支、要么要给它
+        // 编一个 min=max 的退化区间——两者都比在这里直接写一个 CycleButton 难读。
+        //
+        // 默认关闭：开启会改变所有含中日韩字符的歌词的像素位置，
+        // 必须由用户明确选择。
+        AbstractWidget mixedToggle = CycleButton.booleanBuilder(
+                        Component.translatable(LangKeys.GENERIC_ON),
+                        Component.translatable(LangKeys.GENERIC_OFF))
+                .withInitialValue(controller.style().mixed().enabled())
+                .create(left, y, COLUMN_WIDTH, ROW_HEIGHT,
+                        Component.translatable(LangKeys.MIXED_SCRIPT),
+                        (button, value) -> {
+                            apply(style -> style.withMixed(
+                                    style.mixed().withEnabled(value)));
+                            // 重建控件：刻度的显示值不随开关变，但开关自身
+                            // 的文字要在按下后立刻更新。
+                            rebuildWidgets();
+                        });
+        mixedToggle.setTooltip(Tooltip.create(
+                Component.translatable(LangKeys.MIXED_SCRIPT_TOOLTIP)));
+        addScrollWidget(mixedToggle);
+        y += ROW_HEIGHT + ROW_GAP;
+
         // 整体不透明度：10% 到 100%。
         addScrollWidget(new OptionSlider(left, y, COLUMN_WIDTH,
                 LyricOptions.Option.OPACITY));

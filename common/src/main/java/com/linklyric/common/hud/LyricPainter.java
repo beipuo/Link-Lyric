@@ -134,6 +134,41 @@ final class LyricPainter {
     /** 是否启用交界羽化；false 时前沿为硬切。 */
     private final boolean feather;
 
+    /**
+     * 中英混排校正参数。
+     *
+     * <p>存整个 {@code MixedScript} 而不是拆成三个字段，理由与
+     * {@code LyricStyleConfig} 里收成一个值对象相同：这三项永远
+     * 一起生效或一起不生效，而 {@link #mixedActive} 是它们唯一的判据。
+     *
+     * <p>构造时**只读一次** {@code active()} 并缓存成布尔量，
+     * 不让逐字循环每字再问一遍。这个量在本对象的生命周期内不会变
+     * （{@code LyricPainter} 每帧新建，见 {@code textPainter()}），
+     * 因此缓存不引入任何陈旧风险。
+     */
+    private final boolean mixedActive;
+
+    /** CJK 字形缩放系数；{@link #mixedActive} 为 false 时恒为 1。 */
+    private final float cjkScale;
+
+    /** CJK 字形的基线上抬量，像素；{@link #mixedActive} 为 false 时恒为 0。 */
+    private final float cjkLift;
+
+    /**
+     * 施加混排校正时的合并载体。
+     *
+     * <p>**为什么不能就地改 {@code UnitTransform}**：特效层返回的是
+     * {@link LyricEffectEngine} 内部复用的单例，而 {@link UnitTransform#IDENTITY}
+     * 更是全局共享常量。若把 CJK 缩放直接乘进那个对象，
+     * 下一个拉丁字拿到的是同一个已被改写的实例——表现为"英文也被缩小了"，
+     * 且只在混排行上出现，极难归因。
+     *
+     * <p>因此这里备一个本对象私有的临时对象，每个需要校正的字
+     * 把特效给的值抄进来、乘上系数，再交给绘制。抄写有成本，但只在
+     * 混排行上发生，且省掉的是一次错误的共享写入。
+     */
+    private final UnitTransform mixedScratch = new UnitTransform();
+
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow) {
         this(painter, weight, shadow, null);
     }
@@ -151,6 +186,20 @@ final class LyricPainter {
     LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
                  LyricEffectEngine effects, float strokeWidth, int strokeArgb,
                  boolean feather) {
+        this(painter, weight, shadow, effects, strokeWidth, strokeArgb, feather,
+                com.linklyric.common.style.MixedScript.OFF);
+    }
+
+    /**
+     * 全参形态。
+     *
+     * <p>老的七参构造器保留并转调这里、传 {@code MixedScript.OFF}：
+     * 既有测试与诊断代码不必跟着改，而那些调用点本就只关心
+     * 字重/阴影/描边，不该被混排参数牵连。
+     */
+    LyricPainter(FloatingLyricRenderer.Painter painter, Weight weight, boolean shadow,
+                 LyricEffectEngine effects, float strokeWidth, int strokeArgb,
+                 boolean feather, com.linklyric.common.style.MixedScript mixed) {
         this.painter = painter;
         this.weight = weight;
         this.shadow = shadow;
@@ -158,6 +207,15 @@ final class LyricPainter {
         this.strokeWidth = strokeWidth;
         this.strokeArgb = strokeArgb;
         this.feather = feather;
+        // mixed 为 null 时按关闭处理：这条路径的调用方可能来自旧代码，
+        // 不该因为少传一个参数就抛 NPE 让整帧歌词消失。
+        boolean active = mixed != null && mixed.active();
+        this.mixedActive = active;
+        // 不启用时把两个量钉成恒等值，而不是保留 mixed 里的数：
+        // 这样绘制路径上没有任何"虽然为 false 但值不是 1"的残余状态，
+        // 阅读代码时不必回头确认那个布尔量。
+        this.cjkScale = active ? mixed.scale() : 1f;
+        this.cjkLift = active ? mixed.baselineLift() : 0f;
     }
 
     /**
@@ -274,8 +332,68 @@ final class LyricPainter {
 
         float drawX = charX + transform.dx;
 
-        float scale = transform.scale;
-        float rotate = transform.rotate;
+        // ——— 中英混排校正：先与特效变换合成，再一起进姿态栈 ———
+        //
+        // 这里不能"再压一层栈"来单独缩放 CJK：两层缩放都以字形中心为原点时
+        // 数学上等价于一次相乘，但会多做 2 次矩阵复制（一句 30 字每帧 60 次），
+        // 而且嵌套的旋转中心会随第一层的缩放漂移——外层先缩放后，
+        // 内层算出的 centerX/centerY 已经是缩放前的坐标，旋转就会偏。
+        // 因此合成到一个 {@code UnitTransform} 里，只压一次栈。
+        //
+        // <h2>关键取舍：只缩墨迹，不动步进</h2>
+        //
+        // 缩放走姿态栈，因此**只改变字形墨迹的大小，不改变它的格子宽度**。
+        // 这是有意的，也是本实现与"改字号"路线的分水岭：
+        //
+        // <ul>
+        //   <li>{@code sungWidth} 是一个**行内像素坐标**，它由
+        //   {@code targetWidthAt} 逐字累加 {@code painter.textWidth(part)} 得到；</li>
+        //   <li>{@code LyricWrap.wrap} 的 {@code startPx} 与
+        //   {@code Segment.localSung(globalSung) = clamp(globalSung - startPx, 0, width)}
+        //   建立在同一套未缩放的度量上；</li>
+        //   <li>{@code LyricProgress.charStarts} 也是。</li>
+        // </ul>
+        //
+        // 一旦让 CJK 的**步进**也缩 4%，上面三条的坐标系就与实际绘制脱节：
+        // 第 20 个字处会累计偏差约 7 像素，染色前沿会跑到字外面，
+        // 折行断点也会落在错误的位置。而这两个症状都在**开启校正后**才出现，
+        // 与"校正本身在改几何"极易混淆。
+        //
+        // 因此这里刻意只缩墨迹：字距仍按原步进排，中文与相邻英文之间
+        // 会出现每边约 0.18 像素的额外空隙（96% 下），一行 20 字累计约 7 像素
+        // 的"视觉右缩"——但**每个字的落点是准的**，`sungWidth`、折行、
+        // 逐字抬升全部不需要改动。这是拿一点缝隙换全部坐标系的不变性。
+        //
+        // 只有在 mixedActive 为真**且**这个字是 CJK 时才合成。
+        // 关闭态下 mixedActive 恒为 false，整段合成逻辑不被进入，
+        // 传给下面的仍是特效原样返回的那个对象引用——这是"结构性零变化"
+        // 的落点：不是参数恰好等于 1，而是代码根本没走这里。
+        UnitTransform effective = transform;
+        float effectiveLift = lift;
+        // 是否真的改了基线（不只是缩放）。裁剪框的纵向公式只在这时才切换，
+        // 理由见下面未变换分支里的注释。
+        boolean baselineAdjusted = false;
+        if (mixedActive && ScriptRuns.needsCorrection(ch.charAt(0))) {
+            // 复制而不是就地改：transform 可能是特效引擎内部复用的单例，
+            // 也可能是全局共享的 UnitTransform.IDENTITY。参见 mixedScratch 的注释。
+            mixedScratch.dx = transform.dx;
+            mixedScratch.dy = transform.dy;
+            mixedScratch.alpha = transform.alpha;
+            mixedScratch.scale = transform.scale * cjkScale;
+            mixedScratch.rotate = transform.rotate;
+            mixedScratch.bloom = transform.bloom;
+            mixedScratch.glowRadius = transform.glowRadius;
+            mixedScratch.glowAlpha = transform.glowAlpha;
+            effective = mixedScratch;
+            // 基线校正并入 lift：绘制语义是 y - lift，正 lift 上抬。
+            // 并入而不是另开一个 translate，理由同上——lift 已经参与了
+            // 旋转中心与裁剪框的计算，另开一条位移会让那两处看不到它。
+            effectiveLift = lift + cjkLift;
+            baselineAdjusted = cjkLift != 0f;
+        }
+
+        float scale = effective.scale;
+        float rotate = effective.rotate;
         boolean scaling = Math.abs(scale - 1f) > SCALE_EPSILON;
         boolean rotating = Math.abs(rotate) > ROTATE_EPSILON_DEGREES;
         boolean transformed = scaling || rotating;
@@ -296,9 +414,13 @@ final class LyricPainter {
         // lift 必须计入：平台层是在自身的姿态栈里 translate(0, -lift) 之后
         // 才绘制的，字形最终落在 textY - lift 处，而外层变换作用在**最终屏幕坐标**上。
         // 漏掉这一项，字被抬起时就会绕自己下方那一点旋转，观感是「边转边飘」。
+        //
+        // 这里用 effectiveLift 而不是原始 lift：混排校正把 CJK 的基线偏移
+        // 并进了抬升量（见上），若中心仍按未校正的 lift 算，
+        // 校正后的字会绕自己下方那一点缩放，观感是「缩的时候往下沉」。
         float boxHeight = textSizePx();
         float centerX = drawX + charWidth * 0.5f;
-        float centerY = textY - lift + boxHeight * 0.5f;
+        float centerY = textY - effectiveLift + boxHeight * 0.5f;
         // 保留浮点坐标，不取整。
         //
         // 9px 位图字形在非整数位置会糊，所以过去这里必须 Math.round；
@@ -373,12 +495,28 @@ final class LyricPainter {
             int margin = (int) Math.ceil(outwardMargin());
             scissorLeft = Math.max(left - margin, viewportLeft);
             scissorWidth = right - left + margin;
-            scissorTop = textY - LIFT_HEADROOM;
-            scissorHeight = painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM;
+            if (baselineAdjusted) {
+                // 纵向裁剪框的顶必须跟着基线校正走。
+                //
+                // 上抬量最大 3px，而这块框只有「行高 + 抬升余量(2) + 阴影余量(4)」，
+                // 若顶仍按未校正的 textY 算，抬起的 CJK 墨迹上缘会落到框外——
+                // 表现是中文的顶部（尤其是阴影）被切平，而拉丁不受影响。
+                //
+                // 这条**只在真的校正了基线时**才走：没有校正时必须严格沿用
+                // 下面那条原式，否则光是 `Math.round(textY - lift)` 里的取整
+                // 就会让所有带抬升的字平移一个像素，把"零变化"打破。
+                int shift = Math.abs(Math.round(cjkLift));
+                scissorTop = Math.round(textY - effectiveLift) - LIFT_HEADROOM - shift;
+                scissorHeight = painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM
+                        + shift * 2;
+            } else {
+                scissorTop = textY - LIFT_HEADROOM;
+                scissorHeight = painter.lineHeight() + LIFT_HEADROOM + SHADOW_HEADROOM;
+            }
         }
 
         // 颜色侧的变换：提亮与透明度都在这一步落进段颜色。
-        GlyphSpan[] shown = shade(spans, transform.bloom, transform.alpha);
+        GlyphSpan[] shown = shade(spans, effective.bloom, effective.alpha);
 
         // 姿态只在真的需要时压栈。
         //
@@ -417,9 +555,9 @@ final class LyricPainter {
             if (shown.length == 1 && shown[0].isSolid()) {
                 // 单色：走平台原有的整字绘制，省掉逐顶点写入。
                 // 传浮点横坐标，与渐变路径保持同样的亚像素精度。
-                painter.drawGlyphGradient(ch, drawX, textY, lift,
+                painter.drawGlyphGradient(ch, drawX, textY, effectiveLift,
                         new GlyphColors(shown[0].startColor(), shown[0].endColor()), shadow,
-                        transform.glowRadius, transform.glowAlpha, strokeWidth, strokeArgb);
+                        effective.glowRadius, effective.glowAlpha, strokeWidth, strokeArgb);
             } else {
                 // 段边界落在前沿函数的折点上，段内插值即精确。
                 //
@@ -427,8 +565,9 @@ final class LyricPainter {
                 // （spansForChar(charX, charRight, ...)），减去它正好得到
                 // 字形局部坐标。若改传 textX（行首），每个字会多偏移
                 // 自身之前的累计宽度，被推出裁剪区而看起来完全透明。
-                painter.drawGlyphSpans(ch, drawX, textY, lift, shown, Math.round(charX),
-                        shadow, transform.glowRadius, transform.glowAlpha,
+                painter.drawGlyphSpans(ch, drawX, textY, effectiveLift, shown,
+                        Math.round(charX),
+                        shadow, effective.glowRadius, effective.glowAlpha,
                         strokeWidth, strokeArgb);
             }
         } finally {

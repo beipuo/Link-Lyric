@@ -179,6 +179,21 @@ public final class LangKeys {
     public static final String LAYOUT_ARC = "linklyric.layout.arc";
     public static final String LAYOUT_RING = "linklyric.layout.ring";
 
+    /**
+     * 中英混排校正。
+     *
+     * <p>三项分开：开关管「要不要」，两个滑条管「校多少」。
+     * 不给合并成「轻/中/重」三档，理由见
+     * {@code LyricStyleConfig.withMixed} 的注释——两个量在实机上
+     * 可能需要反向调整，预设表达不了那一格。
+     */
+    public static final String MIXED_SCRIPT = "linklyric.config.mixed";
+    public static final String MIXED_SCRIPT_TOOLTIP = "linklyric.config.mixed.tooltip";
+    public static final String OPTION_MIXED_SCALE = "linklyric.config.mixed_scale";
+    public static final String TIP_MIXED_SCALE = "linklyric.tip.mixedScale";
+    public static final String OPTION_MIXED_BASELINE = "linklyric.config.mixed_baseline";
+    public static final String TIP_MIXED_BASELINE = "linklyric.tip.mixedBaseline";
+
     private LangKeys() {
     }
 }

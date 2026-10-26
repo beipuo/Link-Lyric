@@ -61,6 +61,8 @@ class TextStyleTest {
                 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0, 0, 1f, 0.7f, true,
                 null, null, true, 2, null, 1f, null, 0, true, 2, false, 1, 0xFF000000, 70, false,
                 // 末位排布形态同样故意传 null，一并验证兜底。
+                null,
+                // 混排校正也传 null，验证它兜底成关闭态。
                 null);
         assertNotNull(c.weight());
         assertNotNull(c.align());
