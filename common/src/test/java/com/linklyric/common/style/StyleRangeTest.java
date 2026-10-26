@@ -70,7 +70,9 @@ class StyleRangeTest {
                 // 末位排布形态传 null，一并验证兜底。
                 null,
                 // 混排校正也传 null，一并验证兜底成关闭态。
-                null);
+                null,
+                // 锚点比例与留白：这两项各自验证过夹取，这里用默认值。
+                LyricStyleConfig.DEFAULT_ANCHOR_RATIO, LyricStyleConfig.DEFAULT_PAD_X);
         assertEquals(LyricStyleConfig.MAX_OFFSET_MS, c.offsetMs(), "时间偏移应夹住");
         assertEquals(LyricStyleConfig.MAX_TRANSITION_MS, c.lineTransitionMs(), "切换时长应夹住");
         assertEquals(LyricStyleConfig.MAX_LINE_SCALE, c.lineScale(), 1e-6f, "字号缩放应夹住");
@@ -107,6 +109,8 @@ class StyleRangeTest {
                 lineGap, true, strokePx, 0xFF000000, strokeAlpha, false,
                 // 末位排布形态：这里用默认横排，让本用例只测夹取本身。
                 com.linklyric.common.hud.LayoutMode.LINEAR,
-                com.linklyric.common.style.MixedScript.OFF);
+                com.linklyric.common.style.MixedScript.OFF,
+                LyricStyleConfig.DEFAULT_ANCHOR_RATIO,
+                LyricStyleConfig.DEFAULT_PAD_X);
     }
 }

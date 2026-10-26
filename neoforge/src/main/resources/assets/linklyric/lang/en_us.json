@@ -109,5 +109,9 @@
   "linklyric.config.mixed_scale": "CJK scale",
   "linklyric.tip.mixedScale": "CJK glyph scale relative to Latin; 100% is unscaled. At 9px, 96% trims roughly 0.18px on each side",
   "linklyric.config.mixed_baseline": "CJK baseline",
+  "linklyric.config.anchor_ratio": "Vertical Position",
+  "linklyric.tip.anchorRatio": "Where the lyric block sits vertically. 0% is bottom (default), 100% is top; the top collides with boss bars and the scoreboard, so drag it down a little for a clean spot",
+  "linklyric.config.pad_x": "Side Padding",
+  "linklyric.tip.padX": "Horizontal padding of the lyric backdrop, in pixels. It only affects the backdrop and drag area, not text position",
   "linklyric.tip.mixedBaseline": "Vertical correction for CJK glyphs; positive lifts. 0 means no correction - this value can only be tuned by eye in game",
 }

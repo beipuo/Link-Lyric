@@ -72,26 +72,48 @@ public final class LineLayout {
      */
     public static Block compute(int centerY, int lineCount, int fullSizeLines,
                                 int lineHeight, int gap, float scaleRatio) {
-        int lines = Math.max(1, lineCount);
-        int full = Math.max(1, Math.min(lines, fullSizeLines));
-
-        // 先算每行的实际行高：非当前行按比例缩小。
-        // 全程用浮点累加，只在落位时取整一次——逐行取整会让误差累积。
-        float[] heights = new float[lines];
-        float total = 0f;
-        for (int i = 0; i < lines; i++) {
-            heights[i] = heightOf(i, full, lineHeight, scaleRatio);
-            total += heights[i];
-        }
-        total += gap * (lines - 1);
-
-        int blockHeight = Math.round(total);
-        int top = centerY - blockHeight / 2;
+        int height = blockHeight(lineCount, fullSizeLines, lineHeight, gap, scaleRatio);
+        int top = centerY - height / 2;
         // 基线恒等于块顶：正在演唱的永远是第 0 行（逐字染色只发生在它上面），
         // 它前面没有别的行，累加和为空。折行时后面几段同字号，
         // 但它们在第 0 行之下，不影响基线。
         float baseline = top;
-        return new Block(top, blockHeight, Math.round(baseline), full);
+        int lines = Math.max(1, lineCount);
+        int full = Math.max(1, Math.min(lines, fullSizeLines));
+        return new Block(top, height, Math.round(baseline), full);
+    }
+
+    /**
+     * 整块的高度，像素。
+     *
+     * <h2>为什么它必须能单独算</h2>
+     *
+     * <p>锚点比例（{@code LyricStyleConfig.anchorRatio()}）描述的是
+     * 「块心落在屏幕纵向的哪个位置」，而块心一旦依赖块高，
+     * 就出现了「算块心要先知道块高、算块高又要先知道块心」的循环。
+     * 本方法把半边拆出来：块高只取决于行数、字号与行距，与位置无关。
+     *
+     * <p>抽出的另一个后果是**两份块高不可能不一致**：
+     * {@link #compute} 直接调这里，放置策略也在同一个输入上调这里。
+     * 若策略自己另抄一份算式，哪怕只差在 {@code Math.round} 的位置，
+     * 贴顶那一档的块顶就会偏一个像素——而贴底档因为不读块高，
+     * 完全看不出问题，于是这种偏差只在新功能上显形。
+     *
+     * <p>累加顺序与 {@link #compute} 原先的内联版本**逐项相同**：
+     * 逐行浮点累加、行距用 {@code int * int} 一次加完、最后只取整一次。
+     * 这是「默认值零变化」的算术前提，不是近似。
+     */
+    public static int blockHeight(int lineCount, int fullSizeLines,
+                                  int lineHeight, int gap, float scaleRatio) {
+        int lines = Math.max(1, lineCount);
+        int full = Math.max(1, Math.min(lines, fullSizeLines));
+        // 全程用浮点累加，只在落位时取整一次——逐行取整会让误差累积。
+        float total = 0f;
+        for (int i = 0; i < lines; i++) {
+            total += heightOf(i, full, lineHeight, scaleRatio);
+        }
+        total += gap * (lines - 1);
+        return Math.round(total);
     }
 
     /** 第 i 行的顶部。 */

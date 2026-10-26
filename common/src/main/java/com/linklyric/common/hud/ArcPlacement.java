@@ -81,17 +81,32 @@ public final class ArcPlacement implements PlacementStrategy {
 
         int maxWidth = LyricGeometry.availableWidth(
                 style.maxWidthRatio(), in.previewArea(), in.screenWidth());
-        int anchorX = LyricGeometry.anchorX(
-                in.screenWidth(), in.offsetX(), in.previewArea());
-        int anchorY = LyricGeometry.anchorY(
-                in.screenHeight(), in.offsetY(), in.previewArea());
 
-        int padX = LyricGeometry.PAD_X;
-        int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
-
+        // 块高先于锚点：锚点比例贴顶那一档要把块顶换算成块心，
+        // 而「块高」在曲线排布里是逐行外接矩形的并集，要等行都摆完才知道。
+        // 这里遇到一个真实的循环：锚点 → 行位置 → 并集 → 块高 → 锚点。
+        //
+        // 破环的办法是**用一个与曲线无关、只取决于行数与行距的代理块高**：
+        // 曲线的并集高度总是略大于它（上拱让两端往下探、旋转让外接矩形变高），
+        // 因此代理值只会让贴顶的块顶比理想位置略高一点，不会让块顶
+        // 掉到 TOP_MARGIN 之下压住血条。默认比例 0 时这个代理值
+        // **完全不被读取**（见 LyricGeometry.anchorRatioY 的首行），
+        // 于是圆弧的既有像素一个都不会动。
         int slots = Math.max(1, in.lineCount());
         int span = in.primarySpan();
         float[] steps = SlotPlan.slotSteps(in, style, slots, span);
+        int approxHeight = Math.round(
+                SlotPlan.totalLength(steps, style.lineGapPx()));
+
+        int anchorX = LyricGeometry.anchorX(
+                in.screenWidth(), in.offsetX(), in.previewArea());
+        int anchorY = LyricGeometry.anchorY(
+                in.screenHeight(), in.offsetY(), in.previewArea(),
+                style.anchorRatio(), approxHeight);
+
+        int padX = style.padXPx();
+        int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
+
         float totalLength = Math.max(1f, SlotPlan.totalLength(steps, style.lineGapPx()));
         List<SlotPlan.Entry> entries = SlotPlan.entries(in, style);
 

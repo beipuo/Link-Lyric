@@ -178,6 +178,28 @@ final class LyricConfigScreen extends OptionsSubScreen {
 
         section(LangKeys.GROUP_LAYOUT);
 
+        // 纵向位置：0% 贴底（默认）、100% 贴顶。
+        //
+        // 放在排版分组的最前面，因为它决定「整块落在屏幕的哪个高度」，
+        // 是比字号、宽度更上位的约束。滑条是连续的百分比而不是三档枚举：
+        // 贴底/居中/贴顶都是它的特例，而「灵动岛」「侧边栏」这类布局
+        // 需要的正是中间那几格。
+        //
+        // 提示里明确写了贴顶会被 Boss 血条与计分板遮挡：这一点无法在界面上
+        // 用预览框体现（预览框里没有那些元素），只能靠文字告知。
+        single(integer(LangKeys.OPTION_ANCHOR_RATIO,
+                0, 100,
+                s -> Math.round(s.anchorRatio() * 100f),
+                (s, v) -> s.withAnchorRatio(v / 100f),
+                LangKeys.TIP_ANCHOR_RATIO));
+
+        // 左右留白：只影响底板与可拖范围，不改变文字落笔位置。
+        single(integer(LangKeys.OPTION_PAD_X,
+                LyricStyleConfig.MIN_PAD_X, LyricStyleConfig.MAX_PAD_X,
+                LyricStyleConfig::padXPx,
+                LyricStyleConfig::withPadXPx,
+                LangKeys.TIP_PAD_X));
+
         single(integer(LangKeys.OPTION_LINE_SCALE,
                 100, 200,
                 s -> Math.round(s.lineScale() * 100f),

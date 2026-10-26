@@ -38,6 +38,10 @@ import com.linklyric.common.i18n.LangKeys;
  *                        默认 {@link LayoutMode#LINEAR}，见 {@link #withLayout}
  * @param mixed           中英混排的度量与基线校正。默认关闭，
  *                        见 {@link #withMixed} 的注释
+ * @param anchorRatio     纵向锚点比例，0 贴底、1 贴顶，中间线性插值。
+ *                        默认 0，见 {@link #withAnchorRatio} 的注释
+ * @param padXPx          歌词块左右留白，像素。默认 6，见
+ *                        {@link #withPadXPx} 的注释
  */
 public record LyricStyleConfig(
         int sungColor,
@@ -64,7 +68,9 @@ public record LyricStyleConfig(
         int strokeAlphaPercent,
         boolean wrap,
         LayoutMode layout,
-        MixedScript mixed) {
+        MixedScript mixed,
+        float anchorRatio,
+        int padXPx) {
 
     /** 间奏提示的显示方式。 */
     public enum InterludeStyle {
@@ -124,6 +130,52 @@ public record LyricStyleConfig(
 
     /** 默认行间距，像素。取 2 使行步长为 11，约合字号的 1.22 倍。 */
     public static final int DEFAULT_LINE_GAP = 2;
+
+    /**
+     * 纵向锚点比例的范围。
+     *
+     * <p>0 = 贴底（历史行为），1 = 贴顶。超出这个区间没有意义：
+     * 比例小于 0 会把块推到屏幕下缘之外，大于 1 会推到上缘之外，
+     * 而「再往下/再往上」本来就是 {@code offsetY} 的职责。
+     * 两个字段各管一段，不互相冒充。
+     */
+    public static final float MIN_ANCHOR_RATIO = 0f;
+    public static final float MAX_ANCHOR_RATIO = 1f;
+
+    /**
+     * 默认锚点比例：0，即贴底。
+     *
+     * <p>必须是 0 而不是 0.5 之类的「中间值」：这个模组从第一版起
+     * 歌词就在屏幕下方，既有全部像素快照、预览几何守卫与玩家手感
+     * 都建立在这个位置上。把它改到中间等于强制所有用户重调位置。
+     *
+     * <p>而且 0 在 {@code LyricGeometry.anchorRatioY} 里是**代码不进插值分支**
+     * 的判据，不是「算出来恰好等于旧值」——见那里的注释。
+     */
+    public static final float DEFAULT_ANCHOR_RATIO = 0f;
+
+    /**
+     * 左右留白的范围，像素。
+     *
+     * <p>下限 0：留白为 0 时底板恰好贴着字的左右边缘，虽然不好看但合法，
+     * 且是「我要一个最窄的框」这个诉求的正确答案。
+     *
+     * <p>上限 24：再宽的话底板会比字形宽出将近三倍，
+     * 一行短歌词会坐在一块空框正中，命中区也大得离谱——
+     * 拖动时手还没碰到字就已经抓住了。24 是「明显有余量但不至于空」的位置。
+     */
+    public static final int MIN_PAD_X = 0;
+    public static final int MAX_PAD_X = 24;
+
+    /**
+     * 默认左右留白，像素。
+     *
+     * <p>直接引用 {@code LyricGeometry.PAD_X} 而不是另写一个 {@code 6}：
+     * 那个常量同时是「下标守卫」{@code verifyConstantsReferenced} 要求的
+     * 消费者，也是历史上唯一来源。默认值有两个字面量就是两份真相，
+     * 改一处忘一处会让「默认观感」在不知不觉中变掉。
+     */
+    public static final int DEFAULT_PAD_X = com.linklyric.common.hud.LyricGeometry.PAD_X;
 
     /** 描边宽度范围，像素。上限 4：9px 的字上再宽就糊成一团。 */
     public static final int MIN_STROKE_PX = 1;
@@ -225,7 +277,11 @@ public record LyricStyleConfig(
             LayoutMode.LINEAR,
             // 混排校正默认关闭：开启会平移所有含中日韩字符的歌词，
             // 而既有逐像素快照与预览几何守卫都依赖稳定坐标。
-            MixedScript.OFF);
+            MixedScript.OFF,
+            // 锚点比例默认 0（贴底）：历史位置。理由见 DEFAULT_ANCHOR_RATIO。
+            DEFAULT_ANCHOR_RATIO,
+            // 左右留白默认 6：与改造前三个策略里硬编码的值相同。
+            DEFAULT_PAD_X);
 
     public LyricStyleConfig {
         // 构造时就夹到合法区间：配置文件和界面都可能给出越界值，
@@ -273,6 +329,14 @@ public record LyricStyleConfig(
         lineGapPx = clamp(lineGapPx, MIN_LINE_GAP, MAX_LINE_GAP);
         strokePx = clamp(strokePx, MIN_STROKE_PX, MAX_STROKE_PX);
         strokeAlphaPercent = clamp(strokeAlphaPercent, MIN_STROKE_ALPHA, MAX_STROKE_ALPHA);
+        // 锚点比例同样在这里收口。`LayoutConfig.read()` 是直接调构造器的，
+        // 手改配置文件把 anchorRatio 写成 9 时，若没有这一行就会把块推到
+        // 屏幕之外——歌词不是「位置怪」，而是整块不见了，看起来像模组坏了。
+        // NaN 由 clampFloat 兜到下限（0 = 贴底），而不是让 NaN 一路插值。
+        anchorRatio = clampFloat(anchorRatio, MIN_ANCHOR_RATIO, MAX_ANCHOR_RATIO);
+        // 留白越界的症状比锚点隐蔽得多：底板比字形窄时字会露在框外，
+        // 比字形宽太多时命中区虚胖。两者都不报错，只能靠夹取兜住。
+        padXPx = clamp(padXPx, MIN_PAD_X, MAX_PAD_X);
     }
 
     private static int clamp(int value, int min, int max) {
@@ -289,91 +353,106 @@ public record LyricStyleConfig(
     public LyricStyleConfig withSungColor(int color) {
         return new LyricStyleConfig(color, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withUnsungColor(int color) {
         return new LyricStyleConfig(sungColor, color, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withTranslationColor(int color) {
         return new LyricStyleConfig(sungColor, unsungColor, color,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withOffsetMs(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 value, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withLineTransitionMs(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, value, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withLineScale(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, value, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withMaxWidthRatio(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, value, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withFeather(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, value,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withWeight(Weight value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                value, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                value, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withAlign(Align value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, value, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, value, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withShadow(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, value, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, value, lineCount, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withLineCount(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, value, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, value, interlude, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withInterlude(InterludeStyle value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, value, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, value, opacity, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withLiftCurve(LiftCurve value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, value, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, value, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withSoftShadow(boolean value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, value, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve, weightPercent, value, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /** 开关描边。 */
@@ -382,7 +461,8 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, value, strokePx, strokeColor,
-                strokeAlphaPercent, wrap, layout, mixed);
+                strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /** 描边宽度，像素。 */
@@ -392,7 +472,8 @@ public record LyricStyleConfig(
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke,
                 value,
-                strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /** 描边颜色，ARGB。 */
@@ -401,7 +482,8 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, value,
-                strokeAlphaPercent, wrap, layout, mixed);
+                strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /** 描边不透明度，百分比。 */
@@ -410,7 +492,8 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
-                value, wrap, layout, mixed);
+                value, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /**
@@ -430,7 +513,8 @@ public record LyricStyleConfig(
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow,
                 value,
-                stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /**
@@ -454,20 +538,23 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
-                strokeAlphaPercent, value, layout, mixed);
+                strokeAlphaPercent, value, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withWeightPercent(int value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve, value,
-                softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     public LyricStyleConfig withOpacity(float value) {
         return new LyricStyleConfig(sungColor, unsungColor, translationColor,
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
-                weight, align, shadow, lineCount, interlude, value, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed);
+                weight, align, shadow, lineCount, interlude, value, liftCurve, weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor, strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, padXPx);
     }
 
     /**
@@ -498,7 +585,8 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
-                strokeAlphaPercent, wrap, value, mixed);
+                strokeAlphaPercent, wrap, value, mixed,
+                anchorRatio, padXPx);
     }
 
     /**
@@ -531,6 +619,85 @@ public record LyricStyleConfig(
                 offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
                 weight, align, shadow, lineCount, interlude, opacity, liftCurve,
                 weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
-                strokeAlphaPercent, wrap, layout, value);
+                strokeAlphaPercent, wrap, layout, value,
+                anchorRatio, padXPx);
+    }
+
+    /**
+     * 纵向锚点比例：0 贴底、1 贴顶。
+     *
+     * <h2>为什么是浮点比例，而不是「贴底 / 居中 / 贴顶」枚举</h2>
+     *
+     * <p>枚举只给三个落点，中间的空档只能靠 {@code offsetY} 去凑——
+     * 而 {@code offsetY} 是**拖动写入**的、语义是「相对默认位置的手工微调」。
+     * 把它当布局参数用有一个具体的坏处：用户调好了「比居中高 30 像素」，
+     * 某次不小心拖了一下歌词，那 30 像素就被拖没了，而且没有任何界面
+     * 能告诉他「原来的比例是多少」。两个字段职责必须分开：
+     * 比例说「这块该在纵向的哪个高度」，偏移说「在这高度上再手工挪几像素」。
+     *
+     * <p>浮点比例把三个落点收成特例：{@code 0} 贴底、{@code 0.5} 居中、
+     * {@code 1} 贴顶。于是「灵动岛」那种需要精细定位的布局有连续的滑条可用，
+     * 而原本想要三档的用户仍然只是把滑条拖到底/中/顶。
+     *
+     * <h2>贴顶会被游戏元素遮挡，这一点不做自动避让</h2>
+     *
+     * <p>比例取 1 时块顶落在 {@code LyricGeometry.TOP_MARGIN}（24 像素），
+     * 它避开了单条 Boss 血条（底边 31），但没有避让两条以上血条、
+     * 也没有避让右侧的计分板。**不做自动避让**是刻意的：那需要读
+     * Boss 列表与计分板状态，这两者都是平台层的东西，
+     * 而 {@code common} 的铁律是零 Minecraft 依赖。用一个固定上边距 +
+     * 一个可拖的比例，用户能在实机上把位置调到不撞为止；
+     * 一个「聪明」的自动避让则在血条出现/消失时让歌词上下跳。
+     *
+     * <h2>为什么默认是 0</h2>
+     *
+     * <p>{@code 0} 让 {@code LyricGeometry.anchorRatioY} 直接返回历史端点，
+     * 不进插值算式——这是「默认值零变化」的结构性保证，不是断言。
+     * 详见该方法的注释。
+     *
+     * @param value 锚点比例；越界在构造器里夹到 [{@code MIN_ANCHOR_RATIO},
+     *              {@code MAX_ANCHOR_RATIO}]，NaN 兜到 0（贴底）
+     */
+    public LyricStyleConfig withAnchorRatio(float value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
+                strokeAlphaPercent, wrap, layout, mixed,
+                value, padXPx);
+    }
+
+    /**
+     * 歌词块左右留白，像素。
+     *
+     * <h2>它为什么必须是一个样式字段</h2>
+     *
+     * <p>此前是三个放置策略各自 {@code int padX = LyricGeometry.PAD_X;}。
+     * 三份副本的坏处不是啰嗦，而是**它决定了底板与包围盒的横向宽度**：
+     * 想让「侧边栏」那种窄列布局看起来有余量，就得同时改三处；
+     * 而漏掉一处的症状是「横排底板合适、切到弧形就宽了一圈」，
+     * 只有来回切形态才看得出来。收进样式之后，
+     * 「留白是多少」只有一个答案，三个策略读同一个字段。
+     *
+     * <h2>它不影响文字位置</h2>
+     *
+     * <p>留白只作用于 {@code LyricPlacement.footprint()}（底板 + 命中区），
+     * 文字落笔点仍由对齐方式与可用宽度决定。因此把它调到 0 也不会
+     * 让字挪位——这正是「留白」与「内边距」的区别，也是为什么它
+     * 可以独立于 {@code maxWidthRatio} 调：一个管框多大，一个管字多宽。
+     *
+     * <p>副作用：命中区会跟着变宽。调到 24 时，鼠标停在文字外 24 像素处
+     * 仍能抓住歌词——这是拖动体验的取舍，写在选项说明里。
+     *
+     * @param value 像素；越界在构造器里夹到
+     *              [{@code MIN_PAD_X}, {@code MAX_PAD_X}]
+     */
+    public LyricStyleConfig withPadXPx(int value) {
+        return new LyricStyleConfig(sungColor, unsungColor, translationColor,
+                offsetMs, lineTransitionMs, lineScale, maxWidthRatio, feather,
+                weight, align, shadow, lineCount, interlude, opacity, liftCurve,
+                weightPercent, softShadow, lineGapPx, stroke, strokePx, strokeColor,
+                strokeAlphaPercent, wrap, layout, mixed,
+                anchorRatio, value);
     }
 }

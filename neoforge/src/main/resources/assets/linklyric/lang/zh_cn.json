@@ -109,5 +109,9 @@
   "linklyric.config.mixed_scale": "中文缩放",
   "linklyric.tip.mixedScale": "中文字形相对英文的缩放比例，100% 为不缩放。9px 字号下 96% 约合四周各收 0.18 像素",
   "linklyric.config.mixed_baseline": "中文基线",
+  "linklyric.config.anchor_ratio": "纵向位置",
+  "linklyric.tip.anchorRatio": "歌词块在屏幕上的纵向位置。0% 贴底（默认），100% 贴顶；贴顶会被 Boss 血条与计分板遮挡，想要干净就往下拖一点",
+  "linklyric.config.pad_x": "左右留白",
+  "linklyric.tip.padX": "歌词底板的左右留白，单位像素。它只影响底板与可拖范围，不改变文字位置",
   "linklyric.tip.mixedBaseline": "中文字形的垂直校正，正数上抬。0 表示不校——这个值只能靠肉眼在游戏里对着实际画面调",
 }

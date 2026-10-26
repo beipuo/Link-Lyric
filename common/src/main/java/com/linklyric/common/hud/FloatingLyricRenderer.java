@@ -583,9 +583,22 @@ public final class FloatingLyricRenderer {
         return LyricGeometry.anchorX(screenWidth, offsetX, previewArea);
     }
 
-    /** 当前生效的块心 y：预览区内垂直居中，否则贴底部并叠加用户偏移。 */
+    /**
+     * 当前生效的块心 y：预览区内垂直居中，否则按锚点比例在贴底与贴顶间插值。
+     *
+     * <p>块高按**单行**算，因为这条路径唯一的使用者是间奏提示：
+     * 它恒为一行，块高就是 {@link LyricGeometry#LINE_HEIGHT}。
+     * 这样「间奏」与「一行歌词」在贴底档上落在同一个高度（原本就是），
+     * 在贴顶档上也落在同一个高度——若这里按当前行数算块高，
+     * 玩家把行数调到 3 时「间奏」两个字会独自往下沉一行，
+     * 而在它旁边刚刚停下的三行歌词还在原位。
+     */
     private int layoutCenterY(int screenHeight) {
-        return LyricGeometry.anchorY(screenHeight, offsetY, previewArea);
+        int interludeBlockHeight = LineLayout.blockHeight(
+                1, 1, LyricGeometry.LINE_HEIGHT,
+                style.lineGapPx(), LyricGeometry.SUB_TEXT_FONT_SCALE);
+        return LyricGeometry.anchorY(screenHeight, offsetY, previewArea,
+                style.anchorRatio(), interludeBlockHeight);
     }
 
     /**

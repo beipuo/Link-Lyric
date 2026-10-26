@@ -63,7 +63,9 @@ class TextStyleTest {
                 // 末位排布形态同样故意传 null，一并验证兜底。
                 null,
                 // 混排校正也传 null，验证它兜底成关闭态。
-                null);
+                null,
+                // 锚点比例与留白用默认值：本用例只测枚举兜底。
+                LyricStyleConfig.DEFAULT_ANCHOR_RATIO, LyricStyleConfig.DEFAULT_PAD_X);
         assertNotNull(c.weight());
         assertNotNull(c.align());
         assertNotNull(c.interlude(), "间奏样式也必须兜底");

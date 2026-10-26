@@ -69,17 +69,30 @@ public final class RingPlacement implements PlacementStrategy {
 
         int maxWidth = LyricGeometry.availableWidth(
                 style.maxWidthRatio(), in.previewArea(), in.screenWidth());
-        int anchorX = LyricGeometry.anchorX(
-                in.screenWidth(), in.offsetX(), in.previewArea());
-        int anchorY = LyricGeometry.anchorY(
-                in.screenHeight(), in.offsetY(), in.previewArea());
-
-        int padX = LyricGeometry.PAD_X;
-        int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
 
         int slots = Math.max(1, in.lineCount());
         int span = in.primarySpan();
         float[] steps = SlotPlan.slotSteps(in, style, slots, span);
+        // 块高先于锚点。环排的真实块高是所有行外接矩形的并集，
+        // 而那要等半径、圆心都定下来——而圆心又依赖锚点。循环如下：
+        // 锚点 → 圆心 → 行位置 → 并集 → 块高 → 锚点。
+        //
+        // 与 ArcPlacement 同一个破法：贴顶那一档只需要「块的纵向跨度大约是
+        // 多少」，用 SlotPlan 的总沿线长当代理值即可。环的并集高度也总是
+        // 不小于它（旋转让每个外接矩形都变大），代理值偏小只会让块顶
+        // 略高于 TOP_MARGIN，不会压低到血条下面。比例 0 时它不被读取。
+        int approxHeight = Math.round(
+                SlotPlan.totalLength(steps, style.lineGapPx()));
+
+        int anchorX = LyricGeometry.anchorX(
+                in.screenWidth(), in.offsetX(), in.previewArea());
+        int anchorY = LyricGeometry.anchorY(
+                in.screenHeight(), in.offsetY(), in.previewArea(),
+                style.anchorRatio(), approxHeight);
+
+        int padX = style.padXPx();
+        int padY = Math.max(MIN_PAD_Y, LyricGeometry.LIFT_HEADROOM + 1);
+
         List<SlotPlan.Entry> entries = SlotPlan.entries(in, style);
 
         // 每行占的角度：行多则收，行少则放，夹在上下限之间。
