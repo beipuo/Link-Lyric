@@ -1,7 +1,6 @@
 package com.linklyric.common.hud;
 
 import com.linklyric.common.config.LayoutConfig;
-import com.linklyric.common.config.LyricOptions;
 import com.linklyric.common.style.LyricStyleConfig;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -65,23 +64,20 @@ class WeightAndShadowTest {
         assertFalse(reloaded.style().softShadow(), "软阴影开关也应保持关闭");
     }
 
-    /** 界面滑条读到的值与写入的一致。 */
+    /**
+     * 字重百分比必须原样存进样式、原样读出来。
+     *
+     * <p>这一项曾经由 {@code LyricOptions.Option} 做归一化往返，
+     * 那层中间表示已删除（两端界面共用同一份代码，滑条直接用原版区间）。
+     * 但「界面刻度 0..100 与样式字段一一对应」这条契约仍然要守：
+     * 一旦有人在写入路径上加缩放，滑条拖到底就不再等于全量加粗，
+     * 而画面上只是"加粗得不够"，不会报错。
+     */
     @Test
-    void 滑条往返一致() {
+    void 字重百分比直通样式() {
         LyricStyleConfig style = LyricStyleConfig.DEFAULT.withWeightPercent(60);
-        LyricOptions.Option option = LyricOptions.Option.WEIGHT_PERCENT;
-        assertEquals(60, option.readRaw(style), "滑条应读出 60");
-
-        // 滑条按 0..1 归一化，60 对应 0.6。
-        LyricStyleConfig written = option.write(LyricStyleConfig.DEFAULT, 0.6);
-        assertEquals(60, written.weightPercent(), "滑条写回应得到 60");
-    }
-
-    /** 滑条两侧端点分别对应不加粗与最大加粗。 */
-    @Test
-    void 滑条端点() {
-        LyricOptions.Option option = LyricOptions.Option.WEIGHT_PERCENT;
-        assertEquals(0, option.write(LyricStyleConfig.DEFAULT, 0.0).weightPercent());
-        assertEquals(100, option.write(LyricStyleConfig.DEFAULT, 1.0).weightPercent());
+        assertEquals(60, style.weightPercent(), "写进去多少就该读出多少");
+        assertEquals(0, LyricStyleConfig.DEFAULT.withWeightPercent(0).weightPercent(), "0 为不加粗");
+        assertEquals(100, LyricStyleConfig.DEFAULT.withWeightPercent(100).weightPercent(), "100 为满刻度");
     }
 }

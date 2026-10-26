@@ -45,12 +45,29 @@ tasks.test {
 // 平台之间**允许**不一致的文件，必须在此显式登记并写明理由。
 // 除此之外，两侧的文件集与内容都必须完全一致。
 //
-// 覆盖边界（重要）：本任务只扫 render/ 目录。平台包下的入口
-// （LinkLyricFabric / LinkLyricNeoForge）、三个界面
-// （LyricConfigScreen / ColorPickerScreen / LyricLocationScreen）
-// 与指令类**不在**保护范围内，它们本来就允许按平台 API 各自书写。
-// 其中 Painter 适配层的「方法集必须相同」由 verifyPainterParity 负责，
-// 其余一致性没有机械守卫——不要以为挂了 check 就全覆盖了。
+// 覆盖范围：render/ 目录，以及下面 uiMirrorFiles 登记的三个界面。
+//
+// 三个界面**必须**逐字镜像。它们此前各自实现，结果是同一张配置页在两端
+// 长得不一样：Fabric 继承原版 OptionsSubScreen（原版负责滚动、标题、页脚、
+// 键盘导航与朗读），NeoForge 从 Screen 手搓两栏 + 自绘滚动条 + 手写滑条，
+// 于是主开关、描边颜色、行数三处的控件形态互不相同，"取消"在一端根本不回滚。
+// 现在 NeoForge 直接复用 Fabric 的实现，差异只剩包名与平台类名。
+//
+// 平台入口（LinkLyricFabric / LinkLyricNeoForge）与指令类**不在**保护范围内，
+// 它们本就按各自的加载器 API 书写。其中 Painter 适配层的「方法集必须相同」
+// 由 verifyPainterParity 负责。
+/**
+ * 必须两端逐字镜像的界面文件（相对各平台包目录）。
+ *
+ * <p>这三个才是"用户看到的那张界面"，任何一端单独改动都会让两端体验分叉，
+ * 而这种分叉不会被编译器发现：两端各自都能编译、都能运行。
+ */
+val uiMirrorFiles = listOf(
+    "LyricConfigScreen.java",
+    "ColorPickerScreen.java",
+    "LyricLocationScreen.java",
+)
+
 val platformOnlyRenderFiles = mapOf(
     "sdf/SdfShaderRegistration.java" to
         "装载时机不同：Fabric 挂资源重载，NeoForge 必须用 RegisterShadersEvent",
@@ -90,6 +107,34 @@ val verifyMirroredRender = tasks.register("verifyMirroredRender") {
 
     doLast {
         val problems = mutableListOf<String>()
+
+        // 三个界面：固定清单，缺一侧即失败。它们不是 render/ 下的副本，
+        // 所以单独比一次，规则与下面完全相同（归一化后逐字一致）。
+        val fabUi = File(root, "fabric/src/main/java/com/linklyric/fabric")
+        val neoUi = File(root, "neoforge/src/main/java/com/linklyric/neoforge")
+        for (name in uiMirrorFiles) {
+            val fab = File(fabUi, name)
+            val neo = File(neoUi, name)
+            if (!fab.isFile) {
+                problems += "fabric 缺少界面: " + name
+            }
+            if (!neo.isFile) {
+                problems += "neoforge 缺少界面: " + name
+            }
+            if (fab.isFile && neo.isFile) {
+                val a = normalizedMirror(fab)
+                val b = normalizedMirror(neo)
+                if (a != b) {
+                    val at = a.indices.firstOrNull { it >= b.size || a[it] != b[it] } ?: b.size
+                    problems += buildString {
+                        append("界面已分叉: ").append(name)
+                        append("，首个差异在第 ").append(at + 1).append(" 行")
+                        append("\n  fabric  : ").append(a.getOrNull(at)?.trim())
+                        append("\n  neoforge: ").append(b.getOrNull(at)?.trim())
+                    }
+                }
+            }
+        }
 
         // 先比文件集：少一侧、多一侧都是分叉，且能指名道姓。
         val fabSet = discoverRenderSources(fabricDir)
@@ -140,7 +185,8 @@ val verifyMirroredRender = tasks.register("verifyMirroredRender") {
         }
         logger.lifecycle(
             "渲染层副本一致：共 " + pairs.size + " 个文件，平台独有 "
-                + platformOnlyRenderFiles.size + " 个"
+                + platformOnlyRenderFiles.size + " 个；界面镜像 "
+                + uiMirrorFiles.size + " 个"
         )
     }
 }
@@ -183,6 +229,87 @@ fun langJsonKeys(file: File): Set<String> =
         .map { it.groupValues[1] }
         .toSet()
 
+/**
+ * 严格的 JSON 语法体检，返回问题列表；空表示通过。
+ *
+ * <p>为什么必须自己写一遍：上面抽键用的是正则，它对语法错误完全免疫。
+ * 四份 lang 文件曾经都在最后一个条目后留了尾随逗号——严格 JSON 不接受，
+ * 而这些**键名全对**，于是 verifyLangKeys 一路绿灯。
+ *
+ * <p>MC 自带的解析器是宽松的（Gson 允许尾随逗号），所以运行时也不报错；
+ * 但任何按标准 JSON 读这些文件的东西（数据包校验、别的工具、
+ * 我们自己后来加的脚本）都会当场失败。这正是"守卫看起来覆盖了、
+ * 实际上没有"的典型：检查了内容，没检查是不是合法容器。
+ *
+ * <p>只做结构判定的最小实现：跟踪字符串与转义，认括号配对，
+ * 并单独抓「逗号后紧跟右括号」。不追求完整 JSON 语义（不需要）。
+ */
+fun jsonSyntaxProblems(file: File, text: String): List<String> {
+    val problems = mutableListOf<String>()
+    val stack = ArrayDeque<Char>()
+    var inString = false
+    var escaped = false
+    // 上一个「有效字符」，用来判断逗号是否紧贴右括号。
+    var lastMeaningful = ' '
+    var line = 1
+    for (ch in text) {
+        if (ch == '\n') {
+            line++
+        }
+        if (inString) {
+            when {
+                escaped -> escaped = false
+                ch == '\\' -> escaped = true
+                ch == '"' -> {
+                    inString = false
+                    lastMeaningful = ch
+                }
+            }
+            continue
+        }
+        // 字符串之外的空白一律跳过，且不改变 lastMeaningful。
+        //
+        // 这一行是必需的：逗号与右括号之间几乎总有换行，
+        // 若把换行记成「上一个有效字符」，尾随逗号永远抓不到——
+        // 检查看起来在跑，实际恒过。
+        if (ch.isWhitespace()) {
+            continue
+        }
+        when (ch) {
+            '"' -> {
+                inString = true
+                lastMeaningful = ch
+            }
+            '{', '[' -> {
+                stack.addLast(ch)
+                lastMeaningful = ch
+            }
+            '}', ']' -> {
+                val want = if (ch == '}') '{' else '['
+                val got = stack.removeLastOrNull()
+                if (got != want) {
+                    problems += file.name + " 第 " + line + " 行：括号不配对（遇到 " + ch +
+                        "，栈顶是 " + (got ?: "空") + "）"
+                }
+                if (lastMeaningful == ',') {
+                    problems += file.name + " 第 " + line + " 行：逗号后直接跟 " + ch +
+                        "，这是尾随逗号，严格 JSON 解析会失败"
+                }
+                lastMeaningful = ch
+            }
+            ',', ':' -> lastMeaningful = ch
+            else -> lastMeaningful = ch
+        }
+    }
+    if (inString) {
+        problems += file.name + "：字符串未闭合"
+    }
+    if (stack.isNotEmpty()) {
+        problems += file.name + "：仍有 " + stack.size + " 个未闭合的括号"
+    }
+    return problems
+}
+
 val verifyLangKeys = tasks.register("verifyLangKeys") {
     group = "verification"
     description = "校验 LangKeys 常量与四个 lang json 的键完全一致"
@@ -213,6 +340,9 @@ val verifyLangKeys = tasks.register("verifyLangKeys") {
                 problems += label + ": 缺少文件 " + file.path
                 continue
             }
+            // 先验容器合法性：键名再对，文件本身不合法也白搭。
+            problems += jsonSyntaxProblems(file, file.readText())
+
             val present = langJsonKeys(file)
             val missing = (declared - present).sorted()
             val extra = (present - declared).sorted()

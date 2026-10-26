@@ -19,7 +19,6 @@ public final class LangKeys {
     public static final String SHADOW = "linklyric.config.shadow";
     public static final String SHADOW_ON = "linklyric.config.shadow.on";
     public static final String SHADOW_OFF = "linklyric.config.shadow.off";
-    public static final String LINE_COUNT = "linklyric.config.lineCount";
     public static final String FONT_COLOR = "linklyric.config.fontColor";
     public static final String MASTER_SWITCH = "linklyric.config.master";
     public static final String LYRICS_ON = "linklyric.config.lyrics.on";
@@ -163,8 +162,6 @@ public final class LangKeys {
     /** 选项显示格式：名称、数值、单位。 */
     public static final String OPTION_VALUE_FORMAT = "linklyric.option.value";
 
-    /** 枚举型选项的显示格式：名称与当前值。 */
-    public static final String OPTION_ENUM_FORMAT = "linklyric.option.enum";
     public static final String OPTION_LINE_SCALE = "linklyric.option.lineScale";
 
     /** 单位。 */

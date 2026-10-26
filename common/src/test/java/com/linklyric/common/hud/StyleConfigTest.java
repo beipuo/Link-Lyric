@@ -1,7 +1,6 @@
 package com.linklyric.common.hud;
 
 import com.linklyric.common.config.LayoutConfig;
-import com.linklyric.common.config.LyricOptions;
 import com.linklyric.common.style.LyricStyleConfig;
 import org.junit.jupiter.api.Test;
 
@@ -148,29 +147,28 @@ class StyleConfigTest {
         assertEquals(0xFF000000, style.unsungColor(), "应支持十进制");
     }
 
-    /** 滑条映射必须往返一致，否则一拖就漂移。 */
+    /**
+     * 区间的上下限必须自洽。
+     *
+     * <p>这里原本测的是 {@code LyricOptions.Option} 的滑条往返映射。
+     * 那层中间表示已经删掉——两端界面现在共用同一份代码，
+     * 滑条由原版 {@code OptionInstance.IntRange} 承担，
+     * 再测一遍映射等于测原版。
+     *
+     * <p>但「最小值小于最大值」这件事仍然值得守：区间写反时
+     * 原版滑条不会报错，只是永远拖不动，表现成"这一项坏了"。
+     */
     @Test
-    void 滑条映射往返一致() {
-        for (LyricOptions.Option option : LyricOptions.Option.values()) {
-            for (int raw : new int[]{option.min, (option.min + option.max) / 2, option.max}) {
-                LyricStyleConfig s = option.write(LyricStyleConfig.DEFAULT, 0d);
-                s = option.write(s, (raw - option.min) / (double) (option.max - option.min));
-                assertEquals(raw, option.readRaw(s),
-                        option + " 在 " + raw + " 处往返不一致");
-            }
-        }
-    }
-
-    /** 通道微调必须夹在 0..255，不能溢出成反向颜色。 */
-    @Test
-    void 通道微调不溢出() {
-        int white = 0xFFFFFFFF;
-        int brighter = LyricOptions.shiftChannel(white, LyricOptions.Channel.RED, 32);
-        assertEquals(0xFFFF0000 | (white & 0x0000FFFF), brighter, "255 再加仍是 255");
-
-        int black = 0xFF000000;
-        int darker = LyricOptions.shiftChannel(black, LyricOptions.Channel.BLUE, -32);
-        assertEquals(0xFF000000, darker, "0 再减仍是 0");
+    void 样式区间自洽() {
+        assertTrue(LyricStyleConfig.MIN_OFFSET_MS < LyricStyleConfig.MAX_OFFSET_MS);
+        assertTrue(LyricStyleConfig.MIN_TRANSITION_MS < LyricStyleConfig.MAX_TRANSITION_MS);
+        assertTrue(LyricStyleConfig.MIN_LINE_GAP < LyricStyleConfig.MAX_LINE_GAP);
+        assertTrue(LyricStyleConfig.MIN_PAD_X < LyricStyleConfig.MAX_PAD_X);
+        assertTrue(LyricStyleConfig.MIN_STROKE_PX < LyricStyleConfig.MAX_STROKE_PX);
+        assertTrue(LyricStyleConfig.MIN_STROKE_ALPHA < LyricStyleConfig.MAX_STROKE_ALPHA);
+        assertTrue(LyricStyleConfig.MIN_WEIGHT_PERCENT < LyricStyleConfig.MAX_WEIGHT_PERCENT);
+        assertTrue(LyricStyleConfig.MIN_LINES < LyricStyleConfig.MAX_LINES);
+        assertTrue(LyricStyleConfig.MIN_OPACITY < 1.0f);
     }
 
     /** 数据源开关应持久化，重启后保持禁用。 */

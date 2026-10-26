@@ -14,7 +14,6 @@
   "linklyric.config.shadow": "文字阴影",
   "linklyric.config.shadow.on": "阴影：开",
   "linklyric.config.shadow.off": "阴影：关",
-  "linklyric.config.lineCount": "行数：%s",
   "linklyric.config.fontColor": "字体颜色…",
   "linklyric.config.master": "总开关",
   "linklyric.config.lyrics.on": "歌词：开",
@@ -71,7 +70,6 @@
   "linklyric.align.left": "左对齐",
   "linklyric.align.center": "居中",
   "linklyric.align.right": "右对齐",
-  "linklyric.option.enum": "%s：%s",
   "linklyric.config.stroke": "描边",
   "linklyric.config.stroke_px": "描边宽度",
   "linklyric.config.stroke_alpha": "描边浓度",
@@ -113,5 +111,5 @@
   "linklyric.tip.anchorRatio": "歌词块在屏幕上的纵向位置。0% 贴底（默认），100% 贴顶；贴顶会被 Boss 血条与计分板遮挡，想要干净就往下拖一点",
   "linklyric.config.pad_x": "左右留白",
   "linklyric.tip.padX": "歌词底板的左右留白，单位像素。它只影响底板与可拖范围，不改变文字位置",
-  "linklyric.tip.mixedBaseline": "中文字形的垂直校正，正数上抬。0 表示不校——这个值只能靠肉眼在游戏里对着实际画面调",
+  "linklyric.tip.mixedBaseline": "中文字形的垂直校正，正数上抬。0 表示不校——这个值只能靠肉眼在游戏里对着实际画面调"
 }

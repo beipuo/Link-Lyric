@@ -31,7 +31,7 @@ final class ColorPickerScreen extends Screen {
         SUNG(LangKeys.SLOT_SUNG),
         UNSUNG(LangKeys.SLOT_UNSUNG),
         TRANSLATION(LangKeys.SLOT_TRANSLATION),
-        /** 描边颜色。描边有自己的浓度滑条，这里的 alpha 通道同样有效。 */
+        /** 描边颜色。描边另有浓度滑条，这里的 alpha 通道同样生效。 */
         STROKE(LangKeys.SLOT_STROKE),
         RESET(LangKeys.SLOT_RESET);
 

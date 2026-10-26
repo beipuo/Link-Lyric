@@ -14,7 +14,6 @@
   "linklyric.config.shadow": "Text Shadow",
   "linklyric.config.shadow.on": "Shadow: On",
   "linklyric.config.shadow.off": "Shadow: Off",
-  "linklyric.config.lineCount": "Lines: %s",
   "linklyric.config.fontColor": "Font Color...",
   "linklyric.config.master": "Master Switch",
   "linklyric.config.lyrics.on": "Lyrics: On",
@@ -71,7 +70,6 @@
   "linklyric.align.left": "Left",
   "linklyric.align.center": "Center",
   "linklyric.align.right": "Right",
-  "linklyric.option.enum": "%s: %s",
   "linklyric.config.stroke": "Outline",
   "linklyric.config.stroke_px": "Outline Width",
   "linklyric.config.stroke_alpha": "Outline Opacity",
@@ -113,5 +111,5 @@
   "linklyric.tip.anchorRatio": "Where the lyric block sits vertically. 0% is bottom (default), 100% is top; the top collides with boss bars and the scoreboard, so drag it down a little for a clean spot",
   "linklyric.config.pad_x": "Side Padding",
   "linklyric.tip.padX": "Horizontal padding of the lyric backdrop, in pixels. It only affects the backdrop and drag area, not text position",
-  "linklyric.tip.mixedBaseline": "Vertical correction for CJK glyphs; positive lifts. 0 means no correction - this value can only be tuned by eye in game",
+  "linklyric.tip.mixedBaseline": "Vertical correction for CJK glyphs; positive lifts. 0 means no correction - this value can only be tuned by eye in game"
 }
