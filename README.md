@@ -41,6 +41,7 @@ English: [README_EN.md](README_EN.md)
 | [协议](docs/PROTOCOL.md) | 适配器与模组之间的进程间契约（v2） |
 | [构建与环境](docs/BUILD.md) | 分支版本矩阵、本地 JDK、代理、两个易踩的坑 |
 | [进度与待办](docs/ROADMAP.md) | 已完成项、26.1.2 渲染架构迁移方案、适配器顺序建议 |
+| [发布与分支约定](docs/RELEASE.md) | 多分支发布流程、tag 命名、CurseForge 版本号规则 |
 | [致谢与许可证](docs/CREDITS.md) | 上游项目、与上游的差异、按文件分许可说明 |
 
 ## 参考源码与致谢

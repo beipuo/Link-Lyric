@@ -1,11 +1,33 @@
 # 发布到 CurseForge —— Link Lyric 专用
+#
+# 触发方式：在任意分支上创建并发布 GitHub Release（不是 draft，不是 prerelease
+# 之外的 draft）即自动构建该 tag 指向的代码并发布到 CurseForge。
+# 也可以手动触发，指定分支名或 tag 用于重跑。
+#
+# 版本号来源：checkout 后的 gradle.properties 里的 mod_version，
+# 保证与 jar 内嵌版本一致。tag 名仅参与一致性校验，不一致会在日志里警告。
+#
+# 需要预先配置：
+#   1. 仓库 Variables: CURSEFORGE_PROJECT_ID
+#   2. 仓库 Secrets:   CURSEFORGE_TOKEN
+#   3. Environment:    publish（不需要审批就删掉 publish job 里的 environment 块）
+#
+# 产物（由 build.gradle.kts 的 base.archivesName 决定）：
+#   fabric/build/libs/<archives_base_name>-<mc>-fabric-<ver>.jar
+#   neoforge/build/libs/<archives_base_name>-<mc>-neoforge-<ver>.jar
+# 两者作为同一次 CurseForge 版本的两个文件上传。
 
 name: Publish to CurseForge
 
 on:
-  push:
+  release:
+    types: [published]
   workflow_dispatch:
     inputs:
+      ref:
+        description: 要发布的分支名或 tag（如 1.21.1 或 v0.1.1）
+        required: true
+        type: string
       version_type:
         description: CurseForge release type
         required: true
@@ -20,76 +42,99 @@ permissions:
   contents: read
 
 concurrency:
-  group: publish-curseforge-${{ github.ref }}
+  group: publish-curseforge-${{ github.event.release.tag_name || inputs.ref }}
   cancel-in-progress: false
 
 jobs:
   build:
     name: Build
-    # 手动触发无条件执行；push 要求是受保护分支（tag 不算）。
-    # 未开启分支保护的话，可换成：github.ref == 'refs/heads/1.21.1'
-    if: github.event_name == 'workflow_dispatch' || github.ref_protected == true
     runs-on: ubuntu-latest
     outputs:
-      should_publish: ${{ steps.check.outputs.should_publish }}
-      release_type: ${{ steps.check.outputs.release_type }}
+      release_type: ${{ steps.target.outputs.release_type }}
       release_name: ${{ steps.metadata.outputs.release_name }}
       mod_version: ${{ steps.metadata.outputs.mod_version }}
+      upload_version: ${{ steps.metadata.outputs.upload_version }}
       mc_version: ${{ steps.metadata.outputs.mc_version }}
       fabric_jar: ${{ steps.metadata.outputs.fabric_jar }}
       neoforge_jar: ${{ steps.metadata.outputs.neoforge_jar }}
       changelog: ${{ steps.changelog.outputs.content }}
 
     steps:
-      - name: Check trigger
-        id: check
+      - name: Resolve target
+        id: target
         shell: bash
+        # 显式 UTF-8 locale：runner 默认 LANG 为空时 bash 对多字节字符的处理不可靠
         env:
-          # 用 env 中转：提交信息直接插值进脚本会被展开执行
-          COMMIT_MSG: ${{ github.event.head_commit.message }}
+          LANG: C.UTF-8
+          LC_ALL: C.UTF-8
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_REF: ${{ inputs.ref }}
           INPUT_TYPE: ${{ inputs.version_type }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            should_publish="true"
-            release_type="${INPUT_TYPE:-release}"
+          if [[ "${EVENT_NAME}" == "release" ]]; then
+            ref="${RELEASE_TAG}"
+            # Release 事件的 version-type 由 tag 语义推断：
+            # 含 -alpha 的 tag 视为 alpha，含 -beta 视为 beta，其余为 release
+            case "${ref}" in
+              *-alpha*) release_type="alpha" ;;
+              *-beta*)  release_type="beta"  ;;
+              *)        release_type="release" ;;
+            esac
+            source="${ref}"
           else
-            # 只看标题行：正文带 body 也不会漏发
-            first_line="$(printf '%s\n' "${COMMIT_MSG}" | head -n1)"
-            if [[ "${first_line}" =~ ^更新.+版本([;；]日志:[^[:space:];；]+)?$ ]]; then
-              should_publish="true"
-            else
-              should_publish="false"
-            fi
-            release_type="release"
+            ref="${INPUT_REF}"
+            release_type="${INPUT_TYPE:-release}"
+            source="${ref}"
           fi
 
+          if [[ -z "${ref}" ]]; then
+            echo "::error::未能解析要构建的 ref" >&2
+            exit 1
+          fi
+
+          echo "构建目标 ref: ${ref}（来源: ${source}）"
+
           {
-            echo "should_publish=${should_publish}"
+            echo "ref=${ref}"
             echo "release_type=${release_type}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout repository
-        if: steps.check.outputs.should_publish == 'true'
         uses: actions/checkout@v4
         with:
-          # 取 CHANGELOG 增量与「日志:<修订号>」需要完整历史
+          # 检出该 tag 或分支对应的代码
+          ref: ${{ steps.target.outputs.ref }}
+          # 完整历史：用于 CHANGELOG 增量比对
           fetch-depth: 0
 
-      - name: Set up Java 21
-        if: steps.check.outputs.should_publish == 'true'
+      - name: Read Java version
+        id: javaver
+        shell: bash
+        run: |
+          # 各分支的 java_release 不同（1.21.1 用 21，26.1.2 用 25），
+          # 不能把版本号写死在 workflow 里。
+          java_release="$(grep '^java_release=' gradle.properties | head -n1 | cut -d'=' -f2- | tr -d '\r')"
+          if [[ -z "${java_release}" ]]; then
+            java_release="21"
+          fi
+          echo "java_release=${java_release}" >> "$GITHUB_OUTPUT"
+          echo "本次构建使用 JDK ${java_release}"
+
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: ${{ steps.javaver.outputs.java_release }}
 
       - name: Set up Gradle cache
-        if: steps.check.outputs.should_publish == 'true'
         uses: gradle/actions/setup-gradle@v4
 
       - name: Read release metadata
         id: metadata
-        if: steps.check.outputs.should_publish == 'true'
         shell: bash
+        env:
+          REF: ${{ steps.target.outputs.ref }}
         run: |
           read_prop() {
             grep "^$1=" gradle.properties | head -n1 | cut -d'=' -f2- | tr -d '\r'
@@ -100,15 +145,27 @@ jobs:
           mod_version="$(read_prop mod_version)"
           mod_name="$(read_prop mod_name)"
 
+          # 版本号以 gradle.properties 为准，保证与 jar 内嵌版本一致。
+          # tag 去 v 前缀后与之比对，不一致只警告，不阻断发布。
+          tag_version="${REF#v}"
+          if [[ "${tag_version}" != "${mod_version}" ]]; then
+            echo "::warning::tag 版本 (${tag_version}) 与 gradle.properties 的 mod_version (${mod_version}) 不一致，本次以 mod_version 发布"
+          fi
+
           # 精确命中 build.gradle.kts 的 archivesName 规则，
           # 完整前缀同时避开 -sources.jar
           fabric_jar="fabric/build/libs/${archives_base_name}-${mc_version}-fabric-${mod_version}.jar"
           neoforge_jar="neoforge/build/libs/${archives_base_name}-${mc_version}-neoforge-${mod_version}.jar"
+          # CurseForge 的 version 字段在同项目内必须唯一，而多个 Minecraft 版本分支
+          # 会共用同一个 mod_version（如都是 0.1.0）。把 mc_version 拼进上传版本号，
+          # 避免分支间互相覆盖。
+          upload_version="${mod_version}-mc${mc_version}"
           release_name="${mod_name} ${mod_version} [Fabric + NeoForge ${mc_version}]"
 
           {
             echo "fabric_jar=${fabric_jar}"
             echo "neoforge_jar=${neoforge_jar}"
+            echo "upload_version=${upload_version}"
             echo "mc_version=${mc_version}"
             echo "mod_version=${mod_version}"
             echo "release_name=${release_name}"
@@ -116,47 +173,30 @@ jobs:
 
       - name: Resolve changelog
         id: changelog
-        if: steps.check.outputs.should_publish == 'true'
         shell: bash
         env:
+          # Release 事件的正文就是作者写好的更新说明，优先采用
+          RELEASE_BODY: ${{ github.event.release.body }}
           COMMIT_MSG: ${{ github.event.head_commit.message }}
         run: |
-          head_commit="${{ github.sha }}"
-          base_commit="${{ github.event.before }}"
+          changelog_content="${RELEASE_BODY}"
 
-          changelog_revision=""
-          if [[ "${COMMIT_MSG}" =~ 日志:([^[:space:]]+) ]]; then
-            changelog_revision="${BASH_REMATCH[1]}"
-          fi
-
-          # 手动触发没有 event.before，退回父提交
-          if [[ -z "${base_commit}" || "${base_commit}" =~ ^0+$ ]]; then
-            base_commit="$(git rev-parse "${head_commit}^" 2>/dev/null || true)"
-          fi
-
-          changelog_content=""
-          if [[ -f CHANGELOG.md ]]; then
-            if [[ -n "${changelog_revision}" ]]; then
-              target_commit="$(git rev-parse --verify "${changelog_revision}^{commit}" 2>/dev/null || true)"
-              if [[ -z "${target_commit}" ]]; then
-                echo "::error::无法解析日志修订号: ${changelog_revision}" >&2
-                exit 1
-              fi
-              changelog_content="$(git show --format= --unified=0 --no-ext-diff "${target_commit}" -- CHANGELOG.md \
-                | awk '/^\+\+\+ / { next } /^\+/ { sub(/^\+/, ""); print }')"
-            elif [[ -n "${base_commit}" ]] && git cat-file -e "${base_commit}^{commit}" 2>/dev/null; then
+          # 手动触发时没有 Release 正文，退回 CHANGELOG.md 的提交级增量
+          if [[ -z "${changelog_content}" ]]; then
+            head_commit="${{ github.sha }}"
+            base_commit="${{ github.event.before }}"
+            if [[ -z "${base_commit}" || "${base_commit}" =~ ^0+$ ]]; then
+              base_commit="$(git rev-parse "${head_commit}^" 2>/dev/null || true)"
+            fi
+            if [[ -f CHANGELOG.md && -n "${base_commit}" ]] \
+              && git cat-file -e "${base_commit}^{commit}" 2>/dev/null; then
               changelog_content="$(git diff --unified=0 "${base_commit}" "${head_commit}" -- CHANGELOG.md \
                 | awk '/^\+\+\+ / { next } /^\+/ { sub(/^\+/, ""); print }')"
             fi
           fi
 
-          # 没有 CHANGELOG.md 或本次未改动它：用提交信息正文兜底
           if [[ -z "${changelog_content}" ]]; then
-            changelog_content="$(printf '%s\n' "${COMMIT_MSG}" | tail -n +2 | sed '/^[[:space:]]*$/d')"
-          fi
-
-          if [[ -z "${changelog_content}" ]]; then
-            changelog_content="本次提交未提供变更说明。"
+            changelog_content="本次发布未提供变更说明。"
           fi
 
           {
@@ -166,17 +206,14 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Make Gradle wrapper executable
-        if: steps.check.outputs.should_publish == 'true'
         run: chmod +x ./gradlew
 
       - name: Build mod
-        if: steps.check.outputs.should_publish == 'true'
         # build 会带上 :common:test 与 check 上挂的
         # verifyMirroredRender / verifyPainterParity 等双端漂移守卫
         run: ./gradlew build
 
       - name: Validate built artifacts
-        if: steps.check.outputs.should_publish == 'true'
         shell: bash
         env:
           FABRIC_JAR: ${{ steps.metadata.outputs.fabric_jar }}
@@ -195,7 +232,6 @@ jobs:
           fi
 
       - name: Package artifacts
-        if: steps.check.outputs.should_publish == 'true'
         shell: bash
         env:
           FABRIC_JAR: ${{ steps.metadata.outputs.fabric_jar }}
@@ -204,7 +240,6 @@ jobs:
         run: tar -czf release-artifact.tar.gz "${FABRIC_JAR}" "${NEOFORGE_JAR}"
 
       - name: Upload build artifact
-        if: steps.check.outputs.should_publish == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-build
@@ -215,7 +250,6 @@ jobs:
   publish:
     name: Publish to CurseForge
     needs: build
-    if: needs.build.outputs.should_publish == 'true'
     runs-on: ubuntu-latest
     # environment 只能写在 job 级。构建阶段不触发审批，
     # 只有走到这里才需要人工确认。
@@ -244,13 +278,15 @@ jobs:
               failed=1
             fi
           done
-          [[ "${failed}" == "1" ]] && exit 1 || true
+          if [[ "${failed}" == "1" ]]; then
+            exit 1
+          fi
 
       - name: Upload to CurseForge
         uses: Kira-NT/mc-publish@v3.3.1
         with:
           name: ${{ needs.build.outputs.release_name }}
-          version: ${{ needs.build.outputs.mod_version }}
+          version: ${{ needs.build.outputs.upload_version }}
           version-type: ${{ needs.build.outputs.release_type }}
           changelog: ${{ needs.build.outputs.changelog }}
           files: |
