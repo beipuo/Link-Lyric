@@ -222,10 +222,8 @@ public final class SdfAtlas implements AutoCloseable {
             }
         }
 
-        @Override
-        public void load(ResourceManager resourceManager) {
-            // 内容由 add() 逐块上传，不走资源加载。
-        }
+        // 1.21.4 移除了 AbstractTexture.load(ResourceManager)，
+        // 内容本就由 add() 逐块上传，无需再覆写空实现。
 
         @Override
         public void close() {
