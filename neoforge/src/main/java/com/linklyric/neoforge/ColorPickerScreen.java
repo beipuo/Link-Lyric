@@ -7,7 +7,7 @@ import com.linklyric.common.style.ColorSquare;
 import com.linklyric.common.style.HsvColor;
 import com.linklyric.common.style.LyricStyleConfig;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
@@ -201,17 +201,17 @@ final class ColorPickerScreen extends Screen {
 
     /** 关掉菜单模糊，否则预览里的歌词会被糊掉。 */
     @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         graphics.fill(0, 0, width, height, 0xE0000000);
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         Minecraft client = Minecraft.getInstance();
 
         // 先铺背景，再画自绘内容，最后画控件。
         // 顺序不能交给 super.render：它会把背景重画一遍压在最上层。
-        renderBackground(graphics, mouseX, mouseY, partialTick);
+        extractBackground(graphics, mouseX, mouseY, partialTick);
 
         FloatingLyricRenderer renderer = LinkLyricNeoForge.renderer();
         FloatingLyricRenderer.Bounds area = renderer.previewArea();
@@ -225,7 +225,7 @@ final class ColorPickerScreen extends Screen {
         }
         renderer.render(LinkLyricNeoForge.painterFor(graphics, client));
 
-        graphics.drawString(font, Component.translatable(LangKeys.COLOR_ADJUSTING,
+        graphics.text(font, Component.translatable(LangKeys.COLOR_ADJUSTING,
                     Component.translatable(slot.labelKey)).getString(),
                 squareX, squareY - 12, 0xFFFFFFFF, false);
 
@@ -233,12 +233,12 @@ final class ColorPickerScreen extends Screen {
         drawHueBar(graphics);
 
         // 编码框右侧标明格式，以及当前色块。
-        graphics.drawString(font, "#AARRGGBB",
+        graphics.text(font, "#AARRGGBB",
                 squareX + 102, hueY + HUE_HEIGHT + GAP + 5, 0xFFAAAAAA, false);
 
         // 控件最后画，才不会被背景遮住。这里逐个画而不调 super.render。
         for (var widget : buttons) {
-            widget.render(graphics, mouseX, mouseY, partialTick);
+            widget.extractRenderState(graphics, mouseX, mouseY, partialTick);
         }
     }
 
@@ -250,7 +250,7 @@ final class ColorPickerScreen extends Screen {
      * 上层纵向从透明到黑（明度）。
      * 这样色相一变只换一个颜色参数，不必重算整块像素。
      */
-    private void drawSquare(GuiGraphics graphics) {
+    private void drawSquare(GuiGraphicsExtractor graphics) {
         int hue = HsvColor.toArgb(currentHue(), 1f, 1f, 0xFF);
 
         // 底层：左白右纯色。
@@ -272,7 +272,7 @@ final class ColorPickerScreen extends Screen {
     }
 
     /** 画色相条：六段渐变拼成完整色环。 */
-    private void drawHueBar(GuiGraphics graphics) {
+    private void drawHueBar(GuiGraphicsExtractor graphics) {
         int segments = 6;
         int segWidth = SQUARE_SIZE / segments;
         for (int i = 0; i < segments; i++) {

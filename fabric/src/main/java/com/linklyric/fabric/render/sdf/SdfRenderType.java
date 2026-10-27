@@ -2,7 +2,8 @@ package com.linklyric.fabric.render.sdf;
 
 import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
-import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.pipeline.DepthStencilState;
+import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
@@ -264,7 +265,9 @@ public final class SdfRenderType {
                 .withUniform("SdfParams", UniformType.UNIFORM_BUFFER)
                 .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                         VertexFormat.Mode.QUADS)
-                .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+                // 26.x 把深度测试并入 DepthStencilState：文字是覆盖层，
+                // 永远通过、不写深度，等价于原来的 NO_DEPTH_TEST。
+                .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false))
                 .withCull(false)
                 .build());
     }

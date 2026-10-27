@@ -13,14 +13,14 @@ import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.math.Axis;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.fabric.api.resource.ResourceManagerHelper;
 import net.fabricmc.fabric.api.resource.SimpleSynchronousResourceReloadListener;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.PackType;
@@ -34,7 +34,7 @@ import java.io.IOException;
 /**
  * Fabric 客户端入口。
  *
- * <p>只做三件事：启动数据源、注册 HUD 回调、把 {@link GuiGraphics} 适配成
+ * <p>只做三件事：启动数据源、注册 HUD 回调、把 {@link GuiGraphicsExtractor} 适配成
  * {@link FloatingLyricRenderer.Painter}。排版与状态计算全在 {@code :common}，
  * NeoForge 端复用同一份渲染器。
  */
@@ -69,7 +69,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
         dragController = new LyricDragController(renderer, layout);
         LOGGER.info("[Link Lyric] 数据源已启动，目标 127.0.0.1:{}", BRIDGE_PORT);
 
-        HudRenderCallback.EVENT.register(LinkLyricFabric::onHudRender);
+        // 26.x 把 HUD 回调换成「按层注册的元素」：每个元素有自己的 id，
+        // 可以精确插到原版某一层前后。这里挂到最末，行为与旧版回调一致。
+        HudElementRegistry.addLast(
+                Identifier.fromNamespaceAndPath(MOD_ID, "lyrics"),
+                (graphics, deltaTracker) -> onHudRender(graphics, deltaTracker));
 
         // 指令需要客户端命令源：位置是本机显示偏好，服务端无对应状态。
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registry) ->
@@ -117,7 +121,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         SdfRenderType.install();
     }
 
-    private static void onHudRender(GuiGraphics graphics, DeltaTracker deltaTracker) {
+    private static void onHudRender(GuiGraphicsExtractor graphics, DeltaTracker deltaTracker) {
         Minecraft client = Minecraft.getInstance();
         if (client == null || client.font == null) {
             return;
@@ -142,11 +146,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
     }
 
     /**
-     * 把 {@link GuiGraphics} 适配成渲染器需要的绘制接口。
+     * 把 {@link GuiGraphicsExtractor} 适配成渲染器需要的绘制接口。
      *
      * <p>HUD 与位置调整界面共用同一份适配，避免两处绘制参数走样。
      */
-    static FloatingLyricRenderer.Painter painterFor(GuiGraphics graphics, Minecraft client) {
+    static FloatingLyricRenderer.Painter painterFor(GuiGraphicsExtractor graphics, Minecraft client) {
         return new GuiPainter(graphics, client);
     }
 
@@ -221,8 +225,8 @@ public final class LinkLyricFabric implements ClientModInitializer {
         client.setScreen(next);
     }
 
-    /** {@link GuiGraphics} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
-    private record GuiPainter(GuiGraphics graphics, Minecraft client)
+    /** {@link GuiGraphicsExtractor} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
+    private record GuiPainter(GuiGraphicsExtractor graphics, Minecraft client)
             implements FloatingLyricRenderer.Painter {
 
         /**
@@ -277,7 +281,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         @Override
         public void drawText(String text, int x, int y, int color, boolean shadow) {
             // 末两个参数：是否投影、是否应用背景色。投影提升亮场景下的可读性。
-            graphics.drawString(client.font, text, x, y, color, shadow);
+            graphics.text(client.font, text, x, y, color, shadow);
         }
 
         /**
@@ -304,7 +308,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
                 drawText(text, x, y, color, shadow);
                 return;
             }
-            graphics.drawString(client.font, text, x, y - dy, color, shadow);
+            graphics.text(client.font, text, x, y - dy, color, shadow);
         }
 
         /**
@@ -495,7 +499,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
             pose.translate(x, y);
             pose.scale(scale, scale);
             pose.translate(-x, -y);
-            graphics.drawString(client.font, text, x, y, color, shadow);
+            graphics.text(client.font, text, x, y, color, shadow);
             pose.popMatrix();
         }
 

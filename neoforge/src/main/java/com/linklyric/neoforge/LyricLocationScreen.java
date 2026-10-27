@@ -4,7 +4,7 @@ import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.hud.LyricDragController;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
@@ -90,30 +90,30 @@ final class LyricLocationScreen extends Screen {
      * 位置调整要能直接看见游戏画面与歌词本身，因此这里什么都不画。
      */
     @Override
-    public void renderBackground(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractBackground(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         // 故意留空。
     }
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
         Minecraft client = Minecraft.getInstance();
         // 不画父类背景：位置调整要能看见下面的游戏画面。
         renderer.render(LinkLyricNeoForge.painterFor(graphics, client));
 
         // 提示放在顶部，避开被拖的歌词与底部按钮。
-        graphics.drawCenteredString(client.font,
+        graphics.centeredText(client.font,
                 "按住歌词拖动，松手后可继续微调；点保存生效",
                 width / 2, 12, 0xFFFFFFFF);
         if (controller.sessionDirty()) {
-            graphics.drawCenteredString(client.font,
+            graphics.centeredText(client.font,
                     "位置已改动，尚未保存", width / 2, 26, 0xFFFFD166);
         }
 
         // 显式顺序而不是 super.render：后者会先调 renderBackground，
         // 一旦将来有人给本界面加了背景，歌词就会被压在遮罩下。
-        renderBackground(graphics, mouseX, mouseY, partialTick);
+        extractBackground(graphics, mouseX, mouseY, partialTick);
         for (var widget : ownedWidgets) {
-            widget.render(graphics, mouseX, mouseY, partialTick);
+            widget.extractRenderState(graphics, mouseX, mouseY, partialTick);
         }
     }
 

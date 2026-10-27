@@ -7,7 +7,7 @@ import com.linklyric.common.i18n.LangKeys;
 import com.linklyric.common.style.LyricStyleConfig;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.AbstractWidget;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
@@ -462,8 +462,8 @@ final class LyricConfigScreen extends OptionsSubScreen {
     // ——— 预览与绘制 ———
 
     @Override
-    public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
-        super.render(graphics, mouseX, mouseY, partialTick);
+    public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float partialTick) {
+        super.extractRenderState(graphics, mouseX, mouseY, partialTick);
         drawPreview(graphics);
     }
 
@@ -474,7 +474,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
      * 画高了就会盖住下一行控件。歌词自身在 20 像素里会按块心居中，
      * 单行时正好落在中间，不必额外偏移。
      */
-    private void drawPreview(GuiGraphics graphics) {
+    private void drawPreview(GuiGraphicsExtractor graphics) {
         AbstractWidget anchor = previewAnchor;
         if (anchor == null) {
             return;

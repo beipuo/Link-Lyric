@@ -10,7 +10,7 @@ import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.rendertype.RenderType;
@@ -72,7 +72,7 @@ public final class GradientPainter {
      * @param shadow   是否绘制阴影
      * @return 是否成功绘制。false 表示需要调用方退回原版路径
      */
-    public static boolean draw(GuiGraphics graphics, Font font, String glyph,
+    public static boolean draw(GuiGraphicsExtractor graphics, Font font, String glyph,
                                 float x, float y, GlyphColors colors,
                                 boolean shadow) {
         return draw(graphics, font, glyph, x, y, colors, shadow, 0f, 0f);
@@ -85,7 +85,7 @@ public final class GradientPainter {
      * {@link SdfRenderType}——分批决策也在那里：有光晕时用带发光的
      * RenderType，避免同批里出现「该发光」与「不该发光」的字。
      */
-    public static boolean draw(GuiGraphics graphics, Font font, String glyph,
+    public static boolean draw(GuiGraphicsExtractor graphics, Font font, String glyph,
                                 float x, float y, GlyphColors colors,
                                 boolean shadow, float glowRadius, float glowAlpha) {
         return draw(graphics, font, glyph, x, y, colors, shadow,
@@ -99,7 +99,7 @@ public final class GradientPainter {
      * 与发光互斥：同一批只能有一份 uniform 生效，两者都开时优先发光——
      * 发光是强调瞬间的短暂状态，描边是常驻样式，短暂效果不该被吞掉。
      */
-    public static boolean draw(GuiGraphics graphics, Font font, String glyph,
+    public static boolean draw(GuiGraphicsExtractor graphics, Font font, String glyph,
                                 float x, float y, GlyphColors colors,
                                 boolean shadow, float glowRadius, float glowAlpha,
                                 float strokeWidth, int strokeArgb) {
@@ -159,7 +159,7 @@ public final class GradientPainter {
     }
 
     /** SDF 路径的单色字形。 */
-    private static boolean drawSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
+    private static boolean drawSdf(GuiGraphicsExtractor graphics, SdfAtlas.Slot slot, int cp,
                                    float x, float y, GlyphColors colors, boolean shadow) {
         float[] box = SdfGlyphProvider.box(cp);
         if (box == null) {
@@ -198,7 +198,7 @@ public final class GradientPainter {
      * <p>阴影同样按段绘制，保持与主色一致的形状——否则阴影只有单色
      * 轮廓，会在染色边界处露出不符合渐变的硬边。
      */
-    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+    public static boolean drawSpans(GuiGraphicsExtractor graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
                                      float originX, boolean shadow) {
         return drawSpans(graphics, font, glyph, x, y, spans, originX, shadow, 0f, 0f);
@@ -209,7 +209,7 @@ public final class GradientPainter {
      *
      * <p>光晕作用在字形轮廓上，与颜色分段无关，所以只接受一份半径与强度。
      */
-    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+    public static boolean drawSpans(GuiGraphicsExtractor graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
                                      float originX, boolean shadow,
                                      float glowRadius, float glowAlpha) {
@@ -218,7 +218,7 @@ public final class GradientPainter {
     }
 
     /** 带外发光与描边的按段绘制。 */
-    public static boolean drawSpans(GuiGraphics graphics, Font font, String glyph,
+    public static boolean drawSpans(GuiGraphicsExtractor graphics, Font font, String glyph,
                                      float x, float y, GlyphSpan[] spans,
                                      float originX, boolean shadow,
                                      float glowRadius, float glowAlpha,
@@ -278,7 +278,7 @@ public final class GradientPainter {
     /**
      * 取一个可用的缓冲源。
      *
-     * <p>1.21.2 把 {@code GuiGraphics.bufferSource()} 收回成私有字段，
+     * <p>1.21.2 把 {@code GuiGraphicsExtractor.bufferSource()} 收回成私有字段，
      * 不再对外暴露。这里改用公开工厂自行建一个 immediate 缓冲源：
      * 它按 {@link RenderType} 分桶，写完立即冲刷，正是本类需要的语义。
      *
@@ -288,7 +288,7 @@ public final class GradientPainter {
         return MultiBufferSource.immediate(backing);
     }
     /** SDF 路径的按段字形。 */
-    private static boolean drawSpansSdf(GuiGraphics graphics, SdfAtlas.Slot slot, int cp,
+    private static boolean drawSpansSdf(GuiGraphicsExtractor graphics, SdfAtlas.Slot slot, int cp,
                                         float x, float y, GlyphSpan[] spans,
                                         float originX, boolean shadow) {
         float[] box = SdfGlyphProvider.box(cp);

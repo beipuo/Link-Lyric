@@ -11,7 +11,7 @@ import com.mojang.math.Axis;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  * <p>与 Fabric 侧保持同构：本类只做接线，排版与状态计算全部落在 {@code :common}。
  * 两端共用 {@link FloatingLyricRenderer}，差异仅在于 HUD 事件来源。
  *
- * <p>1.21.1 使用 Mojang 官方映射，因此 {@code GuiGraphics} 与 {@code DeltaTracker}
+ * <p>1.21.1 使用 Mojang 官方映射，因此 {@code GuiGraphicsExtractor} 与 {@code DeltaTracker}
  * 与 Fabric 端同名，{@link FloatingLyricRenderer.Painter} 的实现可以逐行对齐。
  */
 @Mod(value = LinkLyricNeoForge.MOD_ID, dist = Dist.CLIENT)
@@ -96,11 +96,11 @@ public final class LinkLyricNeoForge {
     }
 
     /**
-     * 把 {@link GuiGraphics} 适配成渲染器需要的绘制接口。
+     * 把 {@link GuiGraphicsExtractor} 适配成渲染器需要的绘制接口。
      *
      * <p>HUD 与位置调整界面共用同一份适配，避免两处绘制参数走样。
      */
-    static FloatingLyricRenderer.Painter painterFor(GuiGraphics graphics, Minecraft client) {
+    static FloatingLyricRenderer.Painter painterFor(GuiGraphicsExtractor graphics, Minecraft client) {
         return new GuiPainter(graphics, client);
     }
 
@@ -171,8 +171,8 @@ public final class LinkLyricNeoForge {
     /** 最近一次构造的实例，供静态入口取用。 */
     private static LinkLyricNeoForge current;
 
-    /** {@link GuiGraphics} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
-    private record GuiPainter(GuiGraphics graphics, Minecraft client)
+    /** {@link GuiGraphicsExtractor} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */
+    private record GuiPainter(GuiGraphicsExtractor graphics, Minecraft client)
             implements FloatingLyricRenderer.Painter {
 
         /** 每帧把字重与软阴影同步给 SDF 层，理由同 Fabric 端。 */
@@ -213,7 +213,7 @@ public final class LinkLyricNeoForge {
 
         @Override
         public void drawText(String text, int x, int y, int color, boolean shadow) {
-            graphics.drawString(client.font, text, x, y, color, shadow);
+            graphics.text(client.font, text, x, y, color, shadow);
         }
 
         /**
@@ -240,7 +240,7 @@ public final class LinkLyricNeoForge {
                 drawText(text, x, y, color, shadow);
                 return;
             }
-            graphics.drawString(client.font, text, x, y - dy, color, shadow);
+            graphics.text(client.font, text, x, y - dy, color, shadow);
         }
 
         /**
@@ -432,7 +432,7 @@ public final class LinkLyricNeoForge {
             pose.translate(x, y);
             pose.scale(scale, scale);
             pose.translate(-x, -y);
-            graphics.drawString(client.font, text, x, y, color, shadow);
+            graphics.text(client.font, text, x, y, color, shadow);
             pose.popMatrix();
         }
 
