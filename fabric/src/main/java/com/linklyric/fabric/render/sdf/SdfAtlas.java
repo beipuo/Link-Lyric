@@ -9,6 +9,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
@@ -154,6 +155,8 @@ public final class SdfAtlas implements AutoCloseable {
         private final ResourceLocation name;
         private final int size;
         private final SkylinePacker packer;
+        private GpuTexture texture;
+        private GpuTextureView view;
 
         private Page(ResourceLocation name, int size) {
             this.name = name;
@@ -162,10 +165,14 @@ public final class SdfAtlas implements AutoCloseable {
             // 1.21.5 起纹理不再是「拿一个 GL id 去 prepare」，改成由
             // GpuDevice 分配、GpuTexture 承载，上传走 CommandEncoder。
             GpuDevice device = RenderSystem.getDevice();
+            // 1.21.6 的 createTexture 多了 usage 位与 mip 数：这张图既当
+            // 纹理采样，也要接受 writeToTexture 拷贝，两者都要声明。
             this.texture = device.createTexture(
                     () -> "LinkLyricSdfAtlas/" + name,
+                    GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
                     TextureFormat.RED8,
-                    size, size, 1);
+                    size, size, 1, 1);
+            this.view = device.createTextureView(this.texture);
             // 距离场必须线性过滤：场重建靠插值；UV 不越界，钳到边缘即可。
             this.texture.setAddressMode(AddressMode.CLAMP_TO_EDGE);
             this.texture.setTextureFilter(FilterMode.LINEAR, false);
@@ -177,9 +184,14 @@ public final class SdfAtlas implements AutoCloseable {
             return name;
         }
 
-        /** 该页的 GPU 纹理，供渲染层直接绑定。 */
+        /** 该页的 GPU 纹理。 */
         public GpuTexture texture() {
             return this.texture;
+        }
+
+        /** 该页的纹理视图，1.21.6 起渲染绑定与 GUI 提交都用它。 */
+        public GpuTextureView view() {
+            return this.view;
         }
 
         private Slot tryAdd(int width, int height, byte[] data) {
@@ -212,8 +224,8 @@ public final class SdfAtlas implements AutoCloseable {
                     }
                 }
                 CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-                // 签名：(纹理, 图, mip, 源x, 源y, 目标x, 目标y, 宽, 高)
-                encoder.writeToTexture(this.texture, scratch, 0, 0, 0, x, y, width, height);
+                // 签名：纹理, 图, mip, 源x, 源y, 目标x, 目标y, 宽, 高, 目标mip
+                encoder.writeToTexture(this.texture, scratch, 0, 0, 0, x, y, width, height, 0);
             } finally {
                 scratch.close();
             }

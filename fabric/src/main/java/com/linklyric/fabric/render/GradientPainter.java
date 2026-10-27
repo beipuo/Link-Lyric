@@ -133,7 +133,9 @@ public final class GradientPainter {
         if (type == null) {
             return false;
         }
-        Matrix4f pose = graphics.pose().last().pose();
+        // 1.21.6 的 GUI 变换栈是二维仿射矩阵，顶点写入器要 4x4。
+        // Matrix4f.mul(Matrix3x2fc) 正是把它按 z 不变的方式扩成 4x4。
+        Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
         ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
         MultiBufferSource.BufferSource buffer = openBuffer(backing);
@@ -163,7 +165,9 @@ public final class GradientPainter {
         if (box == null) {
             return false;
         }
-        Matrix4f pose = graphics.pose().last().pose();
+        // 1.21.6 的 GUI 变换栈是二维仿射矩阵，顶点写入器要 4x4。
+        // Matrix4f.mul(Matrix3x2fc) 正是把它按 z 不变的方式扩成 4x4。
+        Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
         // 留白是逐字形的：unifont 与位图的留白不同，同一行里会混。
         // 必须在取 RenderType 之前设好，因为分批决策要用到它。
@@ -241,7 +245,9 @@ public final class GradientPainter {
         if (type == null) {
             return false;
         }
-        Matrix4f pose = graphics.pose().last().pose();
+        // 1.21.6 的 GUI 变换栈是二维仿射矩阵，顶点写入器要 4x4。
+        // Matrix4f.mul(Matrix3x2fc) 正是把它按 z 不变的方式扩成 4x4。
+        Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
         // 阴影与主色共用一个缓冲源：同属一个 RenderType，攒在一起一次冲刷。
         ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
@@ -289,7 +295,9 @@ public final class GradientPainter {
         if (box == null) {
             return false;
         }
-        Matrix4f pose = graphics.pose().last().pose();
+        // 1.21.6 的 GUI 变换栈是二维仿射矩阵，顶点写入器要 4x4。
+        // Matrix4f.mul(Matrix3x2fc) 正是把它按 z 不变的方式扩成 4x4。
+        Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
         // 留白逐字形不同，必须在取 RenderType 之前设好。
         SdfRenderType.setGlowLimit(SdfGlyphProvider.glowSpace(cp));

@@ -728,13 +728,19 @@ val verifyShaderUniforms = tasks.register("verifyShaderUniforms") {
             val glslUniforms = Regex("""^uniform\s+(?!sampler)\w+\s+(\w+)\s*;""", RegexOption.MULTILINE)
                 .findAll(glslSource)
                 .map { it.groupValues[1] }
-                .toSet()
+                .toMutableSet()
+            // 1.21.6 起自定义参数一律待在 std140 块里，标量 uniform 不再合法，
+            // 所以块名本身也要算作「管线必须申明的东西」。
+            Regex("""layout\s*\(\s*std140\s*\)\s*uniform\s+(\w+)\s*\{""", RegexOption.MULTILINE)
+                .findAll(glslSource)
+                .map { it.groupValues[1] }
+                .forEach { glslUniforms.add(it) }
             val glslSamplers = Regex("""^uniform\s+sampler\w+\s+(\w+)\s*;""", RegexOption.MULTILINE)
                 .findAll(glslSource)
                 .map { it.groupValues[1] }
                 .toSet()
 
-            // 矩阵由管线的 uniform 块注入，GLSL 里不必再声明。
+            // 矩阵由原版 Projection / DynamicTransforms 块注入，不在这里判。
             val injected = setOf("ModelViewMat", "ProjMat")
 
             for (platform in listOf("fabric", "neoforge")) {

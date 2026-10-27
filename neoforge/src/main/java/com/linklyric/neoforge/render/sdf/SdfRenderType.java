@@ -4,8 +4,6 @@ import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
 import com.mojang.blaze3d.platform.DepthTestFunction;
 import com.mojang.blaze3d.shaders.UniformType;
-import com.mojang.blaze3d.systems.RenderPass;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.resources.ResourceLocation;
@@ -15,9 +13,9 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * SDF 文字专用的 {@link RenderType}。
+ * SDF 文字专用的渲染管线。
  *
- * <h2>为什么不能复用原版的 {@code RenderType.text}</h2>
+ * <h2>为什么不能复用原版的 {@code RenderPipelines.TEXT}</h2>
  *
  * <p>原版 {@code rendertype_text.fsh} 把纹理值当作颜色乘数：
  * {@code texture(Sampler0, uv) * vertexColor}。位图字体的纹理就是
@@ -29,39 +27,31 @@ import java.util.Map;
  *
  * <h2>纹理绑定</h2>
  *
- * <p>图集是运行时上传的 GL 纹理，磁盘上没有文件，
- * 因此不能按 {@code ResourceLocation} 走资源加载——
- * 那是 {@code TextureStateShard} 的行为，会去读一个不存在的文件。
+ * <p>图集是运行时上传的 GPU 纹理，磁盘上没有文件，
+ * 因此不能按 {@code ResourceLocation} 走资源加载。
  * 这里由 {@link SdfPassDrawer} 在 {@code RenderPass} 上直接绑 sampler。
  *
- * <h2>为什么正文与阴影是两个 RenderType</h2>
+ * <h2>为什么正文与阴影是两个管线</h2>
  *
- * <p>顶点是攒批的：{@code MultiBufferSource} 在遇到不同的 RenderType
- * 时才把上一批刷出去。字重与柔化是着色器 uniform，属于全局状态，
- * 若正文与阴影共用一个 RenderType，两层的顶点会落进同一批，
- * 只能有一份 uniform 生效——结果是阴影把正文一起糊掉，或正文把
- * 阴影一起变锐利。
+ * <p>字重与柔化是着色器参数，属于整层生效的全局状态。
+ * 若正文与阴影共用一个管线，两层的顶点会落进同一次绘制，
+ * 只能有一份参数生效——结果是阴影把正文一起糊掉，
+ * 或正文把阴影一起变锐利。
  *
- * <p>所以按「页 + 是否正文」四个组合各建一个 RenderType。
- * 每个 RenderType 有自己的 ShaderStateShard，在 setup 时设置对应的
- * uniform，批处理自然就分成两批。代价是绘制调用翻倍，
- * 但一屏歌词只有一次阴影、一次正文，实际影响可以忽略。
+ * <p>所以按「正文/阴影 × 发光 × 描边」各建一个管线。
+ * 代价是绘制调用翻倍，但一屏歌词只有一次阴影、一次正文，
+ * 实际影响可以忽略。
  */
 public final class SdfRenderType {
 
-    /**
-     * 着色器声明。1.21.2 起着色器改为「声明 + 配置」：
-     * {@link ShaderProgram} 只是 configId 与顶点格式的载体，
-     * 真正的编译产物由 {@code ShaderManager.getProgram} 按它取回。
-     * 因此这里持有声明，程序在 setup 时现取，避免缓存到过期的程序。
-     */
+    /** 着色器资源是否就绪。 */
     private static volatile boolean ready;
 
     /**
      * 当前描边宽度与颜色。
      *
-     * <p>和发光一样是每批 setup 时读取的全局状态。**必须参与分批**：
-     * 若描边与不描边的顶点落进同一批，那一批只会有一次 setup，
+     * <p>和发光一样是每批绘制时读取的全局状态，**必须参与管线选择**：
+     * 若描边与不描边的顶点落进同一批，那一批只会有一次参数上传，
      * 要么全都描边、要么全都不描边，取决于最后的赋值顺序。
      */
     private static volatile float strokeWidth;
@@ -94,7 +84,7 @@ public final class SdfRenderType {
         setStroke(0f, 0);
     }
 
-    /** 当前是否有描边，供分批决策。 */
+    /** 当前是否有描边，供管线选择。 */
     private static boolean strokeEnabled() {
         return strokeWidth > 0f && strokeAlpha > 0f;
     }
@@ -119,9 +109,8 @@ public final class SdfRenderType {
     /**
      * 阴影的柔化倍数。
      *
-     * <p>柔化靠放大 {@code aa}，也就是把边缘过渡拉宽。
-     * 2.5 倍已能把一格像素的硬边化成柔和投影，
-     * 再大就散成一团雾、失去「落在纸面上的影子」的感觉。
+     * <p>柔化靠放大边缘过渡宽度。2.5 倍已能把一格像素的硬边
+     * 化成柔和投影，再大就散成一团雾、失去「落在纸面上的影子」的感觉。
      */
     private static final float SHADOW_SOFTNESS = 2.5f;
     private static final float BODY_SOFTNESS = 1.0f;
@@ -132,9 +121,8 @@ public final class SdfRenderType {
     /**
      * 当前字重，由渲染器每帧写入。
      *
-     * <p>uniform 在每批 setup 时读取，而 setup 发生在攒批之后的
-     * 刷批时刻，因此这里必须是「绘制时最新」的值，不能只在
-     * 配置变化时更新一次。
+     * <p>参数在绘制时读取，因此这里必须是「绘制时最新」的值，
+     * 不能只在配置变化时更新一次。
      */
     private static volatile float weight;
 
@@ -155,8 +143,7 @@ public final class SdfRenderType {
     /**
      * 当前帧的外发光半径与强度。
      *
-     * <p>和字重一样是每批 setup 时读取的全局状态。半径参与分批决策，
-     * 强度只是在 setup 时设进 uniform。
+     * <p>半径参与管线选择，强度只是绘制时写进参数块。
      */
     private static volatile float glowRadius;
     private static volatile float glowAlpha;
@@ -186,7 +173,7 @@ public final class SdfRenderType {
     /**
      * 标记 SDF 路径可用。
      *
-     * <p>1.21.5 里着色器由 {@link RenderPipeline} 描述，首次使用时
+     * <p>1.21.5 起着色器由 {@link RenderPipeline} 描述，首次使用时
      * 由原版编译，模组侧没有「注册」这一步；调用方在确认资源就绪后
      * 调这里一次即可。
      */
@@ -206,8 +193,8 @@ public final class SdfRenderType {
     /**
      * 把界面上的字重百分比映射成着色器的加粗量。
      *
-     * <p>界面用 0..100 表达，0 表示不加粗。映射到 0..MAX_WEIGHT 而不是
-     * 直接当像素用：一个像素在 9px 的字上已占十分之一高度，
+     * <p>界面用 0..100 表达，0 表示不加粗。映射到 0..MAX_WEIGHT
+     * 而不是直接当像素用：一个像素在 9px 的字上已占十分之一高度，
      * 直接加会引起笔画粘连。
      */
     public static float weightFor(int percent) {
@@ -228,48 +215,37 @@ public final class SdfRenderType {
         return SHADOW_OFFSET;
     }
 
-    /**
-     * 绘制正文层。
-     *
-     * <p>1.21.5 起不再产出 {@code RenderType}：uniform 只能在
-     * {@code RenderPass} 上写，而 {@code MultiBufferSource} 不给模组
-     * 那个对象。因此改成「取管线 + 自己开 pass」，入口见
-     * {@link SdfPassDrawer}。
-     */
+    /** 绘制正文层。 */
     public static boolean drawBody(SdfAtlas.Slot slot, Matrix4f pose, float[] box,
                                    float x, float y, GlyphSpan[] spans, float originX,
                                    int light) {
         boolean glowOn = glowing();
         boolean strokeOn = strokeEnabled();
         return SdfPassDrawer.draw(
-                pipelineFor(true, glowOn, strokeOn), slot.page().texture(), pose,
+                pipelineFor(true, glowOn, strokeOn), slot.page().view(), pose,
                 slot, box, x, y, spans, originX, light,
-                pass -> applyUniforms(pass, true, glowOn, strokeOn));
+                bodyParams(true, glowOn, strokeOn));
     }
 
-    /**
-     * 取阴影层的 RenderType。
-     *
-     * <p>阴影层不描边：阴影本身就是一圈糊掉的暗色轮廓，
-     * 再给它描边会变成两圈套在一起，边界彻底糊掉。
-     * 因此这里的 Key 恒为 {@code glow=false}，与描边状态无关。
-     */
+    /** 绘制阴影层。 */
     public static boolean drawShadow(SdfAtlas.Slot slot, Matrix4f pose, float[] box,
                                     float x, float y, GlyphSpan[] spans, float originX,
                                     int light) {
-        // 阴影层的发光与描边两位恒为 false，与当前状态无关。
+        // 阴影层不发光也不描边：它本身就是一圈糊掉的暗色轮廓。
+        // 再叠发光会变成两团混在一起；再描边会变成两圈套在一起，边界全糊。
         return SdfPassDrawer.draw(
-                pipelineFor(false, false, false), slot.page().texture(), pose,
+                pipelineFor(false, false, false), slot.page().view(), pose,
                 slot, box, x, y, spans, originX, light,
-                pass -> applyUniforms(pass, false, false, false));
+                bodyParams(false, false, false));
     }
 
     /**
      * 按当前状态取对应的 {@link RenderPipeline}。
      *
-     * <p>正文与阴影必须分开：字重、柔化、发光、描边都是管线级的 uniform，
-     * 两支顶点若共用一个管线，只会有一份 uniform 生效，
-     * 结果是阴影把正文一起糊掉，或正文把阴影一起变锐利。
+     * <p>只声明一个 uniform 块 {@code SdfParams}：1.21.6 起标量
+     * uniform 不能单独声明，{@code withUniform} 也只接受
+     * {@code UNIFORM_BUFFER}。矩阵由原版的 {@code Projection} 与
+     * {@code DynamicTransforms} 块在着色器里 import 得到，不在管线里声明。
      */
     private static RenderPipeline pipelineFor(boolean body, boolean glowEnabled,
                                               boolean strokeEnabled) {
@@ -285,17 +261,7 @@ public final class SdfRenderType {
                 .withFragmentShader(ResourceLocation.fromNamespaceAndPath(
                         "linklyric", "core/linklyric_sdf_text"))
                 .withSampler("Sampler0")
-                .withUniform("ModelViewMat", UniformType.MATRIX4X4)
-                .withUniform("ProjMat", UniformType.MATRIX4X4)
-                .withUniform("ColorModulator", UniformType.VEC4)
-                .withUniform("Sharpness", UniformType.FLOAT)
-                .withUniform("Weight", UniformType.FLOAT)
-                .withUniform("Softness", UniformType.FLOAT)
-                .withUniform("GlowRadius", UniformType.FLOAT)
-                .withUniform("GlowAlpha", UniformType.FLOAT)
-                .withUniform("GlowLimit", UniformType.FLOAT)
-                .withUniform("StrokeWidth", UniformType.FLOAT)
-                .withUniform("StrokeColor", UniformType.VEC4)
+                .withUniform("SdfParams", UniformType.UNIFORM_BUFFER)
                 .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
                         VertexFormat.Mode.QUADS)
                 .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
@@ -304,33 +270,38 @@ public final class SdfRenderType {
     }
 
     /**
-     * 在绘制前写入这一层的 uniform。
+     * 这一层的参数块取值，顺序与着色器里 {@code SdfParams} 的字段一致。
      *
-     * <p>矩阵用当前 GUI 阶段的值：GUI 顶点已经在 CPU 侧乘过 pose，
-     * 这里给单位矩阵即可，与原版 {@code RenderType.text} 的约定一致。
+     * <p>返回 int 化的浮点位模式没有意义，这里直接给原始 float，
+     * 由 {@link SdfPassDrawer} 按 std140 打包。
      */
-    private static void applyUniforms(RenderPass pass, boolean body,
-                                      boolean glowEnabled, boolean strokeEnabled) {
-        pass.setUniform("ModelViewMat", new Matrix4f());
-        pass.setUniform("ProjMat", RenderSystem.getProjectionMatrix());
-        pass.setUniform("ColorModulator", 1f, 1f, 1f, 1f);
-        pass.setUniform("Sharpness", 1f);
-        pass.setUniform("Weight", body ? weight : 0f);
-        pass.setUniform("Softness", body ? BODY_SOFTNESS
-                : (softShadow ? SHADOW_SOFTNESS : BODY_SOFTNESS));
+    private static float[] bodyParams(boolean body, boolean glowEnabled,
+                                      boolean strokeEnabled) {
         // 光晕只给正文层：阴影层本就是一圈糊掉的影子，
         // 再叠发光会变成两团混在一起，边界全失。
         boolean glowOn = body && glowEnabled;
-        pass.setUniform("GlowRadius", glowOn ? glowRadius : 0f);
-        pass.setUniform("GlowAlpha", glowOn ? glowAlpha : 0f);
-        pass.setUniform("GlowLimit", glowLimit);
-        // 描边只给正文层，理由同发光：阴影层不描边。
+        // 描边只给正文层，理由同发光。
         boolean strokeOn = body && strokeEnabled;
-        pass.setUniform("StrokeWidth", strokeOn ? strokeWidth : 0f);
-        pass.setUniform("StrokeColor",
+        return new float[]{
+                // Sharpness
+                1f,
+                // Weight
+                body ? weight : 0f,
+                // Softness
+                body ? BODY_SOFTNESS : (softShadow ? SHADOW_SOFTNESS : BODY_SOFTNESS),
+                // GlowRadius
+                glowOn ? glowRadius : 0f,
+                // GlowAlpha
+                glowOn ? glowAlpha : 0f,
+                // GlowLimit
+                glowLimit,
+                // StrokeWidth
+                strokeOn ? strokeWidth : 0f,
+                // StrokeColor（rgb + a）
                 strokeOn ? strokeRed : 0f,
                 strokeOn ? strokeGreen : 0f,
                 strokeOn ? strokeBlue : 0f,
-                strokeOn ? strokeAlpha : 0f);
+                strokeOn ? strokeAlpha : 0f,
+        };
     }
 }

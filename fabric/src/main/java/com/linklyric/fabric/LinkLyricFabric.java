@@ -333,11 +333,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
             }
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
                         spans, originX, shadow);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
@@ -357,11 +357,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
             }
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
                         spans, originX, shadow, glowRadius, glowAlpha);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
@@ -382,12 +382,12 @@ public final class LinkLyricFabric implements ClientModInitializer {
             }
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
                         spans, originX, shadow, glowRadius, glowAlpha,
                         strokeWidth, strokeArgb);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.drawSpans(graphics, client.font, glyph, x, y,
@@ -408,11 +408,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
             }
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.draw(graphics, client.font, glyph, x, y,
                         colors, shadow, glowRadius, glowAlpha, strokeWidth, strokeArgb);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.draw(graphics, client.font, glyph, x, y,
@@ -431,11 +431,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
             }
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.draw(graphics, client.font, glyph, x, y,
                         colors, shadow, glowRadius, glowAlpha);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.draw(graphics, client.font, glyph, x, y,
@@ -466,11 +466,11 @@ public final class LinkLyricFabric implements ClientModInitializer {
             // 它的 translationY 同样让 GPU 采样落在纹素之间。
             if (lift != 0f) {
                 var pose = graphics.pose();
-                pose.pushPose();
-                pose.translate(0f, -lift, 0f);
+                pose.pushMatrix();
+                pose.translate(0f, -lift);
                 GradientPainter.draw(graphics, client.font, glyph, x, y,
                         colors, shadow);
-                pose.popPose();
+                pose.popMatrix();
                 return;
             }
             GradientPainter.draw(graphics, client.font, glyph, x, y,
@@ -491,12 +491,12 @@ public final class LinkLyricFabric implements ClientModInitializer {
                 return;
             }
             var pose = graphics.pose();
-            pose.pushPose();
-            pose.translate(x, y, 0f);
-            pose.scale(scale, scale, 1f);
-            pose.translate(-x, -y, 0f);
+            pose.pushMatrix();
+            pose.translate(x, y);
+            pose.scale(scale, scale);
+            pose.translate(-x, -y);
             graphics.drawString(client.font, text, x, y, color, shadow);
-            pose.popPose();
+            pose.popMatrix();
         }
 
         @Override
@@ -524,34 +524,32 @@ public final class LinkLyricFabric implements ClientModInitializer {
             return new FloatingLyricRenderer.Pose2D() {
                 @Override
                 public void pushPose() {
-                    stack.pushPose();
+                    stack.pushMatrix();
                 }
 
                 @Override
                 public void popPose() {
-                    stack.popPose();
+                    stack.popMatrix();
                 }
 
                 @Override
                 public void translate(float x, float y) {
-                    stack.translate(x, y, 0f);
+                    stack.translate(x, y);
                 }
 
                 @Override
                 public void scale(float x, float y) {
-                    stack.scale(x, y, 1f);
+                    stack.scale(x, y);
                 }
 
                 /**
                  * 顺时针为正。
                  *
-                 * <p>{@code Axis.ZP} 在 1.21.1 是 {@code com.mojang.math.Axis} 的常量
-                 * （1.19.x 那套 {@code Vector3f.XP} 已经没了），它等价于
-                 * {@code new Quaternionf().rotationZ(toRadians(degrees))}。
-                 * {@code rotationZ} 把单位基映射成 {@code (1,0) -> (cos, sin)}，
-                 * 而 GUI 的正交投影把 +Y 指向屏幕下方
-                 * （{@code setOrtho(0, w, h, 0, ...)}），
-                 * 所以正角把「右」转向「下」，即肉眼可见的顺时针。
+                 * <p>1.21.6 的 GUI 变换栈是 {@code Matrix3x2fStack}，
+                 * 旋转以弧度为单位。{@code rotate(a)} 把单位基映射成
+                 * {@code (1,0) -> (cos, sin)}，而 GUI 的正交投影把 +Y
+                 * 指向屏幕下方，所以正角把「右」转向「下」，
+                 * 即肉眼可见的顺时针。
                  *
                  * <p>实测：绕 (200,200) 转 +90°，中心右侧的 (300,200) 落到 (200,300)，
                  * 从 3 点钟到 6 点钟。因此这里<b>直接传正号，不取负</b>；
@@ -559,38 +557,24 @@ public final class LinkLyricFabric implements ClientModInitializer {
                  */
                 @Override
                 public void rotate(float degrees) {
-                    stack.mulPose(Axis.ZP.rotationDegrees(degrees));
+                    stack.rotate((float) Math.toRadians(degrees));
                 }
 
                 /**
                  * 斜切：{@code x' = x + sx * y}、{@code y' = y + sy * x}。
                  *
-                 * <p>原版 {@code PoseStack} 没有 shear，只能手工构造矩阵。
-                 * JOML 的 {@code m??} 字段布局容易记反：{@code m10} 是
-                 * <b>第 0 列第 1 行</b>（列主序，第一个下标记列），实测
-                 * {@code setRowColumn(1, 0, v)} 写的是 {@code m01}、而
-                 * {@code m10(v)} 才能让 (0,1) 基向量产生 x 方向的偏移。
+                 * <p>1.21.6 的变换栈本身就有 {@code shearX}/{@code shearY}，
+                 * 语义与这里一致：{@code shearX(sx)} 让 (0,1) 基向量
+                 * 偏移到 (sx, 1)，即纵向单位长度带来横向 sx 的位移。
                  *
-                 * <p>这里用 16 参数构造器按<b>列主序</b>填，不用字段名，
-                 * 免得后来者再被 {@code m10}/{@code m01} 绕一次。目标矩阵
-                 * <pre>
-                 * | 1   sx  0  0 |
-                 * | sy  1   0  0 |
-                 * | 0   0   1  0 |
-                 * | 0   0   0  1 |
-                 * </pre>
-                 * 列主序即「先写完第 0 列的四个分量，再写第 1 列……」，
-                 * 所以第 0 列是 {@code (1, sy, 0, 0)}，第 1 列是 {@code (sx, 1, 0, 0)}。
-                 * 已用 JOML 实跑验证：{@code sx=0.5} 时 (0,1) 基映射到 (0.5, 1)，
-                 * 中心下方 100 像素的点右移 50 像素，与约定一致。
+                 * <p>顺序有讲究：{@code shearY(y)} 先把行元素混进 y，
+                 * 再由 {@code shearX(x)} 混进 x，两者在同一仿射矩阵里
+                 * 是可交换的线性部分，次序不影响结果。
                  */
                 @Override
                 public void shear(float x, float y) {
-                    stack.mulPose(new Matrix4f(
-                            1f, y, 0f, 0f,
-                            x, 1f, 0f, 0f,
-                            0f, 0f, 1f, 0f,
-                            0f, 0f, 0f, 1f));
+                    stack.shearY(y);
+                    stack.shearX(x);
                 }
             };
         }
