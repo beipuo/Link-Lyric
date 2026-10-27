@@ -248,7 +248,7 @@ public final class GradientGlyphWriter {
      * 甚至是否为强度纹理都写在里面。自己新建一个 RenderType 会让
      * 字形采样到错误的图集，表现为整行变成一片方块。
      */
-    public static net.minecraft.client.renderer.RenderType renderType(
+    public static net.minecraft.client.renderer.rendertype.RenderType renderType(
             BakedGlyph glyph, boolean seeThrough) {
         GlyphRenderTypes types;
         try {

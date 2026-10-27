@@ -137,10 +137,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
 
         section(LangKeys.GROUP_DISPLAY);
 
-        pair(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.LYRICS_ON),
-                        Component.translatable(LangKeys.LYRICS_OFF))
-                        .withInitialValue(controller.isEnabled())
+        pair(CycleButton.booleanBuilder(Component.translatable(LangKeys.LYRICS_ON), Component.translatable(LangKeys.LYRICS_OFF), controller.isEnabled())
                         .create(0, 0, 150, 20,
                                 Component.translatable(LangKeys.MASTER_SWITCH),
                                 (b, v) -> {
@@ -150,10 +147,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
                                         controller.disable();
                                     }
                                 }),
-                CycleButton.booleanBuilder(
-                                Component.translatable(LangKeys.SOURCE_ENABLED),
-                                Component.translatable(LangKeys.SOURCE_DISABLED))
-                        .withInitialValue(controller.isSourceEnabled())
+                CycleButton.booleanBuilder(Component.translatable(LangKeys.SOURCE_ENABLED), Component.translatable(LangKeys.SOURCE_DISABLED), controller.isSourceEnabled())
                         .create(0, 0, 150, 20,
                                 Component.literal("Salt Player"),
                                 (b, v) -> controller.setSourceEnabled(v)));
@@ -226,9 +220,9 @@ final class LyricConfigScreen extends OptionsSubScreen {
 
         // 对齐是枚举，用原版 CycleButton 的原生多值切换。
         single(CycleButton.builder(
-                        (LyricStyleConfig.Align a) -> Component.translatable(a.labelKey))
+                        (LyricStyleConfig.Align a) -> Component.translatable(a.labelKey),
+                        controller.style().align())
                 .withValues(LyricStyleConfig.Align.values())
-                .withInitialValue(controller.style().align())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.OPTION_ALIGN),
                         (b, v) -> apply(s -> s.withAlign(v))));
@@ -250,9 +244,9 @@ final class LyricConfigScreen extends OptionsSubScreen {
                         (s, v) -> s.withFeather(v)),
                 CycleButton.builder(
                                 (LyricStyleConfig.LiftCurve c) ->
-                                        Component.translatable(c.labelKey))
+                                        Component.translatable(c.labelKey),
+                                controller.style().liftCurve())
                         .withValues(LyricStyleConfig.LiftCurve.values())
-                        .withInitialValue(controller.style().liftCurve())
                         .create(0, 0, 150, 20,
                                 Component.translatable(LangKeys.LIFT_CURVE),
                                 (b, v) -> apply(s -> s.withLiftCurve(v))));
@@ -270,9 +264,9 @@ final class LyricConfigScreen extends OptionsSubScreen {
         // （折行决定「有哪几行」），但滚动会被形态否决，超长句直接截断。
         // 这一点写进提示里，避免用户以为切过去之后长句还能滚。
         AbstractWidget layoutButton = CycleButton.builder(
-                        (LayoutMode mode) -> Component.translatable(mode.labelKey))
+                        (LayoutMode mode) -> Component.translatable(mode.labelKey),
+                        controller.style().layout())
                 .withValues(LayoutMode.values())
-                .withInitialValue(controller.style().layout())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.LAYOUT),
                         (b, v) -> apply(s -> s.withLayout(v)));
@@ -291,10 +285,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
         //
         // 默认关闭。开启会改变所有含中日韩字符的歌词的像素位置，
         // 因此这一项必须由用户明确选择，不能替他们决定。
-        AbstractWidget mixedButton = CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.GENERIC_ON),
-                        Component.translatable(LangKeys.GENERIC_OFF))
-                .withInitialValue(controller.style().mixed().enabled())
+        AbstractWidget mixedButton = CycleButton.booleanBuilder(Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF), controller.style().mixed().enabled())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.MIXED_SCRIPT),
                         (b, v) -> apply(s -> s.withMixed(s.mixed().withEnabled(v))));
@@ -325,10 +316,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
         // 所以不联动禁用，避免掉进「关掉了就调不了」的死角。
         section(LangKeys.GROUP_STROKE);
 
-        single(CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.GENERIC_ON),
-                        Component.translatable(LangKeys.GENERIC_OFF))
-                .withInitialValue(controller.style().stroke())
+        single(CycleButton.booleanBuilder(Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF), controller.style().stroke())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.STROKE),
                         (b, v) -> apply(s -> s.withStroke(v))));
@@ -348,19 +336,19 @@ final class LyricConfigScreen extends OptionsSubScreen {
         single(CycleButton.builder(
                         (Integer v) -> Component.translatable(LangKeys.STROKE_COLOR)
                                 .append(Component.literal(": "))
-                                .append(Component.translatable(STROKE_PRESETS[v].nameKey)))
+                                .append(Component.translatable(STROKE_PRESETS[v].nameKey)),
+                        strokePresetIndex())
                 .withValues(java.util.stream.IntStream.range(0, STROKE_PRESETS.length)
                         .boxed().toList())
-                .withInitialValue(strokePresetIndex())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.STROKE_COLOR),
                         (b, v) -> apply(s -> s.withStrokeColor(STROKE_PRESETS[v].argb))));
 
         single(CycleButton.builder(
                         (LyricStyleConfig.InterludeStyle i) ->
-                                Component.translatable(i.label))
+                                Component.translatable(i.label),
+                        controller.style().interlude())
                 .withValues(LyricStyleConfig.InterludeStyle.values())
-                .withInitialValue(controller.style().interlude())
                 .create(0, 0, 310, 20,
                         Component.translatable(LangKeys.OPTION_INTERLUDE),
                         (b, v) -> apply(s -> s.withInterlude(v))));
@@ -411,10 +399,7 @@ final class LyricConfigScreen extends OptionsSubScreen {
     private CycleButton<Boolean> onOff(String labelKey, boolean initial,
                                        BiFunction<LyricStyleConfig, Boolean,
                                                LyricStyleConfig> writer) {
-        return CycleButton.booleanBuilder(
-                        Component.translatable(LangKeys.GENERIC_ON),
-                        Component.translatable(LangKeys.GENERIC_OFF))
-                .withInitialValue(initial)
+        return CycleButton.booleanBuilder(Component.translatable(LangKeys.GENERIC_ON), Component.translatable(LangKeys.GENERIC_OFF), initial)
                 .create(0, 0, 150, 20, Component.translatable(labelKey),
                         (b, v) -> apply(s -> writer.apply(s, v)));
     }

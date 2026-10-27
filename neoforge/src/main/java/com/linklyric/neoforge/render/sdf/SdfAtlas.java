@@ -9,11 +9,12 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.textures.AddressMode;
 import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -43,14 +44,14 @@ public final class SdfAtlas implements AutoCloseable {
     /** 第一页上预留的全不透明块，供下划线等效果使用。 */
     private static final int WHITE_BLOCK = 8;
 
-    private final ResourceLocation namePrefix;
+    private final Identifier namePrefix;
     private final int pageSize;
     private final List<Page> pages = new ArrayList<>();
     private final int[] scratch = new int[2];
 
     private Slot whiteSlot;
 
-    public SdfAtlas(ResourceLocation namePrefix, int pageSize) {
+    public SdfAtlas(Identifier namePrefix, int pageSize) {
         this.namePrefix = namePrefix;
         this.pageSize = pageSize;
     }
@@ -115,7 +116,7 @@ public final class SdfAtlas implements AutoCloseable {
     }
 
     private Page newPage() {
-        ResourceLocation name = namePrefix.withSuffix("/" + pages.size());
+        Identifier name = namePrefix.withSuffix("/" + pages.size());
         Page page = new Page(name, pageSize);
         boolean first = pages.isEmpty();
         pages.add(page);
@@ -152,13 +153,14 @@ public final class SdfAtlas implements AutoCloseable {
 
     /** 一页图集，支撑为 GL_R8 纹理。 */
     public final class Page extends AbstractTexture {
-        private final ResourceLocation name;
+        private final Identifier name;
         private final int size;
         private final SkylinePacker packer;
         private GpuTexture texture;
         private GpuTextureView view;
+        private GpuSampler sampler;
 
-        private Page(ResourceLocation name, int size) {
+        private Page(Identifier name, int size) {
             this.name = name;
             this.size = size;
             this.packer = new SkylinePacker(size, size);
@@ -173,14 +175,18 @@ public final class SdfAtlas implements AutoCloseable {
                     TextureFormat.RED8,
                     size, size, 1, 1);
             this.view = device.createTextureView(this.texture);
+            // 1.21.11 把寻址与过滤从纹理上剥离，改由独立的采样器对象承担：
+            // 纹理本身不再持有采样状态，绑定时要连采样器一起给。
             // 距离场必须线性过滤：场重建靠插值；UV 不越界，钳到边缘即可。
-            this.texture.setAddressMode(AddressMode.CLAMP_TO_EDGE);
-            this.texture.setTextureFilter(FilterMode.LINEAR, false);
+            this.sampler = device.createSampler(
+                    AddressMode.CLAMP_TO_EDGE, AddressMode.CLAMP_TO_EDGE,
+                    FilterMode.LINEAR, FilterMode.LINEAR,
+                    1, java.util.OptionalDouble.empty());
             // 新建纹理内容未定义，清零，避免未使用区域渗进字形。
             upload(0, 0, size, size, new byte[size * size]);
         }
 
-        public ResourceLocation name() {
+        public Identifier name() {
             return name;
         }
 
@@ -192,6 +198,11 @@ public final class SdfAtlas implements AutoCloseable {
         /** 该页的纹理视图，1.21.6 起渲染绑定与 GUI 提交都用它。 */
         public GpuTextureView view() {
             return this.view;
+        }
+
+        /** 该页的采样器，1.21.11 起与纹理视图配对绑定。 */
+        public GpuSampler sampler() {
+            return this.sampler;
         }
 
         private Slot tryAdd(int width, int height, byte[] data) {

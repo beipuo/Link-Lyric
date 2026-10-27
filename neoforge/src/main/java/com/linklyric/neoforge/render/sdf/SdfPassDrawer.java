@@ -66,7 +66,7 @@ final class SdfPassDrawer {
      * @param params   参数块取值，顺序见 {@link SdfRenderType}
      * @return false 表示没有写入任何顶点
      */
-    static boolean draw(RenderPipeline pipeline, GpuTextureView view, Matrix4f pose,
+    static boolean draw(RenderPipeline pipeline, SdfAtlas.Page page, Matrix4f pose,
                         SdfAtlas.Slot slot, float[] box, float x, float y,
                         GlyphSpan[] spans, float originX, int light, float[] params) {
         if (slot == null || box == null || spans == null || spans.length == 0) {
@@ -86,7 +86,7 @@ final class SdfPassDrawer {
             if (mesh == null) {
                 return false;
             }
-            return submit(pipeline, view, mesh, params);
+            return submit(pipeline, page, mesh, params);
         } finally {
             if (mesh != null) {
                 mesh.close();
@@ -96,7 +96,7 @@ final class SdfPassDrawer {
     }
 
     /** 上传顶点、开一个 RenderPass、写参数块、画、关掉。 */
-    private static boolean submit(RenderPipeline pipeline, GpuTextureView view,
+    private static boolean submit(RenderPipeline pipeline, SdfAtlas.Page page,
                                   MeshData mesh, float[] params) {
         RenderSystem.assertOnRenderThread();
         RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
@@ -123,8 +123,10 @@ final class SdfPassDrawer {
             pass.setPipeline(pipeline);
             pass.setVertexBuffer(0, vertices);
             pass.setIndexBuffer(indexBuffer, indices.type());
-            // sampler 名字必须与管线里 withSampler("Sampler0") 一致。
-            pass.bindSampler("Sampler0", view);
+            // 1.21.11 绑定时要连采样器一起给：寻址与过滤已经从纹理
+            // 搬到独立的 GpuSampler 上，光有视图不够。
+            // 名字必须与管线里 withSampler("Sampler0") 一致。
+            pass.bindTexture("Sampler0", page.view(), page.sampler());
             // 1.21.6 把 SCISSOR_STATE 常量换成访问器，且 enableScissor
             // 直接收矩形、不再收 ScissorState。
             ScissorState scissor = RenderSystem.getScissorStateForRenderTypeDraws();

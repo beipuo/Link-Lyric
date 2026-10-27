@@ -6,7 +6,7 @@ import net.minecraft.client.gui.GlyphSource;
 import net.minecraft.client.gui.font.FontSet;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
 import net.minecraft.network.chat.Style;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -18,7 +18,7 @@ import java.lang.reflect.Method;
  *
  * <h2>为什么需要它</h2>
  *
- * <p>{@code Font.getFontSet(ResourceLocation)} 是**包级可见**，
+ * <p>{@code Font.getFontSet(Identifier)} 是**包级可见**，
  * 外部无法直接调用；而 {@code FontSet.getGlyph(int)} 是 public。
  * 差的只是拿到 {@code FontSet} 这一步。
  *
@@ -35,8 +35,8 @@ import java.lang.reflect.Method;
  */
 public final class GlyphLookup {
 
-    private static final ResourceLocation DEFAULT_FONT =
-            ResourceLocation.withDefaultNamespace("default");
+    private static final Identifier DEFAULT_FONT =
+            Identifier.withDefaultNamespace("default");
 
     private static volatile boolean initialised;
 
@@ -66,11 +66,11 @@ public final class GlyphLookup {
                 // 先尝试直接查找（开发环境未做模块封装时可行）。
                 fontSetHandle = MethodHandles.lookup().findVirtual(
                         Font.class, "getFontSet",
-                        MethodType.methodType(FontSet.class, ResourceLocation.class));
+                        MethodType.methodType(FontSet.class, Identifier.class));
             } catch (ReflectiveOperationException inaccessible) {
                 // 包级方法：退到反射 + setAccessible。
                 Method m = Font.class.getDeclaredMethod("getFontSet",
-                        ResourceLocation.class);
+                        Identifier.class);
                 m.setAccessible(true);
                 fontSetHandle = MethodHandles.lookup().unreflect(m);
             }

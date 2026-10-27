@@ -22,7 +22,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
 import org.joml.Matrix4f;
@@ -80,8 +80,8 @@ public final class LinkLyricFabric implements ClientModInitializer {
         ResourceManagerHelper.get(PackType.CLIENT_RESOURCES)
                 .registerReloadListener(new SimpleSynchronousResourceReloadListener() {
                     @Override
-                    public ResourceLocation getFabricId() {
-                        return ResourceLocation.fromNamespaceAndPath(MOD_ID, "sdf_shader");
+                    public Identifier getFabricId() {
+                        return Identifier.fromNamespaceAndPath(MOD_ID, "sdf_shader");
                     }
 
                     @Override

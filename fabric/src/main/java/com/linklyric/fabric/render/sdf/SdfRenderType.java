@@ -6,7 +6,7 @@ import com.mojang.blaze3d.platform.DepthTestFunction;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 import org.joml.Matrix4f;
 
 import java.util.HashMap;
@@ -28,7 +28,7 @@ import java.util.Map;
  * <h2>纹理绑定</h2>
  *
  * <p>图集是运行时上传的 GPU 纹理，磁盘上没有文件，
- * 因此不能按 {@code ResourceLocation} 走资源加载。
+ * 因此不能按 {@code Identifier} 走资源加载。
  * 这里由 {@link SdfPassDrawer} 在 {@code RenderPass} 上直接绑 sampler。
  *
  * <h2>为什么正文与阴影是两个管线</h2>
@@ -222,7 +222,7 @@ public final class SdfRenderType {
         boolean glowOn = glowing();
         boolean strokeOn = strokeEnabled();
         return SdfPassDrawer.draw(
-                pipelineFor(true, glowOn, strokeOn), slot.page().view(), pose,
+                pipelineFor(true, glowOn, strokeOn), slot.page(), pose,
                 slot, box, x, y, spans, originX, light,
                 bodyParams(true, glowOn, strokeOn));
     }
@@ -234,7 +234,7 @@ public final class SdfRenderType {
         // 阴影层不发光也不描边：它本身就是一圈糊掉的暗色轮廓。
         // 再叠发光会变成两团混在一起；再描边会变成两圈套在一起，边界全糊。
         return SdfPassDrawer.draw(
-                pipelineFor(false, false, false), slot.page().view(), pose,
+                pipelineFor(false, false, false), slot.page(), pose,
                 slot, box, x, y, spans, originX, light,
                 bodyParams(false, false, false));
     }
@@ -253,12 +253,12 @@ public final class SdfRenderType {
                 + (glowEnabled ? "_glow" : "")
                 + (strokeEnabled ? "_stroke" : "");
         return PIPELINES.computeIfAbsent(suffix, key -> RenderPipeline.builder()
-                .withLocation(ResourceLocation.fromNamespaceAndPath(
+                .withLocation(Identifier.fromNamespaceAndPath(
                         "linklyric", "pipeline/sdf_text_" + key))
                 // 着色器路径沿用 assets/linklyric/shaders/core/linklyric_sdf_text。
-                .withVertexShader(ResourceLocation.fromNamespaceAndPath(
+                .withVertexShader(Identifier.fromNamespaceAndPath(
                         "linklyric", "core/linklyric_sdf_text"))
-                .withFragmentShader(ResourceLocation.fromNamespaceAndPath(
+                .withFragmentShader(Identifier.fromNamespaceAndPath(
                         "linklyric", "core/linklyric_sdf_text"))
                 .withSampler("Sampler0")
                 .withUniform("SdfParams", UniformType.UNIFORM_BUFFER)

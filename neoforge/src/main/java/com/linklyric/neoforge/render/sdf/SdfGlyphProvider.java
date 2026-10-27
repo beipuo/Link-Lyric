@@ -11,7 +11,7 @@ import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.font.FontSet;
-import net.minecraft.resources.ResourceLocation;
+import net.minecraft.resources.Identifier;
 
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.MethodHandles;
@@ -47,8 +47,8 @@ import java.util.concurrent.ConcurrentHashMap;
  */
 public final class SdfGlyphProvider {
 
-    private static final ResourceLocation DEFAULT_FONT =
-            ResourceLocation.withDefaultNamespace("default");
+    private static final Identifier DEFAULT_FONT =
+            Identifier.withDefaultNamespace("default");
 
     /** 每页边长。一屏文字通常落在一页里，因而合并为一次绘制。 */
     private static final int PAGE_SIZE = 1024;
@@ -160,9 +160,9 @@ public final class SdfGlyphProvider {
             MethodHandle fontSetHandle;
             try {
                 fontSetHandle = MethodHandles.lookup().findVirtual(Font.class, "getFontSet",
-                        MethodType.methodType(FontSet.class, ResourceLocation.class));
+                        MethodType.methodType(FontSet.class, Identifier.class));
             } catch (ReflectiveOperationException inaccessible) {
-                var m = Font.class.getDeclaredMethod("getFontSet", ResourceLocation.class);
+                var m = Font.class.getDeclaredMethod("getFontSet", Identifier.class);
                 m.setAccessible(true);
                 fontSetHandle = MethodHandles.lookup().unreflect(m);
             }
@@ -274,7 +274,7 @@ public final class SdfGlyphProvider {
             return local;
         }
         SdfAtlas created = new SdfAtlas(
-                ResourceLocation.fromNamespaceAndPath("linklyric", "sdf_glyphs"),
+                Identifier.fromNamespaceAndPath("linklyric", "sdf_glyphs"),
                 PAGE_SIZE);
         synchronized (SdfGlyphProvider.class) {
             if (atlas != null) {
