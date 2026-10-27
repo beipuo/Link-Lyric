@@ -181,7 +181,7 @@ final class LyricLocationScreen extends Screen {
     private void close() {
         pressedOnLyric = false;
         if (minecraft != null) {
-            minecraft.setScreen(parent);
+            minecraft.gui.setScreen(parent);
         }
     }
 

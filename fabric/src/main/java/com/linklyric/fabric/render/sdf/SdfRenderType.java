@@ -2,11 +2,12 @@ package com.linklyric.fabric.render.sdf;
 
 import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.PrimitiveTopology;
+import com.mojang.blaze3d.pipeline.BindGroupLayout;
 import com.mojang.blaze3d.pipeline.DepthStencilState;
 import com.mojang.blaze3d.platform.CompareOp;
 import com.mojang.blaze3d.shaders.UniformType;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.resources.Identifier;
 import org.joml.Matrix4f;
 
@@ -261,10 +262,14 @@ public final class SdfRenderType {
                         "linklyric", "core/linklyric_sdf_text"))
                 .withFragmentShader(Identifier.fromNamespaceAndPath(
                         "linklyric", "core/linklyric_sdf_text"))
-                .withSampler("Sampler0")
-                .withUniform("SdfParams", UniformType.UNIFORM_BUFFER)
-                .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
-                        VertexFormat.Mode.QUADS)
+                // 26.2 把采样器与 uniform 从管线搬到 BindGroupLayout：
+                // 管线只引用一份布局，槽位声明集中在里面。
+                .withBindGroupLayout(BindGroupLayout.builder()
+                        .withSampler("Sampler0")
+                        .withUniform("SdfParams", UniformType.UNIFORM_BUFFER)
+                        .build())
+                .withVertexBinding(0, DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP)
+                .withPrimitiveTopology(PrimitiveTopology.QUADS)
                 // 26.x 把深度测试并入 DepthStencilState：文字是覆盖层，
                 // 永远通过、不写深度，等价于原来的 NO_DEPTH_TEST。
                 .withDepthStencilState(new DepthStencilState(CompareOp.ALWAYS_PASS, false))

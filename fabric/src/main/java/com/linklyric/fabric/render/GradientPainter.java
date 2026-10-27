@@ -6,13 +6,16 @@ import com.linklyric.fabric.render.sdf.SdfAtlas;
 import com.linklyric.fabric.render.sdf.SdfGlyphProvider;
 import com.linklyric.fabric.render.sdf.SdfGlyphWriter;
 import com.linklyric.fabric.render.sdf.SdfRenderType;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
+import com.mojang.blaze3d.vertex.VertexFormat;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
-import net.minecraft.client.renderer.MultiBufferSource;
+
+import net.minecraft.client.renderer.StagedVertexBuffer;
 import net.minecraft.client.renderer.rendertype.RenderType;
 import org.joml.Matrix4f;
 
@@ -137,10 +140,13 @@ public final class GradientPainter {
         // Matrix4f.mul(Matrix3x2fc) 正是把它按 z 不变的方式扩成 4x4。
         Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
-        ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
-        MultiBufferSource.BufferSource buffer = openBuffer(backing);
-        try {
-            VertexConsumer consumer = buffer.getBuffer(type);
+        // 26.2 删掉了 MultiBufferSource：没有「按 RenderType 分桶的中间层」了。
+        // 顶点改为写进 StagedVertexBuffer 的一批（Draw），upload 后直接画。
+        try (StagedVertexBuffer staged =
+                     new StagedVertexBuffer(() -> "LinkLyricGradient", BUFFER_BYTES)) {
+            StagedVertexBuffer.Draw draw = staged.appendDraw(
+                    type.format(), PrimitiveTopology.QUADS);
+            VertexConsumer consumer = staged.getVertexBuilder(draw);
             // 阴影先画，主色后画：原版顺序如此。反过来的话主色会被阴影覆盖。
             if (shadow) {
                 GlyphColors shadowColors = new GlyphColors(
@@ -150,11 +156,13 @@ public final class GradientPainter {
             }
             boolean drawn = GradientGlyphWriter.write(
                     consumer, pose, baked, x, y, colors, light);
-            buffer.endBatch();
-            return drawn;
-        } finally {
-            buffer.endBatch();
-            backing.close();
+            if (!drawn) {
+                return false;
+            }
+            staged.upload();
+            staged.endDraw();
+            type.prepare().drawFromBuffer(staged.getExecuteInfo(draw));
+            return true;
         }
     }
 
@@ -250,10 +258,11 @@ public final class GradientPainter {
         Matrix4f pose = new Matrix4f().mul(graphics.pose());
         int light = 0xF000F0;
         // 阴影与主色共用一个缓冲源：同属一个 RenderType，攒在一起一次冲刷。
-        ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
-        MultiBufferSource.BufferSource buffer = openBuffer(backing);
-        try {
-            VertexConsumer consumer = buffer.getBuffer(type);
+        try (StagedVertexBuffer staged =
+                     new StagedVertexBuffer(() -> "LinkLyricGradientSpans", BUFFER_BYTES)) {
+            StagedVertexBuffer.Draw draw = staged.appendDraw(
+                    type.format(), PrimitiveTopology.QUADS);
+            VertexConsumer consumer = staged.getVertexBuilder(draw);
             if (shadow) {
                 GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
                 for (int i = 0; i < spans.length; i++) {
@@ -267,26 +276,17 @@ public final class GradientPainter {
             }
             boolean drawn = GradientGlyphWriter.writeSpans(
                     consumer, pose, baked, x, y, spans, originX, light);
-            buffer.endBatch();
-            return drawn;
-        } finally {
-            buffer.endBatch();
-            backing.close();
+            if (!drawn) {
+                return false;
+            }
+            staged.upload();
+            staged.endDraw();
+            type.prepare().drawFromBuffer(staged.getExecuteInfo(draw));
+            return true;
         }
     }
 
-    /**
-     * 取一个可用的缓冲源。
-     *
-     * <p>1.21.2 把 {@code GuiGraphicsExtractor.bufferSource()} 收回成私有字段，
-     * 不再对外暴露。这里改用公开工厂自行建一个 immediate 缓冲源：
-     * 它按 {@link RenderType} 分桶，写完立即冲刷，正是本类需要的语义。
-     *
-     * <p>缓冲底层是直接内存，用完必须 close，否则每次绘字泄漏一块。
-     */
-    private static MultiBufferSource.BufferSource openBuffer(ByteBufferBuilder backing) {
-        return MultiBufferSource.immediate(backing);
-    }
+    /** 26.2 的批量绘制已内联到两个 draw 方法里，无需独立的冲刷辅助。 */
     /** SDF 路径的按段字形。 */
     private static boolean drawSpansSdf(GuiGraphicsExtractor graphics, SdfAtlas.Slot slot, int cp,
                                         float x, float y, GlyphSpan[] spans,

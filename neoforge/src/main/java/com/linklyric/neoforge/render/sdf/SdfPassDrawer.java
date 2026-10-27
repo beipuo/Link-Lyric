@@ -1,6 +1,7 @@
 package com.linklyric.neoforge.render.sdf;
 
 import com.linklyric.common.style.GlyphSpan;
+import com.mojang.blaze3d.PrimitiveTopology;
 import com.mojang.blaze3d.buffers.GpuBuffer;
 import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.buffers.Std140Builder;
@@ -15,14 +16,13 @@ import com.mojang.blaze3d.textures.GpuTextureView;
 import com.mojang.blaze3d.vertex.BufferBuilder;
 import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.MeshData;
-import com.mojang.blaze3d.vertex.VertexFormat;
 import net.minecraft.client.Minecraft;
 import org.joml.Matrix4f;
 import org.lwjgl.system.MemoryStack;
 
 import java.nio.ByteBuffer;
 import java.util.OptionalDouble;
-import java.util.OptionalInt;
+import java.util.Optional;
 
 /**
  * 自己驱动 {@link RenderPass} 的 SDF 字形绘制器。
@@ -77,7 +77,7 @@ final class SdfPassDrawer {
         MeshData mesh = null;
         try {
             BufferBuilder builder = new BufferBuilder(backing,
-                    VertexFormat.Mode.QUADS, pipeline.getVertexFormat());
+                    PrimitiveTopology.QUADS, pipeline.getVertexFormatBinding(0));
             if (!SdfGlyphWriter.writeSpans(builder, pose, slot, box, x, y,
                     spans, originX, light)) {
                 return false;
@@ -99,14 +99,17 @@ final class SdfPassDrawer {
     private static boolean submit(RenderPipeline pipeline, SdfAtlas.Page page,
                                   MeshData mesh, float[] params) {
         RenderSystem.assertOnRenderThread();
-        RenderTarget target = Minecraft.getInstance().getMainRenderTarget();
+        // 26.2 把主渲染目标从 Minecraft 挪到了 GameRenderer 上。
+        RenderTarget target = Minecraft.getInstance().gameRenderer.mainRenderTarget();
         if (target == null) {
             return false;
         }
-        GpuBuffer vertices = pipeline.getVertexFormat()
-                .uploadImmediateVertexBuffer(mesh.vertexBuffer());
+        // 26.2 移除了 uploadImmediateVertexBuffer：改为自己建一个顶点缓冲，
+        // 顶点数据直接从 MeshData 拷进去。
+        GpuBuffer vertices = RenderSystem.getDevice().createBuffer(
+                () -> "LinkLyricSdfVertices", GpuBuffer.USAGE_VERTEX, mesh.vertexBuffer());
         RenderSystem.AutoStorageIndexBuffer indices =
-                RenderSystem.getSequentialBuffer(VertexFormat.Mode.QUADS);
+                RenderSystem.getSequentialBuffer(PrimitiveTopology.QUADS);
         int indexCount = mesh.drawState().indexCount();
         GpuBuffer indexBuffer = indices.getBuffer(indexCount);
 
@@ -117,11 +120,11 @@ final class SdfPassDrawer {
         try (RenderPass pass = encoder.createRenderPass(
                 () -> "LinkLyricSdf",
                 target.getColorTextureView(),
-                OptionalInt.empty(),
+                Optional.empty(),
                 target.useDepth ? target.getDepthTextureView() : null,
                 OptionalDouble.empty())) {
             pass.setPipeline(pipeline);
-            pass.setVertexBuffer(0, vertices);
+            pass.setVertexBuffer(0, vertices.slice());
             pass.setIndexBuffer(indexBuffer, indices.type());
             // 1.21.11 绑定时要连采样器一起给：寻址与过滤已经从纹理
             // 搬到独立的 GpuSampler 上，光有视图不够。
@@ -137,7 +140,7 @@ final class SdfPassDrawer {
             // 参数块整块上传，名字与管线里 withUniform("SdfParams") 一致。
             pass.setUniform("SdfParams",
                     new GpuBufferSlice(paramsBuffer, 0, paramsBuffer.size()));
-            pass.drawIndexed(0, indexCount, 0, 1);
+            pass.drawIndexed(0, indexCount, 0, 0, 1);
         } finally {
             paramsBuffer.close();
         }

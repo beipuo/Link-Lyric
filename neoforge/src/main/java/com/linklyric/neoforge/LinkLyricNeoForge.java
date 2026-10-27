@@ -86,12 +86,10 @@ public final class LinkLyricNeoForge {
         if (client == null || client.font == null) {
             return;
         }
-        // 待打开的界面必须在 hideGui 判断**之前**处理，理由见 flushPendingScreen。
-        // 按着 F1 时发指令，界面照样要打开——它属于 UI 状态，不是 HUD 内容。
+        // 待打开的界面必须优先处理，理由见 flushPendingScreen。
+        // F1 的隐藏由 Hud 分支统一把关：关掉时本元素不会被调用，
+        // 26.x 也已删掉 Options.hideGui，这里无需（也无法）再判断。
         flushPendingScreen(client);
-        if (client.options != null && client.options.hideGui) {
-            return;
-        }
         renderer.render(new GuiPainter(event.getGuiGraphics(), client));
     }
 
@@ -165,7 +163,7 @@ public final class LinkLyricNeoForge {
         }
         Screen next = pendingScreen;
         pendingScreen = null;
-        client.setScreen(next);
+        client.gui.setScreen(next);
     }
 
     /** 最近一次构造的实例，供静态入口取用。 */

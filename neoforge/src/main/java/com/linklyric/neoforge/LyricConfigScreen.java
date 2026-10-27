@@ -355,13 +355,13 @@ final class LyricConfigScreen extends OptionsSubScreen {
 
         single(new Button.Builder(
                 Component.translatable(LangKeys.FONT_COLOR),
-                b -> minecraft.setScreen(new ColorPickerScreen(this))).build());
+                b -> minecraft.gui.setScreen(new ColorPickerScreen(this))).build());
 
         section(LangKeys.GROUP_ACTION);
 
         single(new Button.Builder(
                 Component.translatable(LangKeys.ADJUST_POSITION),
-                b -> minecraft.setScreen(
+                b -> minecraft.gui.setScreen(
                         new LyricLocationScreen(renderer, controller, this))).build());
 
         single(new Button.Builder(

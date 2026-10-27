@@ -20,6 +20,7 @@
 | `1.21.10` | 1.21.10 | 21 | 保留 |
 | `1.21.11` | 1.21.11 | 21 | 保留（Identifier 改名、采样器独立） |
 | `26.1.2` | 26.1.2 | 25 | 保留（GUI 改 RenderState 提取、HUD 改分层元素） |
+| `26.2` | 26.2 | 25 | 保留（删 MultiBufferSource/BufferSource，TextureFormat→GpuFormat，采样器入 BindGroupLayout，新增 Vulkan 后端） |
 | `26.1.2-skeleton` | 26.1.2 | 25 | 纯骨架，无渲染层 |
 
 1.21.x 全线到 1.21.11 已就位；26.x 从 26.1.2 起步（26.1 / 26.1.1 的 NeoForge 仅有 beta，无稳定版）。

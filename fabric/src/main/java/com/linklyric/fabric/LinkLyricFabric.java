@@ -134,10 +134,9 @@ public final class LinkLyricFabric implements ClientModInitializer {
         // 界面属于 UI 状态而非 HUD 内容，不受 F1 影响。
         flushPendingScreen(client);
 
-        // F1 隐藏界面、或打开了 GUI 时不绘制
-        if (client.options != null && client.options.hideGui) {
-            return;
-        }
+        // F1 的隐藏由 Gui.extractRenderState 的 hud 开关统一把关：
+        // 关掉时整个 Hud 分支不执行，本元素根本不会被调用。
+        // 26.2 也删掉了 Options.hideGui 这个字段，这里无需再判断。
 
         if (renderer == null) {
             return;
@@ -222,7 +221,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
         }
         Screen next = pendingScreen;
         pendingScreen = null;
-        client.setScreen(next);
+        client.gui.setScreen(next);
     }
 
     /** {@link GuiGraphicsExtractor} 到 {@link FloatingLyricRenderer.Painter} 的薄适配。 */

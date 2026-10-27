@@ -2,7 +2,6 @@ package com.linklyric.neoforge.render.sdf;
 
 import com.linklyric.common.font.RawGlyph;
 import com.linklyric.common.font.SkylinePacker;
-import com.mojang.blaze3d.platform.NativeImage;
 import com.mojang.blaze3d.systems.CommandEncoder;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
@@ -11,11 +10,13 @@ import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTexture;
 import com.mojang.blaze3d.textures.GpuSampler;
 import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.textures.TextureFormat;
+import com.mojang.blaze3d.GpuFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.resources.Identifier;
 
+import org.lwjgl.BufferUtils;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -172,7 +173,7 @@ public final class SdfAtlas implements AutoCloseable {
             this.texture = device.createTexture(
                     () -> "LinkLyricSdfAtlas/" + name,
                     GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST,
-                    TextureFormat.RED8,
+                    GpuFormat.R8_UNORM,
                     size, size, 1, 1);
             this.view = device.createTextureView(this.texture);
             // 1.21.11 把寻址与过滤从纹理上剥离，改由独立的采样器对象承担：
@@ -226,20 +227,19 @@ public final class SdfAtlas implements AutoCloseable {
          * 否则会污染原版字体的纹理上传。
          */
         private void upload(int x, int y, int width, int height, byte[] pixels) {
-            NativeImage scratch = new NativeImage(NativeImage.Format.RGBA, width, height, false);
-            try {
-                for (int dy = 0; dy < height; dy++) {
-                    for (int dx = 0; dx < width; dx++) {
-                        int v = pixels[dy * width + dx] & 0xFF;
-                        scratch.setPixelABGR(dx, dy, (v << 24) | (v << 16) | (v << 8) | v);
-                    }
+            // 26.2 的 writeToTexture 会校验「纹理组件数 == 图像组件数」：
+            // 图集是单通道 R8_UNORM，RGBA 的 NativeImage 会被直接拒绝。
+            // 改为把场值摊成逐像素字节，走 ByteBuffer 重载。
+            ByteBuffer scratch = BufferUtils.createByteBuffer(width * height);
+            for (int dy = 0; dy < height; dy++) {
+                for (int dx = 0; dx < width; dx++) {
+                    scratch.put(pixels[dy * width + dx]);
                 }
-                CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-                // 签名：纹理, 图, mip, 源x, 源y, 目标x, 目标y, 宽, 高, 目标mip
-                encoder.writeToTexture(this.texture, scratch, 0, 0, 0, x, y, width, height, 0);
-            } finally {
-                scratch.close();
             }
+            scratch.flip();
+            CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+            // 签名：纹理, 数据, mip, 层, 目标x, 目标y, 目标宽, 目标高
+            encoder.writeToTexture(this.texture, scratch, 0, 0, x, y, width, height);
         }
 
         // 1.21.4 移除了 AbstractTexture.load(ResourceManager)，
