@@ -5,388 +5,255 @@ import com.linklyric.core.capability.CapabilitySet;
 import com.linklyric.core.lyric.LyricLine;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.lyric.LyricWord;
+import com.linklyric.core.protocol.Protocol;
 import com.linklyric.core.sync.PlayerSnapshot;
 import com.linklyric.core.sync.TrackIdentity;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
 
-/**
- * 解析 Link MC 插件输出的快照 JSON。
- *
- * <p>不引入 JSON 库：结构固定且扁平，手写解析可以避免把 gson 这类依赖
- * 打进模组包（Minecraft 运行时不保证提供）。解析器只做「取字段」，
- * 遇到任何异常一律降级为空快照，绝不抛给调用方。
- *
- * <p>字段契约见 {@code Salt Music/Link MC} 的 {@code BridgeServer.renderJson()}。
+/** Dependency-free v2 reader. Direct callers also accept legacy envelopes with both v and type absent.
+ * HTTP requires both fields. Unknown fields and capability names are ignored, not wrong field types.
  */
 public final class SnapshotParser {
+    private static final int MAX_DEPTH = 64;
+    private static final Pattern NUMBER = Pattern.compile("-?(0|[1-9][0-9]*)([.][0-9]+)?([eE][+-]?[0-9]+)?");
+    private SnapshotParser() { }
 
-    private SnapshotParser() {
+    record Parsed(PlayerSnapshot snapshot, boolean omitted, int signature, LyricTimeline timeline) { }
+
+    static Parsed parseResponse(String json, String sourceId, long now, int previousSignature,
+                                boolean cached) {
+        return parse(json, sourceId, now, previousSignature, cached, true);
     }
 
-    /**
-     * 解析完整快照。失败时返回 {@code hasTrack() == false} 的空快照。
-     *
-     * @param json        原始响应体，可为 null
-     * @param sourceId    数据源标识（由调用方给出，不从 JSON 读，避免自我欺骗）
-     * @param receivedAtNanos 本地接收时刻，用于诊断时钟偏移
-     */
-    public static PlayerSnapshot parseSnapshot(String json, String sourceId, long receivedAtNanos) {
-        if (json == null || json.isEmpty()) {
-            return emptySnapshot(sourceId, receivedAtNanos);
+    private static Parsed parse(String json, String sourceId, long now, int previousSignature,
+                                boolean cached, boolean strictEnvelope) {
+        Map<String, Value> root = root(json);
+        if (strictEnvelope || root.containsKey("v") || root.containsKey("type")) {
+            if (require(root, "v").integer() != 2
+                    || !"snapshot".equals(require(root, "type").string()))
+                throw new IllegalArgumentException("unsupported envelope");
         }
-        try {
-            String trackJson = objectAt(json, "track");
-            TrackIdentity track = trackJson == null
-                    ? TrackIdentity.of("", "", 0L)
-                    : new TrackIdentity(
-                            stringAt(trackJson, "title"),
-                            stringAt(trackJson, "artist"),
-                            stringAt(trackJson, "album"),
-                            longAt(trackJson, "durationMs"));
+        Map<String, Value> track = require(root, "track").object();
+        TrackIdentity identity = new TrackIdentity(require(track, "title").string(),
+                require(track, "artist").string(), optionalString(track, "album"),
+                require(track, "durationMs").integer());
+        List<Capability> names = new ArrayList<>();
+        if (root.containsKey("capabilities")) for (Value value : root.get("capabilities").array()) {
+            String name = value.string();
+            try { names.add(Capability.valueOf(name)); }
+            catch (IllegalArgumentException ignored) { }
+        }
+        CapabilitySet capabilities = names.isEmpty() ? CapabilitySet.empty()
+                : CapabilitySet.of(names.toArray(new Capability[0]));
+        PlayerSnapshot snapshot = new PlayerSnapshot(sourceId, identity,
+                require(root, "positionMs").integer(), require(root, "playing").bool(),
+                require(root, "seq").integer(), now, capabilities);
+        boolean omitted = root.containsKey("lyricOmitted") && root.get("lyricOmitted").bool();
+        Value lyric = root.get("lyric");
+        if (omitted && lyric != null) throw new IllegalArgumentException("omitted lyric present");
+        int signature = lyric == null ? 0 : lyric.signature();
+        boolean build = !omitted && (!cached || signature != previousSignature);
+        LyricTimeline timeline = readLyric(lyric, build);
+        return new Parsed(snapshot, omitted, signature, timeline);
+    }
 
-            // 歌词不走这里：它体积远大于快照且只在换曲时变化，
-            // 由 parseLyric 单独取一次，避免每 200ms 复制一遍整份时间轴。
-            CapabilitySet capabilities = parseCapabilities(arrayAt(json, "capabilities"));
-
-            return new PlayerSnapshot(
-                    sourceId,
-                    track,
-                    longAt(json, "positionMs"),
-                    boolAt(json, "playing"),
-                    longAt(json, "seq"),
-                    receivedAtNanos,
-                    capabilities);
-        } catch (RuntimeException e) {
-            return emptySnapshot(sourceId, receivedAtNanos);
+    public static PlayerSnapshot parseSnapshot(String json, String sourceId, long now) {
+        try { return parse(json, sourceId, now, 0, true, false).snapshot(); }
+        catch (RuntimeException e) {
+            return new PlayerSnapshot(sourceId, TrackIdentity.of("", "", 0L), 0L, false, 0L,
+                    now, CapabilitySet.empty());
         }
     }
 
-    /**
-     * 解析歌词时间轴。歌词与快照分两次读取：时间轴体积远大于快照，且只在换曲时变化。
-     *
-     * <p>返回空时间轴表示「当前无歌词」，调用方不应据此清空已显示的内容——
-     * 是否清空由换曲逻辑决定。
-     */
+    static boolean validSnapshot(String json) {
+        try { parseResponse(json, "", 0, 0, true); return true; }
+        catch (RuntimeException e) { return false; }
+    }
+
     public static LyricTimeline parseLyric(String json) {
-        if (json == null || json.isEmpty()) {
-            return LyricTimeline.empty();
+        try { return readLyric(root(json).get("lyric"), true); }
+        catch (RuntimeException e) { return LyricTimeline.empty(); }
+    }
+
+    private static LyricTimeline readLyric(Value value, boolean build) {
+        if (value == null) return build ? LyricTimeline.empty() : null;
+        Map<String, Value> lyric = value.object();
+        if (lyric.containsKey("wordLevel")) lyric.get("wordLevel").bool();
+        List<LyricLine> lines = build ? new ArrayList<>() : null;
+        for (Value lineValue : require(lyric, "lines").array()) {
+            Map<String, Value> line = lineValue.object();
+            String text = require(line, "text").string();
+            String translation = optionalString(line, "translation");
+            String speaker = optionalString(line, "speaker");
+            long start = require(line, "startMs").integer();
+            long end = require(line, "endMs").integer();
+            List<LyricWord> words = build ? new ArrayList<>() : null;
+            if (line.containsKey("words")) for (Value wordValue : line.get("words").array()) {
+                Map<String, Value> word = wordValue.object();
+                String wordText = require(word, "text").string();
+                long wordStart = require(word, "startMs").integer();
+                long wordEnd = require(word, "endMs").integer();
+                if (build && !wordText.isEmpty()) words.add(new LyricWord(wordText, wordStart, wordEnd));
+            }
+            if (build && !text.isEmpty()) lines.add(new LyricLine(text, translation, start, end, words, speaker));
         }
+        return !build ? null : lines.isEmpty() ? LyricTimeline.empty() : new LyricTimeline(lines);
+    }
+
+    static boolean lyricOmitted(String json) {
         try {
-            String lyricJson = objectAt(json, "lyric");
-            if (lyricJson == null) {
-                return LyricTimeline.empty();
-            }
-            String linesJson = arrayAt(lyricJson, "lines");
-            if (linesJson == null) {
-                return LyricTimeline.empty();
-            }
-            List<LyricLine> lines = new ArrayList<>();
-            for (String lineJson : splitArray(linesJson)) {
-                if (lineJson == null || lineJson.isEmpty()) {
-                    continue;
-                }
-                String text = stringAt(lineJson, "text");
-                if (text.isEmpty()) {
-                    continue;
-                }
-                List<LyricWord> words = new ArrayList<>();
-                String wordsJson = arrayAt(lineJson, "words");
-                if (wordsJson != null) {
-                    for (String wordJson : splitArray(wordsJson)) {
-                        if (wordJson == null || wordJson.isEmpty()) {
-                            continue;
-                        }
-                        String wordText = stringAt(wordJson, "text");
-                        if (wordText.isEmpty()) {
-                            continue;
-                        }
-                        words.add(new LyricWord(
-                                wordText,
-                                longAt(wordJson, "startMs"),
-                                longAt(wordJson, "endMs")));
-                    }
-                }
-                lines.add(new LyricLine(
-                        text,
-                        stringAt(lineJson, "translation"),
-                        longAt(lineJson, "startMs"),
-                        longAt(lineJson, "endMs"),
-                        words,
-                        stringAt(lineJson, "speaker")));
-            }
-            return lines.isEmpty() ? LyricTimeline.empty() : new LyricTimeline(lines);
-        } catch (RuntimeException e) {
-            return LyricTimeline.empty();
-        }
+            Value value = root(json).get("lyricOmitted");
+            return value != null && value.bool();
+        } catch (RuntimeException e) { return false; }
     }
 
-    private static PlayerSnapshot emptySnapshot(String sourceId, long receivedAtNanos) {
-        return new PlayerSnapshot(
-                sourceId, TrackIdentity.of("", "", 0L), 0L, false, 0L, receivedAtNanos, CapabilitySet.empty());
-    }
-
-    private static CapabilitySet parseCapabilities(String arrayJson) {
-        if (arrayJson == null || arrayJson.isEmpty()) {
-            return CapabilitySet.empty();
-        }
-        List<Capability> found = new ArrayList<>();
-        for (String raw : splitArray(arrayJson)) {
-            String name = stripQuotes(raw);
-            if (name.isEmpty()) {
-                continue;
-            }
-            try {
-                found.add(Capability.valueOf(name));
-            } catch (IllegalArgumentException ignored) {
-                // 数据源声明了本端不认识的能力：忽略而非失败，便于双向升级
-            }
-        }
-        return found.isEmpty()
-                ? CapabilitySet.empty()
-                : CapabilitySet.of(found.toArray(new Capability[0]));
-    }
-
-    // ---------------- 极简 JSON 取值 ----------------
-
-    /** 取出指定键的对象或数组字面量（含外层括号）。找不到返回 null。 */
-    private static String objectAt(String json, String key) {
-        int start = indexOfValue(json, key);
-        if (start < 0) {
-            return null;
-        }
-        char open = json.charAt(start);
-        if (open != '{' && open != '[') {
-            return null;
-        }
-        return sliceBalanced(json, start);
-    }
-
-    /** 取出数组字面量。 */
-    private static String arrayAt(String json, String key) {
-        int start = indexOfValue(json, key);
-        if (start < 0 || json.charAt(start) != '[') {
-            return null;
-        }
-        return sliceBalanced(json, start);
-    }
-
-    /** 取出字符串值，未找到时返回空串。 */
-    private static String stringAt(String json, String key) {
-        int start = indexOfValue(json, key);
-        if (start < 0 || json.charAt(start) != '"') {
-            return "";
-        }
-        return readString(json, start);
-    }
-
-    private static long longAt(String json, String key) {
-        int start = indexOfValue(json, key);
-        if (start < 0) {
-            return 0L;
-        }
-        int end = start;
-        while (end < json.length()) {
-            char c = json.charAt(end);
-            if (c == '-' || c == '+' || c == '.' || (c >= '0' && c <= '9')) {
-                end++;
-            } else {
-                break;
-            }
-        }
-        if (end == start) {
-            return 0L;
-        }
+    static int lyricSignature(String json) {
         try {
-            return (long) Double.parseDouble(json.substring(start, end));
-        } catch (NumberFormatException e) {
-            return 0L;
+            Value value = root(json).get("lyric");
+            if (value == null) return 0;
+            value.object();
+            return value.signature();
+        } catch (RuntimeException e) { return 0; }
+    }
+
+    private static String optionalString(Map<String, Value> map, String key) {
+        return map.containsKey(key) ? map.get(key).string() : "";
+    }
+    private static Value require(Map<String, Value> map, String key) {
+        Value value = map.get(key);
+        if (value == null) throw new IllegalArgumentException("missing " + key);
+        return value;
+    }
+    private static Map<String, Value> root(String json) {
+        if (json == null || json.length() > Protocol.MAX_PAYLOAD_CHARS) throw new IllegalArgumentException("payload");
+        Cursor cursor = new Cursor(json);
+        Map<String, Value> result = cursor.value(0).object();
+        cursor.ws();
+        if (cursor.pos != json.length()) throw new IllegalArgumentException("trailing data");
+        return result;
+    }
+
+    private record Numeric(String token) { }
+    private record Value(Object data, String source, int start, int end) {
+        @SuppressWarnings("unchecked")
+        Map<String, Value> object() {
+            if (!(data instanceof Map)) throw new IllegalArgumentException("object");
+            return (Map<String, Value>) data;
         }
+        @SuppressWarnings("unchecked")
+        List<Value> array() {
+            if (!(data instanceof List)) throw new IllegalArgumentException("array");
+            return (List<Value>) data;
+        }
+        String string() {
+            if (!(data instanceof String text)) throw new IllegalArgumentException("string");
+            return text;
+        }
+        long integer() {
+            if (!(data instanceof Numeric number)) throw new IllegalArgumentException("integer");
+            return Long.parseLong(number.token());
+        }
+        boolean bool() {
+            if (!(data instanceof Boolean flag)) throw new IllegalArgumentException("boolean");
+            return flag;
+        }
+        int signature() { return BridgePlaybackSource.hashRange(source, start, end); }
     }
 
-    private static boolean boolAt(String json, String key) {
-        int start = indexOfValue(json, key);
-        return start >= 0 && json.startsWith("true", start);
-    }
-
-    /**
-     * 定位某个键对应的值起始位置。
-     *
-     * <p>直接搜 {@code "key"} 会在值里出现同名文本时误命中，
-     * 因此要求冒号紧随其后，且键必须被引号完整包裹。
-     */
-    private static int indexOfValue(String json, String key) {
-        String needle = '"' + key + '"';
-        int from = 0;
-        while (true) {
-            int idx = json.indexOf(needle, from);
-            if (idx < 0) {
-                return -1;
-            }
-            int cursor = idx + needle.length();
-            while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
-                cursor++;
-            }
-            if (cursor < json.length() && json.charAt(cursor) == ':') {
-                cursor++;
-                while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
-                    cursor++;
+    private static final class Cursor {
+        private final String source;
+        private int pos;
+        Cursor(String source) { this.source = source; }
+        void ws() { while (pos < source.length() && " \r\n\t".indexOf(source.charAt(pos)) >= 0) pos++; }
+        boolean take(char ch) { ws(); if (pos < source.length() && source.charAt(pos) == ch) { pos++; return true; } return false; }
+        void expect(char ch) { if (!take(ch)) throw new IllegalArgumentException("expected " + ch); }
+        Value value(int depth) {
+            if (depth >= MAX_DEPTH) throw new IllegalArgumentException("nesting limit");
+            ws();
+            int start = pos;
+            if (pos == source.length()) throw new IllegalArgumentException("missing value");
+            Object data;
+            char ch = source.charAt(pos);
+            if (ch == '{') {
+                pos++;
+                Map<String, Value> fields = new LinkedHashMap<>();
+                if (!take('}')) {
+                    do {
+                        String key = string();
+                        expect(':');
+                        if (fields.putIfAbsent(key, value(depth + 1)) != null)
+                            throw new IllegalArgumentException("duplicate field");
+                        if (take('}')) break;
+                        expect(',');
+                    } while (true);
                 }
-                return cursor < json.length() ? cursor : -1;
-            }
-            from = idx + needle.length();
-        }
-    }
-
-    /** 从 open 位置起截取配平的括号片段，正确处理字符串内的括号与转义。 */
-    private static String sliceBalanced(String json, int open) {
-        char openChar = json.charAt(open);
-        char closeChar = openChar == '{' ? '}' : ']';
-        int depth = 0;
-        boolean inString = false;
-        boolean escaped = false;
-        for (int i = open; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (inString) {
-                if (escaped) {
-                    escaped = false;
-                } else if (c == '\\') {
-                    escaped = true;
-                } else if (c == '"') {
-                    inString = false;
+                data = fields;
+            } else if (ch == '[') {
+                pos++;
+                List<Value> values = new ArrayList<>();
+                if (!take(']')) {
+                    do {
+                        values.add(value(depth + 1));
+                        if (take(']')) break;
+                        expect(',');
+                    } while (true);
                 }
-                continue;
-            }
-            if (c == '"') {
-                inString = true;
-            } else if (c == openChar) {
-                depth++;
-            } else if (c == closeChar) {
-                depth--;
-                if (depth == 0) {
-                    return json.substring(open, i + 1);
-                }
-            }
-        }
-        return null;
-    }
-
-    /** 把数组字面量拆成元素文本（对象/字符串/数字原样保留）。 */
-    private static List<String> splitArray(String arrayJson) {
-        List<String> out = new ArrayList<>();
-        if (arrayJson.length() < 2) {
-            return out;
-        }
-        int i = 1;
-        int end = arrayJson.length() - 1;
-        while (i < end) {
-            // 先吃掉分隔符与空白：JSON 常见换行缩进，不跳过会被当成元素起点
-            char c = arrayJson.charAt(i);
-            if (c == ',' || c == '\n' || c == '\r' || c == '\t' || c == ' ') {
-                i++;
-                continue;
-            }
-            if (c == '{' || c == '[') {
-                // 必须在完整串上切片：截断尾部会丢失闭合括号，导致配平失败
-                String slice = sliceBalanced(arrayJson, i);
-                if (slice == null) {
-                    break;
-                }
-                out.add(slice);
-                i += slice.length();
-            } else if (c == '"') {
-                int close = stringEnd(arrayJson, i);
-                if (close < 0) {
-                    break;
-                }
-                out.add(arrayJson.substring(i, close + 1));
-                i = close + 1;
-            } else {
-                int start = i;
-                while (i < end && arrayJson.charAt(i) != ',') {
-                    i++;
-                }
-                String raw = arrayJson.substring(start, i).trim();
-                if (!raw.isEmpty()) {
-                    out.add(raw);
-                }
-            }
-        }
-        return out;
-    }
-
-    private static int stringEnd(String json, int quoteStart) {
-        boolean escaped = false;
-        for (int i = quoteStart + 1; i < json.length(); i++) {
-            char c = json.charAt(i);
-            if (escaped) {
-                escaped = false;
-            } else if (c == '\\') {
-                escaped = true;
-            } else if (c == '"') {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    /** 读出字符串值并反转义。 */
-    private static String readString(String json, int quoteStart) {
-        int end = stringEnd(json, quoteStart);
-        if (end < 0) {
-            return "";
-        }
-        return unescape(json.substring(quoteStart + 1, end));
-    }
-
-    private static String stripQuotes(String raw) {
-        if (raw == null) {
-            return "";
-        }
-        String trimmed = raw.trim();
-        if (trimmed.length() >= 2 && trimmed.charAt(0) == '"' && trimmed.charAt(trimmed.length() - 1) == '"') {
-            return unescape(trimmed.substring(1, trimmed.length() - 1));
-        }
-        return trimmed;
-    }
-
-    private static String unescape(String raw) {
-        if (raw.indexOf('\\') < 0) {
-            return raw;
-        }
-        StringBuilder sb = new StringBuilder(raw.length());
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (c != '\\' || i + 1 >= raw.length()) {
-                sb.append(c);
-                continue;
-            }
-            char next = raw.charAt(++i);
-            switch (next) {
-                case '"' -> sb.append('"');
-                case '\\' -> sb.append('\\');
-                case '/' -> sb.append('/');
-                case 'b' -> sb.append('\b');
-                case 'f' -> sb.append('\f');
-                case 'n' -> sb.append('\n');
-                case 'r' -> sb.append('\r');
-                case 't' -> sb.append('\t');
-                case 'u' -> {
-                    if (i + 4 < raw.length()) {
-                        try {
-                            sb.append((char) Integer.parseInt(raw.substring(i + 1, i + 5), 16));
-                            i += 4;
-                        } catch (NumberFormatException e) {
-                            sb.append(next);
-                        }
-                    } else {
-                        sb.append(next);
+                data = values;
+            } else if (ch == '"') data = string();
+            else {
+                while (pos < source.length() && ",]} \r\n\t".indexOf(source.charAt(pos)) < 0) pos++;
+                String token = source.substring(start, pos);
+                data = switch (token) {
+                    case "true" -> true;
+                    case "false" -> false;
+                    case "null" -> null;
+                    default -> {
+                        if (!NUMBER.matcher(token).matches()) throw new IllegalArgumentException("number");
+                        yield new Numeric(token);
                     }
-                }
-                default -> sb.append(next);
+                };
             }
+            return new Value(data, source, start, pos);
         }
-        return sb.toString();
+        String string() {
+            expect('"');
+            StringBuilder out = new StringBuilder();
+            while (pos < source.length()) {
+                char ch = source.charAt(pos++);
+                if (ch == '"') return out.toString();
+                if (ch < 0x20) throw new IllegalArgumentException("control");
+                if (ch != '\\') { out.append(ch); continue; }
+                if (pos == source.length()) throw new IllegalArgumentException("escape");
+                char escaped = source.charAt(pos++);
+                switch (escaped) {
+                    case '"', '\\', '/' -> out.append(escaped);
+                    case 'b' -> out.append('\b');
+                    case 'f' -> out.append('\f');
+                    case 'n' -> out.append('\n');
+                    case 'r' -> out.append('\r');
+                    case 't' -> out.append('\t');
+                    case 'u' -> {
+                        if (pos + 4 > source.length()) throw new IllegalArgumentException("unicode");
+                        int code = 0;
+                        for (int i = 0; i < 4; i++) {
+                            char digit = source.charAt(pos++);
+                            int hex = digit >= '0' && digit <= '9' ? digit - '0'
+                                    : digit >= 'a' && digit <= 'f' ? digit - 'a' + 10
+                                    : digit >= 'A' && digit <= 'F' ? digit - 'A' + 10 : -1;
+                            if (hex < 0) throw new IllegalArgumentException("unicode");
+                            code = (code << 4) | hex;
+                        }
+                        out.append((char) code);
+                    }
+                    default -> throw new IllegalArgumentException("escape");
+                }
+            }
+            throw new IllegalArgumentException("unterminated string");
+        }
     }
 }

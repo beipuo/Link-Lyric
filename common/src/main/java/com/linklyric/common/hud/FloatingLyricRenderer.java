@@ -161,6 +161,13 @@ public final class FloatingLyricRenderer {
 
     /** 逐字动画特效链；默认浮动上浮 + 强调辉光。 */
     private final LyricEffectEngine effects = LyricEffectEngine.defaults();
+    private LyricPainter frameTextPainter;
+    private String metricsText;
+    private int metricsWidth;
+    private int metricsMaxWidth;
+    private int metricsLineHeight;
+    private int[] metricsCharWidths;
+    private java.util.List<LyricWrap.Segment> metricsSegments;
 
     /** 用户拖动产生的水平偏移（像素），以屏幕中线为原点，向右为正。 */
     private int offsetX;
@@ -428,18 +435,40 @@ public final class FloatingLyricRenderer {
      * @return 按顺序排列的段；不折行时为 {@code null}
      */
     private java.util.List<LyricWrap.Segment> primarySegments(
-            Painter painter, String fullText, int maxWidth) {
+            Painter painter, String fullText, int fullWidth, int maxWidth) {
         if (!style.wrap()) {
-            // 不折行：直接返回 null，连一次量宽都不做。
-            // 关闭折行的代码路径必须与加这个开关之前完全一致，
-            // 多量一次宽虽然不改变像素，却会让「零变化」多一个不可验证的前提。
             return null;
         }
-        // IntUnaryOperator 传 int，而 Painter 收 char：这里显式收窄。
-        // 折行按 UTF-16 码元切分，与逐字绘制用的是同一粒度，
-        // 因此代理对会被当成两个码元——与 {@code clip} 及 {@code charStarts}
-        // 的现有行为一致，不额外引入码点语义。
-        return LyricWrap.wrap(fullText, maxWidth, cp -> painter.charWidth((char) cp));
+        int lineHeight = painter.lineHeight();
+        boolean stable = fullText.equals(metricsText)
+                && metricsWidth == fullWidth && metricsMaxWidth == maxWidth
+                && metricsLineHeight == lineHeight;
+        if (stable) {
+            for (int i = 0; i < fullText.length(); i++) {
+                if (metricsCharWidths[i] != painter.charWidth(fullText.charAt(i))) {
+                    stable = false;
+                    break;
+                }
+            }
+        }
+        int ellipsisWidth = painter.charWidth('…');
+        if (stable && metricsCharWidths[fullText.length()] == ellipsisWidth) {
+            return metricsSegments;
+        }
+        int[] widths = new int[fullText.length() + 1];
+        for (int i = 0; i < fullText.length(); i++) {
+            widths[i] = painter.charWidth(fullText.charAt(i));
+        }
+        widths[fullText.length()] = ellipsisWidth;
+        java.util.List<LyricWrap.Segment> segments = LyricWrap.wrap(
+                fullText, maxWidth, cp -> painter.charWidth((char) cp));
+        metricsCharWidths = widths;
+        metricsText = fullText;
+        metricsWidth = fullWidth;
+        metricsMaxWidth = maxWidth;
+        metricsLineHeight = lineHeight;
+        metricsSegments = segments;
+        return segments;
     }
 
     /**
@@ -486,9 +515,12 @@ public final class FloatingLyricRenderer {
         // 描边关闭时传 0 宽度：让绘制层走无描边分支，
         // 而不是传一个「颜色透明但宽度非零」的组合——那会让字形
         // 还在按描边几何算，只是画不出来，白算一遍。
-        float stroke = style.stroke() ? style.strokePx() : 0f;
-        return new LyricPainter(painter, style.weight(), style.shadow(), effects,
-                stroke, style.strokeArgb(), style.feather(), style.mixed());
+        if (frameTextPainter == null) {
+            float stroke = style.stroke() ? style.strokePx() : 0f;
+            frameTextPainter = new LyricPainter(painter, style.weight(), style.shadow(), effects,
+                    stroke, style.strokeArgb(), style.feather(), style.mixed());
+        }
+        return frameTextPainter;
     }
 
     /** 两个矩形的交集；无重叠时返回空区域。 */
@@ -706,6 +738,7 @@ public final class FloatingLyricRenderer {
         // 逐分支清零容易漏：只要有一个 return 忘了清，包围盒就会残留上一帧的区域，
         // 悬停命中一块已经不存在的歌词。开头统一清空可以杜绝这类遗漏。
         bounds = Bounds.EMPTY;
+        frameTextPainter = null;
 
         if (painter == null) {
             return false;
@@ -810,7 +843,7 @@ public final class FloatingLyricRenderer {
 
         // 折行：开启时把整句切成若干段，段数决定主行占几个槽位。
         // 关闭时为 null，后面的代码走的就是原路径。
-        java.util.List<LyricWrap.Segment> segments = primarySegments(painter, fullText, maxWidth);
+        java.util.List<LyricWrap.Segment> segments = primarySegments(painter, fullText, fullWidth, maxWidth);
 
         // 折行与滚动互斥：折行已经把整句在纵向上铺开，再横推没有收益，
         // 且段内横推会把已唱前沿推出段外。理由见 primarySegments 的注释。

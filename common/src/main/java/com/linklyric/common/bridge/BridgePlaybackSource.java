@@ -69,8 +69,6 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
      * 用来省流量的字符串，后者是本端算的、用来决定要不要重解析的整数。
      */
     private volatile String lyricEtag;
-    private volatile boolean started;
-    private volatile boolean stopRequested;
     private Thread worker;
 
     public BridgePlaybackSource(String host, int port) {
@@ -144,38 +142,35 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     }
 
     /** 启动后台轮询。重复调用无副作用。 */
-    public void start() {
-        if (started) {
-            return;
-        }
-        started = true;
-        stopRequested = false;
+    public synchronized void start() {
+        if (worker != null) return;
         Thread thread = new Thread(this::loop, "link-lyric-bridge");
         thread.setDaemon(true);
         worker = thread;
         thread.start();
     }
 
-    public void stop() {
-        stopRequested = true;
+    public synchronized void stop() {
         Thread thread = worker;
-        if (thread != null) {
-            thread.interrupt();
-        }
         worker = null;
-        started = false;
+        if (thread != null) thread.interrupt();
         alive = false;
         latest.set(null);
         latestLyric.set(LyricTimeline.empty());
+        capabilities.set(CapabilitySet.empty());
+        lyricSignature = 0;
+        lyricEtag = null;
+        consecutiveFailures = 0;
+    }
+
+    private synchronized boolean currentWorker() {
+        return worker == Thread.currentThread();
     }
 
     private void loop() {
-        while (!stopRequested) {
-            try {
-                pollOnce();
-            } catch (Throwable t) {
-                // 任何异常都不得终止轮询线程，也不得冒到游戏主线程
-            }
+        while (currentWorker()) {
+            pollOnce();
+            if (!currentWorker()) return;
             try {
                 Thread.sleep(POLL_INTERVAL_MS);
             } catch (InterruptedException e) {
@@ -186,46 +181,39 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     }
 
     private void pollOnce() {
-        // 路径取自协议常量。此前这里写死 "/lyric"，而 Protocol.WS_PATH
-        // 定义着同一个字符串却没有任何消费者——适配器侧要改端点时，
-        // 改协议常量不会有任何效果，得再去改这一行。
-        Fetch fetch = get(Protocol.WS_PATH);
-        if (fetch == null) {
-            onFailure();
-            return;
+        String knownEtag;
+        int previousSignature;
+        boolean cached;
+        synchronized (this) {
+            if (!currentWorker()) return;
+            knownEtag = lyricEtag;
+            previousSignature = lyricSignature;
+            cached = latest.get() != null;
         }
-        String body = fetch.body();
-        // 服务端给的指纹是下一轮条件请求的依据；没有就保持原样，
-        // 旧适配器不回 ETag，于是永远是完整响应，行为与改动前一致。
-        if (fetch.etag() != null) {
-            lyricEtag = fetch.etag();
+        Fetch fetch = get(Protocol.WS_PATH, knownEtag);
+        SnapshotParser.Parsed parsed = null;
+        if (fetch != null) {
+            try {
+                parsed = SnapshotParser.parseResponse(fetch.body(), sourceId, System.nanoTime(),
+                        previousSignature, cached);
+            } catch (RuntimeException ignored) { }
         }
-        consecutiveFailures = 0;
-        alive = true;
-
-        long now = System.nanoTime();
-        PlayerSnapshot snapshot = SnapshotParser.parseSnapshot(body, sourceId, now);
-        capabilities.set(snapshot.capabilities());
-        latest.set(snapshot);
-
-        // 歌词指纹必须只随歌词内容变化。
-        //
-        // 这里最初用的是 seq，但 seq 每次位置上报都会递增（每秒一次），
-        // 结果歌词时间轴每秒被重解析一次，渲染层的换行状态因此被反复重置。
-        // 副作用是高亮每帧都被直接赋成目标值、跳过平滑推进，
-        // 观感就是「整行瞬间变色」而不是连续染色。
-        // 改用歌词 JSON 的哈希作为指纹后，只有真正换曲或换歌词才会重建。
-        // 服务端在歌词未变时不再下发子树，只回 lyricOmitted: true。
-        //
-        // 这里**不能**用 lyricContentSignature 判定：歌词被省略时那个方法
-        // 因为找不到 lyric 对象而返回 0，指纹从旧值跳到 0 会被当成「歌词变了」，
-        // 于是 parseLyric 解出空时间轴，正在显示的歌词当场消失。
-        // 必须显式读 lyricOmitted 标志。
-        int contentSignature = lyricContentSignature(body);
-        if (needsReparse(body, contentSignature, lyricSignature)) {
-            LyricTimeline timeline = SnapshotParser.parseLyric(body);
-            latestLyric.set(timeline);
-            lyricSignature = contentSignature;
+        synchronized (this) {
+            if (!currentWorker()) return;
+            if (parsed == null || (parsed.omitted() && (knownEtag == null
+                    || (fetch.etag() != null && !knownEtag.equals(fetch.etag()))))) {
+                onFailure();
+                return;
+            }
+            if (!parsed.omitted()) {
+                if (parsed.timeline() != null) latestLyric.set(parsed.timeline());
+                lyricSignature = parsed.signature();
+                lyricEtag = fetch.etag();
+            }
+            capabilities.set(parsed.snapshot().capabilities());
+            latest.set(parsed.snapshot());
+            consecutiveFailures = 0;
+            alive = true;
         }
     }
 
@@ -238,56 +226,7 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
      * 时间轴会被不断重建，渲染层的平滑推进也就失效了。
      */
     static int lyricContentSignature(String body) {
-        if (body == null) {
-            return 0;
-        }
-        int key = body.indexOf("\"lyric\"");
-        if (key < 0) {
-            return 0;
-        }
-        int colon = body.indexOf(':', key);
-        if (colon < 0) {
-            return 0;
-        }
-        int start = -1;
-        for (int i = colon + 1; i < body.length(); i++) {
-            char c = body.charAt(i);
-            if (c == ' ' || c == '\n' || c == '\r' || c == '\t') {
-                continue;
-            }
-            start = i;
-            break;
-        }
-        if (start < 0 || body.charAt(start) != '{') {
-            return 0;
-        }
-        int depth = 0;
-        boolean inString = false;
-        boolean escaped = false;
-        for (int i = start; i < body.length(); i++) {
-            char c = body.charAt(i);
-            if (inString) {
-                if (escaped) {
-                    escaped = false;
-                } else if (c == '\\') {
-                    escaped = true;
-                } else if (c == '"') {
-                    inString = false;
-                }
-                continue;
-            }
-            if (c == '"') {
-                inString = true;
-            } else if (c == '{') {
-                depth++;
-            } else if (c == '}') {
-                depth--;
-                if (depth == 0) {
-                    return hashRange(body, start, i + 1);
-                }
-            }
-        }
-        return 0;
+        return SnapshotParser.lyricSignature(body);
     }
 
     /**
@@ -343,6 +282,8 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
             latest.set(null);
             latestLyric.set(LyricTimeline.empty());
             lyricSignature = 0;
+            lyricEtag = null;
+            capabilities.set(CapabilitySet.empty());
         }
     }
 
@@ -365,7 +306,7 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private record Fetch(String body, String etag) {
     }
 
-    private Fetch get(String path) {
+    private Fetch get(String path, String knownEtag) {
         HttpURLConnection connection = null;
         boolean bodyFullyRead = false;
         try {
@@ -377,7 +318,6 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
             // 条件请求：告诉服务端上一份歌词的指纹，未变时它只回一个省略标记，
             // 省掉整份歌词子树（实测 25 KB / 次）。服务端不认识这个头时
             // 会照常返回完整内容，因此对旧适配器安全。
-            String knownEtag = lyricEtag;
             if (knownEtag != null) {
                 connection.setRequestProperty("If-None-Match", "\"" + knownEtag + "\"");
             }
@@ -405,35 +345,6 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         }
     }
 
-    /**
-     * 读一个布尔字段。
-     *
-     * <p>与 {@link SnapshotParser} 里的同名私有方法同语义：找到键且其后
-     * 紧跟 {@code true} 才算真。解析器那个是私有的，这里只需要服务端
-     * 承诺的那一个字段，不值得为它把解析器内部打开。
-     */
-    private static boolean boolField(String json, String key) {
-        if (json == null) {
-            return false;
-        }
-        String needle = "\"" + key + "\"";
-        int idx = json.indexOf(needle);
-        if (idx < 0) {
-            return false;
-        }
-        int cursor = idx + needle.length();
-        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
-            cursor++;
-        }
-        if (cursor < json.length() && json.charAt(cursor) == ':') {
-            cursor++;
-            while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) {
-                cursor++;
-            }
-        }
-        return json.startsWith("true", cursor);
-    }
-
     /** 去掉 ETag 两侧的引号与弱校验前缀；无值时返回 null。 */
     static String stripEtag(String raw) {
         if (raw == null) {
@@ -451,7 +362,7 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
 
     /** 服务端是否声明本轮省略了歌词子树。包级可见，供测试直接验证。 */
     static boolean lyricOmitted(String body) {
-        return boolField(body, "lyricOmitted");
+        return SnapshotParser.lyricOmitted(body);
     }
 
     /**
