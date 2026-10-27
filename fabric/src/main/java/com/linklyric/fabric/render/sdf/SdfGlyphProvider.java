@@ -4,7 +4,8 @@ import com.linklyric.common.font.RawGlyph;
 import com.linklyric.common.font.SdfGlyphBaker;
 import com.mojang.blaze3d.font.GlyphInfo;
 import com.mojang.blaze3d.font.GlyphProvider;
-import com.mojang.blaze3d.font.SheetGlyphInfo;
+import com.mojang.blaze3d.font.GlyphBitmap;
+import com.mojang.blaze3d.font.UnbakedGlyph;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
 import com.mojang.blaze3d.platform.NativeImage;
 import net.minecraft.client.Minecraft;
@@ -297,8 +298,8 @@ public final class SdfGlyphProvider {
     }
 
     private static RawGlyph bake(int codepoint) {
-        GlyphInfo info = glyphInfo(codepoint);
-        if (info == null) {
+        UnbakedGlyph unbaked = glyphInfo(codepoint);
+        if (unbaked == null) {
             // 该码点不在任何 provider 里：可能是空格、控制字符，
             // 也可能字体里确实没有。都不占图集位置。
             return null;
@@ -309,11 +310,25 @@ public final class SdfGlyphProvider {
             degrade();
             return null;
         }
+        // 度量与位图现在分处两个对象，先让原版把它们配成一对。
+        Capturing capturing = new Capturing();
+        GlyphInfo info;
+        try {
+            unbaked.bake(capturing);
+            info = capturing.info;
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (info == null) {
+            return null;
+        }
         boolean bitmap = true;
-        Pixels pixels = bitmapFieldsUsable() ? bakeBitmap(info) : null;
+        // 像素仍从 provider 自己的 record 里抠：度量对象只带步进，
+        // 位图与行数据都还在 UnbakedGlyph 上。
+        Pixels pixels = bitmapFieldsUsable() ? bakeBitmap(unbaked) : null;
         if (pixels == null) {
             bitmap = false;
-            pixels = unihexFieldsUsable() ? bakeUnihex(info) : null;
+            pixels = unihexFieldsUsable() ? bakeUnihex(unbaked) : null;
         }
         if (pixels == null || pixels.width() <= 0 || pixels.height() <= 0) {
             return null;
@@ -338,7 +353,7 @@ public final class SdfGlyphProvider {
 
         // 位图度量取自 SheetGlyphInfo：它是原版排版用的权威值。
         // oversample 是「一个位图像素对应多少设计空间单位」的倒数。
-        float[] box = sheetBox(info);
+        float[] box = sheetBox(unbaked);
         if (box == null) {
             return null;
         }
@@ -371,41 +386,49 @@ public final class SdfGlyphProvider {
     /**
      * 取原版排版用的绘制盒。
      *
-     * <p>{@code GlyphInfo.bake(loader)} 的回调会给出该字形的
-     * {@link SheetGlyphInfo}，其中的 left/right/top/bottom 就是原版
-     * 计算四边形用的值。这里只截获它、不做真正的图集上传。
+     * <p>1.21.9 把原来的 {@code SheetGlyphInfo} 拆成了两半：
+     * 度量在 {@link GlyphInfo} 上，位图在 {@link GlyphBitmap} 上，
+     * 两者经 {@link UnbakedGlyph.Stitcher#stitch} 汇合。
+     * 这里只截获那一对、不做真正的图集上传。
      *
      * @return {@code [left, top, right, bottom, advance, oversample]}
      */
-    private static float[] sheetBox(GlyphInfo info) {
+    private static float[] sheetBox(UnbakedGlyph unbaked) {
         Capturing capturing = new Capturing();
         try {
-            info.bake(capturing);
+            unbaked.bake(capturing);
         } catch (RuntimeException e) {
             return null;
         }
-        SheetGlyphInfo sheet = capturing.sheet;
-        if (sheet == null) {
+        GlyphInfo info = capturing.info;
+        GlyphBitmap bitmap = capturing.bitmap;
+        if (info == null || bitmap == null) {
             return null;
         }
-        return new float[]{sheet.getLeft(), sheet.getTop(), sheet.getRight(),
-                sheet.getBottom(), info.getAdvance(), sheet.getOversample()};
+        return new float[]{bitmap.getLeft(), bitmap.getTop(), bitmap.getRight(),
+                bitmap.getBottom(), info.getAdvance(), bitmap.getOversample()};
     }
 
     /**
-     * 截获 {@link SheetGlyphInfo} 的 loader。
+     * 截获 {@link UnbakedGlyph} 的装载回调。
      *
      * <p>原语义是把位图写进图集；这里不做上传（图集是我们自己管的），
-     * 只把该对象留下来供读取度量。
+     * 只把度量与位图留下来供后续读取。
      */
-    private static final class Capturing
-            implements java.util.function.Function<SheetGlyphInfo, BakedGlyph> {
+    private static final class Capturing implements UnbakedGlyph.Stitcher {
 
-        SheetGlyphInfo sheet;
+        GlyphInfo info;
+        GlyphBitmap bitmap;
 
         @Override
-        public BakedGlyph apply(SheetGlyphInfo info) {
-            this.sheet = info;
+        public BakedGlyph stitch(GlyphInfo info, GlyphBitmap bitmap) {
+            this.info = info;
+            this.bitmap = bitmap;
+            return null;
+        }
+
+        @Override
+        public BakedGlyph getMissing() {
             return null;
         }
     }
@@ -416,7 +439,7 @@ public final class SdfGlyphProvider {
      * <p>只取 alpha 通道——资源包里的位图字形即使本身是彩色的，
      * 也渲染成实心轮廓，与原版所有字体图都是白 + alpha 的事实一致。
      */
-    private static Pixels bakeBitmap(GlyphInfo info) {
+    private static Pixels bakeBitmap(UnbakedGlyph info) {
         if (bmpImage == null || !bmpImage.getDeclaringClass().isInstance(info)) {
             return null;
         }
@@ -477,7 +500,7 @@ public final class SdfGlyphProvider {
      *   right = 32 - numberOfTrailingZeros(mask) - 1
      * </pre>
      */
-    private static Pixels bakeUnihex(GlyphInfo info) {
+    private static Pixels bakeUnihex(UnbakedGlyph info) {
         if (uniContents == null || !uniContents.getDeclaringClass().isInstance(info)) {
             return null;
         }
@@ -520,7 +543,14 @@ public final class SdfGlyphProvider {
         }
     }
 
-    private static GlyphInfo glyphInfo(int codepoint) {
+    /**
+     * 取该码点对应的未烘焙字形。
+     *
+     * <p>1.21.9 起 provider 返回的是 {@link UnbakedGlyph}：
+     * 度量与位图都还没合到一起，要经 {@code bake(Stitcher)} 才拿到
+     * 两者的配对。因此这里返回未烘焙对象，由调用方决定取哪一半。
+     */
+    private static UnbakedGlyph glyphInfo(int codepoint) {
         for (GlyphProvider provider : providers()) {
             try {
                 if (!provider.getSupportedGlyphs().contains(codepoint)) {
@@ -529,9 +559,9 @@ public final class SdfGlyphProvider {
             } catch (RuntimeException e) {
                 continue;
             }
-            GlyphInfo info = provider.getGlyph(codepoint);
-            if (info != null) {
-                return info;
+            UnbakedGlyph glyph = provider.getGlyph(codepoint);
+            if (glyph != null) {
+                return glyph;
             }
         }
         return null;

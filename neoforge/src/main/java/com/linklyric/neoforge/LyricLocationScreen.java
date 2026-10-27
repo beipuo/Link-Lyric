@@ -7,6 +7,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
@@ -116,9 +118,13 @@ final class LyricLocationScreen extends Screen {
     }
 
     @Override
-    public boolean mouseClicked(double mouseX, double mouseY, int button) {
+    public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+        // 1.21.9 把「坐标 + 按键」收进事件对象。
+        double mouseX = event.x();
+        double mouseY = event.y();
+        int button = event.button();
         // 先让按钮处理：否则拖过歌词的手感会把按钮点击也吞掉。
-        if (super.mouseClicked(mouseX, mouseY, button)) {
+        if (super.mouseClicked(event, doubleClick)) {
             return true;
         }
         if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT) {
@@ -131,30 +137,32 @@ final class LyricLocationScreen extends Screen {
     }
 
     @Override
-    public boolean mouseReleased(double mouseX, double mouseY, int button) {
-        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && pressedOnLyric) {
+    public boolean mouseReleased(MouseButtonEvent event) {
+        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT && pressedOnLyric) {
             // 松手只停止跟随，不落盘、不关闭：位置留在屏幕上继续微调。
             controller.end();
             pressedOnLyric = false;
             return true;
         }
-        return super.mouseReleased(mouseX, mouseY, button);
+        return super.mouseReleased(event);
     }
 
     @Override
-    public boolean mouseDragged(double mouseX, double mouseY, int button,
-                                double dragX, double dragY) {
-        if (button == GLFW.GLFW_MOUSE_BUTTON_LEFT && pressedOnLyric) {
+    public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+        double mouseX = event.x();
+        double mouseY = event.y();
+        if (event.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT && pressedOnLyric) {
             // 用当前光标而不是 dragX/dragY：后者是帧间增量，
             // 掉帧时会丢位移，累计位移的方式更稳。
             controller.drag((int) Math.round(mouseX), (int) Math.round(mouseY));
             return true;
         }
-        return super.mouseDragged(mouseX, mouseY, button, dragX, dragY);
+        return super.mouseDragged(event, dragX, dragY);
     }
 
     @Override
-    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+    public boolean keyPressed(KeyEvent event) {
+        int keyCode = event.key();
         if (keyCode == GLFW.GLFW_KEY_ESCAPE) {
             // Esc 等于取消：回到进入时的位置。
             controller.revert();
@@ -166,7 +174,7 @@ final class LyricLocationScreen extends Screen {
             close();
             return true;
         }
-        return super.keyPressed(keyCode, scanCode, modifiers);
+        return super.keyPressed(event);
     }
 
     /** 关闭界面并回到来源界面。 */

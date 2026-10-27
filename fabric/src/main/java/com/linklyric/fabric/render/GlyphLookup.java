@@ -2,6 +2,7 @@ package com.linklyric.fabric.render;
 
 import com.mojang.blaze3d.font.GlyphInfo;
 import net.minecraft.client.gui.Font;
+import net.minecraft.client.gui.GlyphSource;
 import net.minecraft.client.gui.font.FontSet;
 import net.minecraft.client.gui.font.glyphs.BakedGlyph;
 import net.minecraft.network.chat.Style;
@@ -41,6 +42,8 @@ public final class GlyphLookup {
 
     private static MethodHandle getFontSet;
 
+    private static MethodHandle getSource;
+
     private static MethodHandle getGlyph;
 
     private GlyphLookup() {
@@ -50,7 +53,7 @@ public final class GlyphLookup {
         if (!initialised) {
             initialise();
         }
-        return getFontSet != null && getGlyph != null;
+        return getFontSet != null && getSource != null && getGlyph != null;
     }
 
     private static synchronized void initialise() {
@@ -72,11 +75,17 @@ public final class GlyphLookup {
                 fontSetHandle = MethodHandles.lookup().unreflect(m);
             }
             getFontSet = fontSetHandle;
+            // 1.21.9 起 FontSet 不再直接给字形，而是给一个 GlyphSource，
+            // 由它按「是否斜体/加粗」等条件分发。这里固定取常规那一支。
+            getSource = MethodHandles.lookup().findVirtual(
+                    FontSet.class, "source",
+                    MethodType.methodType(GlyphSource.class, boolean.class));
             getGlyph = MethodHandles.lookup().findVirtual(
-                    FontSet.class, "getGlyph",
+                    GlyphSource.class, "getGlyph",
                     MethodType.methodType(BakedGlyph.class, int.class));
         } catch (ReflectiveOperationException | RuntimeException e) {
             getFontSet = null;
+            getSource = null;
             getGlyph = null;
         } finally {
             initialised = true;
@@ -98,7 +107,8 @@ public final class GlyphLookup {
         try {
             // getGlyph 返回 missingGlyph 而不是 null，因此缺失字符
             // 仍会画出方框；这与原版行为一致，不需要额外处理。
-            return (BakedGlyph) getGlyph.invoke(set, cp);
+            GlyphSource source = (GlyphSource) getSource.invoke(set, false);
+            return source == null ? null : (BakedGlyph) getGlyph.invoke(source, cp);
         } catch (Throwable t) {
             return null;
         }
@@ -120,7 +130,13 @@ public final class GlyphLookup {
             return 0f;
         }
         try {
-            GlyphInfo info = set.getGlyphInfo(cp, false);
+            // 1.21.9 的 BakedGlyph 直接暴露 info()，步进从那里取，
+            // 不必再绕 FontSet：少了中间层，也就少了版本差异。
+            BakedGlyph baked = glyph(font, cp);
+            if (baked == null) {
+                return 0f;
+            }
+            GlyphInfo info = baked.info();
             // 不用 getAdvance(bold)：加粗已移除，推进量一律按常规计算。
             return info == null ? 0f : info.getAdvance(false);
         } catch (RuntimeException e) {
