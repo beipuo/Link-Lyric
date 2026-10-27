@@ -8,6 +8,7 @@ version = "${version}"
 displayName = "${mod_name}"
 description = '''${mod_description}'''
 authors = "${mod_author}"
+logoFile = "icon.png"
 
 [[dependencies.${mod_id}]]
 modId = "neoforge"

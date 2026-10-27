@@ -8,6 +8,7 @@
     "${mod_author}"
   ],
   "license": "MIT",
+  "icon": "icon.png",
   "environment": "client",
   "entrypoints": {
     "client": [
