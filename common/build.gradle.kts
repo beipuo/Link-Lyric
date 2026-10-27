@@ -697,18 +697,17 @@ val verifyPreviewGeometry = tasks.register("verifyPreviewGeometry") {
 // ---------------------------------------------------------------------------
 val shaderNames = listOf("linklyric_sdf_text")
 
-fun shaderFile(platform: String, ext: String) =
-    File(rootDir, "$platform/src/main/resources/assets/minecraft/shaders/core/$name.$ext")
-
 val verifyShaderUniforms = tasks.register("verifyShaderUniforms") {
     group = "verification"
-    description = "校验着色器 .fsh 里用到的 uniform 都在 json 里声明了"
+    description = "校验着色器 .fsh 用到的 uniform 都在 RenderPipeline 里声明了"
 
     doLast {
         val problems = mutableListOf<String>()
         for (name in shaderNames) {
+            // 1.21.5 起着色器 json 被废弃，uniform 由 RenderPipeline.withUniform
+            // 声明，资源放在模组自己的命名空间下。
             val fsh = listOf("fabric", "neoforge").map {
-                it to File(rootDir, it + "/src/main/resources/assets/minecraft/shaders/core/" + name + ".fsh")
+                it to File(rootDir, it + "/src/main/resources/assets/linklyric/shaders/core/" + name + ".fsh")
             }
             for ((platform, file) in fsh) {
                 if (!file.isFile) {
@@ -723,11 +722,8 @@ val verifyShaderUniforms = tasks.register("verifyShaderUniforms") {
                 problems += name + ".fsh 两端不一致"
             }
 
-            // 抽出 GLSL 里声明的 uniform。分成两组：
-            //   - glslUniforms：标量/向量/矩阵，必须出现在 json 的 uniforms 里；
-            //   - glslSamplers：纹理采样器，由 json 的 samplers 数组负责绑定。
-            // 两者都算「GLSL 用到了」，但只有前者参与缺失检查——
-            // 采样器写进 uniforms 数组是另一套机制，不在这里判。
+            // 抽出 GLSL 里声明的 uniform。采樣器另算：
+            // 它由 RenderPipeline.withSampler 绑定，不参与 uniform 比对。
             val glslSource = fsh[0].second.readText()
             val glslUniforms = Regex("""^uniform\s+(?!sampler)\w+\s+(\w+)\s*;""", RegexOption.MULTILINE)
                 .findAll(glslSource)
@@ -738,31 +734,42 @@ val verifyShaderUniforms = tasks.register("verifyShaderUniforms") {
                 .map { it.groupValues[1] }
                 .toSet()
 
-            // uniform 块里可能出现、但由渲染管线自动注入的矩阵，不要求在 GLSL 里声明。
+            // 矩阵由管线的 uniform 块注入，GLSL 里不必再声明。
             val injected = setOf("ModelViewMat", "ProjMat")
 
-            for ((platform, _) in fsh) {
-                val jsonFile = File(
+            for (platform in listOf("fabric", "neoforge")) {
+                val javaFile = File(
                     rootDir,
-                    platform + "/src/main/resources/assets/minecraft/shaders/core/" + name + ".json"
+                    platform + "/src/main/java/com/linklyric/" + platform + "/render/sdf/SdfRenderType.java"
                 )
-                if (!jsonFile.isFile) {
-                    problems += platform + ": 缺少着色器 " + name + ".json"
+                if (!javaFile.isFile) {
+                    problems += platform + ": 缺少 SdfRenderType.java"
                     continue
                 }
-                val declared = Regex(""""name"\s*:\s*"([^"]+)"""")
-                    .findAll(jsonFile.readText())
+                val declared = Regex("""\.withUniform\("([^"]+)"""")
+                    .findAll(javaFile.readText())
                     .map { it.groupValues[1] }
                     .toSet()
-                val missing = (glslUniforms - declared).sorted()
+                val missing = (glslUniforms - declared - injected).sorted()
                 if (missing.isNotEmpty()) {
-                    problems += platform + "/" + name + ".json 缺少 uniform: " + missing.joinToString(", ")
+                    problems += platform + ": RenderPipeline 缺少 uniform: " + missing.joinToString(", ")
                 }
-                val stale = (declared - glslUniforms - glslSamplers - injected).sorted()
+                val stale = (declared - glslUniforms - injected).sorted()
                 if (stale.isNotEmpty()) {
                     problems.add(
-                        platform + "/" + name + ".json 声明了 GLSL 未使用的 uniform: "
+                        platform + ": RenderPipeline 声明了 GLSL 未使用的 uniform: "
                             + stale.joinToString(", ")
+                    )
+                }
+                val samplers = Regex("""\.withSampler\("([^"]+)"""")
+                    .findAll(javaFile.readText())
+                    .map { it.groupValues[1] }
+                    .toSet()
+                val missingSamplers = (glslSamplers - samplers).sorted()
+                if (missingSamplers.isNotEmpty()) {
+                    problems.add(
+                        platform + ": RenderPipeline 缺少采样器: "
+                            + missingSamplers.joinToString(", ")
                     )
                 }
             }

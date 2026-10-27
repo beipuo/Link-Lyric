@@ -2,7 +2,6 @@ package com.linklyric.neoforge.render.sdf;
 
 import com.linklyric.common.style.GlyphSpan;
 import com.mojang.blaze3d.vertex.VertexConsumer;
-import net.minecraft.client.renderer.RenderType;
 import org.joml.Matrix4f;
 
 /**
@@ -110,10 +109,5 @@ public final class SdfGlyphWriter {
                 .setColor(color)
                 .setUv(u, v)
                 .setLight(light);
-    }
-
-    /** 取图集页对应的 RenderType。 */
-    public static RenderType renderType(SdfAtlas.Slot slot) {
-        return SdfRenderType.body(slot.page());
     }
 }

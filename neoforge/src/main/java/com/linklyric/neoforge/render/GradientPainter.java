@@ -171,28 +171,17 @@ public final class GradientPainter {
 
         // 整块字形就是一个段；锚点取 x，与段坐标同一坐标系。
         GlyphSpan main = new GlyphSpan(x, x + (box[2] - box[0]), colors.left(), colors.right());
-        ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
-        MultiBufferSource.BufferSource buffer = openBuffer(backing);
-        try {
-            if (shadow) {
-                // 阴影层独立一个 RenderType：它的柔化与字重和正文不同，
-                // 混在同一批里只能有一份 uniform 生效。
-                RenderType shadowType = SdfRenderType.shadow(slot.page());
-                GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
-                        shadowOf(colors.left()), shadowOf(colors.right()));
-                SdfGlyphWriter.writeSpans(buffer.getBuffer(shadowType),
-                        pose, slot, box, x + SdfRenderType.shadowOffset(), y,
-                        new GlyphSpan[]{shadowSpan}, x, light);
-            }
-            RenderType bodyType = SdfRenderType.body(slot.page());
-            boolean drawn = SdfGlyphWriter.writeSpans(buffer.getBuffer(bodyType),
-                    pose, slot, box, x, y, new GlyphSpan[]{main}, x, light);
-            buffer.endBatch();
-            return drawn;
-        } finally {
-            buffer.endBatch();
-            backing.close();
+        if (shadow) {
+            // 阴影与正文分开两次绘制：它们的柔化与字重不同，
+            // 而 uniform 是整层生效的，混在一起只能保留一份。
+            GlyphSpan shadowSpan = new GlyphSpan(main.startX(), main.endX(),
+                    shadowOf(colors.left()), shadowOf(colors.right()));
+            SdfRenderType.drawShadow(slot, pose, box,
+                    x + SdfRenderType.shadowOffset(), y,
+                    new GlyphSpan[]{shadowSpan}, x, light);
         }
+        return SdfRenderType.drawBody(slot, pose, box, x, y,
+                new GlyphSpan[]{main}, x, light);
     }
 
     /**
@@ -305,34 +294,22 @@ public final class GradientPainter {
         // 留白逐字形不同，必须在取 RenderType 之前设好。
         SdfRenderType.setGlowLimit(SdfGlyphProvider.glowSpace(cp));
 
-        // 阴影与正文各属一个 RenderType，共用一个缓冲源即可：
-        // getBuffer 按类型分桶，endBatch 逐桶冲刷。
-        ByteBufferBuilder backing = new ByteBufferBuilder(BUFFER_BYTES);
-        MultiBufferSource.BufferSource buffer = openBuffer(backing);
-        try {
-            if (shadow) {
-                GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
-                for (int i = 0; i < spans.length; i++) {
-                    GlyphSpan s = spans[i];
-                    shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
-                            shadowOf(s.startColor()), shadowOf(s.endColor()));
-                }
-                // 阴影几何右移一格，但 originX 仍取主色的行锚点，
-                // 否则阴影偏移会被段坐标的平移抵消，画回主色上。
-                RenderType shadowType = SdfRenderType.shadow(slot.page());
-                SdfGlyphWriter.writeSpans(buffer.getBuffer(shadowType),
-                        pose, slot, box, x + SdfRenderType.shadowOffset(), y,
-                        shadowSpans, originX, light);
+        // 阴影与正文分两次绘制：uniform 是整层生效的，柔化与字重又不同，
+        // 合成一批只能保留一份，结果是一层把另一层糊掉。
+        if (shadow) {
+            GlyphSpan[] shadowSpans = new GlyphSpan[spans.length];
+            for (int i = 0; i < spans.length; i++) {
+                GlyphSpan s = spans[i];
+                shadowSpans[i] = new GlyphSpan(s.startX(), s.endX(),
+                        shadowOf(s.startColor()), shadowOf(s.endColor()));
             }
-            RenderType bodyType = SdfRenderType.body(slot.page());
-            boolean drawn = SdfGlyphWriter.writeSpans(buffer.getBuffer(bodyType),
-                    pose, slot, box, x, y, spans, originX, light);
-            buffer.endBatch();
-            return drawn;
-        } finally {
-            buffer.endBatch();
-            backing.close();
+            // 阴影几何右移一格，但 originX 仍取主色的行锚点，
+            // 否则阴影偏移会被段坐标的平移抵消，画回主色上。
+            SdfRenderType.drawShadow(slot, pose, box,
+                    x + SdfRenderType.shadowOffset(), y,
+                    shadowSpans, originX, light);
         }
+        return SdfRenderType.drawBody(slot, pose, box, x, y, spans, originX, light);
     }
 
     /**

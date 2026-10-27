@@ -2,17 +2,17 @@ package com.linklyric.fabric.render.sdf;
 
 import com.linklyric.common.font.RawGlyph;
 import com.linklyric.common.font.SkylinePacker;
-import com.mojang.blaze3d.platform.GlStateManager;
 import com.mojang.blaze3d.platform.NativeImage;
-import com.mojang.blaze3d.platform.TextureUtil;
+import com.mojang.blaze3d.systems.CommandEncoder;
+import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.textures.AddressMode;
+import com.mojang.blaze3d.textures.FilterMode;
+import com.mojang.blaze3d.textures.GpuTexture;
+import com.mojang.blaze3d.textures.TextureFormat;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.texture.AbstractTexture;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.packs.resources.ResourceManager;
-import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL12;
-import org.lwjgl.system.MemoryUtil;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -159,23 +159,27 @@ public final class SdfAtlas implements AutoCloseable {
             this.name = name;
             this.size = size;
             this.packer = new SkylinePacker(size, size);
-            TextureUtil.prepareImage(NativeImage.InternalGlFormat.RED, this.getId(), size, size);
-            this.bind();
-            GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
-            GlStateManager._texParameter(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
-            // 距离场必须线性过滤：场重建靠插值。
-            this.setFilter(true, false);
-            // prepareImage 留下未定义内容，清零，避免未使用区域渗进字形。
-            java.nio.ByteBuffer zero = MemoryUtil.memCalloc(size * size);
-            try {
-                upload(0, 0, size, size, MemoryUtil.memAddress0(zero));
-            } finally {
-                MemoryUtil.memFree(zero);
-            }
+            // 1.21.5 起纹理不再是「拿一个 GL id 去 prepare」，改成由
+            // GpuDevice 分配、GpuTexture 承载，上传走 CommandEncoder。
+            GpuDevice device = RenderSystem.getDevice();
+            this.texture = device.createTexture(
+                    () -> "LinkLyricSdfAtlas/" + name,
+                    TextureFormat.RED8,
+                    size, size, 1);
+            // 距离场必须线性过滤：场重建靠插值；UV 不越界，钳到边缘即可。
+            this.texture.setAddressMode(AddressMode.CLAMP_TO_EDGE);
+            this.texture.setTextureFilter(FilterMode.LINEAR, false);
+            // 新建纹理内容未定义，清零，避免未使用区域渗进字形。
+            upload(0, 0, size, size, new byte[size * size]);
         }
 
         public ResourceLocation name() {
             return name;
+        }
+
+        /** 该页的 GPU 纹理，供渲染层直接绑定。 */
+        public GpuTexture texture() {
+            return this.texture;
         }
 
         private Slot tryAdd(int width, int height, byte[] data) {
@@ -184,41 +188,34 @@ public final class SdfAtlas implements AutoCloseable {
             }
             int x = scratch[0];
             int y = scratch[1];
-            java.nio.ByteBuffer buffer = MemoryUtil.memAlloc(data.length);
-            try {
-                buffer.put(data);
-                this.bind();
-                upload(x, y, width, height, MemoryUtil.memAddress0(buffer));
-            } finally {
-                MemoryUtil.memFree(buffer);
-            }
+            upload(x, y, width, height, data);
             return new Slot(this, x, y, width, height);
         }
 
         /**
          * 上传一块单通道位图。
          *
-         * <p>R8 每行不是 4 字节对齐的，沿用默认的 unpack 对齐会让行首错位，
-         * 表现是字形被斜着撕开。上传后必须把改过的像素存储状态复原，
-         * 否则会污染后续所有纹理上传（原版字体、GUI 图标都会受影响）。
+         * <p>1.21.5 的 {@code writeToTexture} 只接受 {@link NativeImage}，
+         * 因此把这块单通道位图包进一张临时 RGBA 图（各通道同值，
+         * RED8 只读第一个通道），再按矩形写入。
+         *
+         * <p>这样也不必再碰 GL_UNPACK_* 那套全局状态：过去改完必须复原，
+         * 否则会污染原版字体的纹理上传。
          */
-        private void upload(int x, int y, int width, int height, long pixels) {
-            int previousAlignment = GlStateManager._getInteger(GL11.GL_UNPACK_ALIGNMENT);
-            int previousRowLength = GlStateManager._getInteger(GL11.GL_UNPACK_ROW_LENGTH);
-            int previousSkipPixels = GlStateManager._getInteger(GL11.GL_UNPACK_SKIP_PIXELS);
-            int previousSkipRows = GlStateManager._getInteger(GL11.GL_UNPACK_SKIP_ROWS);
+        private void upload(int x, int y, int width, int height, byte[] pixels) {
+            NativeImage scratch = new NativeImage(NativeImage.Format.RGBA, width, height, false);
             try {
-                GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, 1);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, 0);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, 0);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, 0);
-                GlStateManager._texSubImage2D(GL11.GL_TEXTURE_2D, 0, x, y, width, height,
-                        GL11.GL_RED, GL11.GL_UNSIGNED_BYTE, pixels);
+                for (int dy = 0; dy < height; dy++) {
+                    for (int dx = 0; dx < width; dx++) {
+                        int v = pixels[dy * width + dx] & 0xFF;
+                        scratch.setPixelABGR(dx, dy, (v << 24) | (v << 16) | (v << 8) | v);
+                    }
+                }
+                CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+                // 签名：(纹理, 图, mip, 源x, 源y, 目标x, 目标y, 宽, 高)
+                encoder.writeToTexture(this.texture, scratch, 0, 0, 0, x, y, width, height);
             } finally {
-                GlStateManager._pixelStore(GL11.GL_UNPACK_ALIGNMENT, previousAlignment);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_ROW_LENGTH, previousRowLength);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_PIXELS, previousSkipPixels);
-                GlStateManager._pixelStore(GL11.GL_UNPACK_SKIP_ROWS, previousSkipRows);
+                scratch.close();
             }
         }
 
@@ -227,7 +224,8 @@ public final class SdfAtlas implements AutoCloseable {
 
         @Override
         public void close() {
-            this.releaseId();
+            // 1.21.5 起纹理由 GpuTexture 持有，关它即释放显存。
+            super.close();
         }
     }
 }

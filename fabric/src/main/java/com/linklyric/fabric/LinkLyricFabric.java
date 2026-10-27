@@ -22,8 +22,6 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.ShaderDefines;
-import net.minecraft.client.renderer.ShaderProgram;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -114,18 +112,9 @@ public final class LinkLyricFabric implements ClientModInitializer {
         // 下一次绘制会重新建 RenderType 指向仍存活的旧页，
         // 之后 reset 才关掉它——留下悬空的纹理引用。
         SdfGlyphProvider.reset();
-        // 1.21.2 起着色器改为声明式：这里只登记 configId 与顶点格式，
-        // 真正的编译由 ShaderManager 在首次 getProgram 时完成并缓存。
-        // 因此不再需要手动 close 旧实例，也没有装载失败需要捕获。
-        SdfRenderType.install(new ShaderProgram(
-                ResourceLocation.fromNamespaceAndPath(MOD_ID, "linklyric_sdf_text"),
-                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
-                ShaderDefines.EMPTY));
-        // 提前触发一次编译，把失败暴露在重载日志里，而不是等到首帧绘制。
-        if (Minecraft.getInstance() != null) {
-            Minecraft.getInstance().getShaderManager()
-                    .getProgram(SdfRenderType.current());
-        }
+        // 1.21.5 起着色器由 RenderPipeline 描述，首次绘制时由原版编译；
+        // 模组侧没有「注册」这一步，标记可用即可。
+        SdfRenderType.install();
     }
 
     private static void onHudRender(GuiGraphics graphics, DeltaTracker deltaTracker) {

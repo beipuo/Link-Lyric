@@ -1,12 +1,15 @@
 package com.linklyric.neoforge.render.sdf;
 
+import com.linklyric.common.style.GlyphSpan;
+import com.mojang.blaze3d.pipeline.RenderPipeline;
+import com.mojang.blaze3d.platform.DepthTestFunction;
+import com.mojang.blaze3d.shaders.UniformType;
+import com.mojang.blaze3d.systems.RenderPass;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.CompiledShaderProgram;
-import net.minecraft.client.renderer.RenderStateShard;
-import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.ShaderProgram;
+import net.minecraft.resources.ResourceLocation;
+import org.joml.Matrix4f;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -29,7 +32,7 @@ import java.util.Map;
  * <p>图集是运行时上传的 GL 纹理，磁盘上没有文件，
  * 因此不能按 {@code ResourceLocation} 走资源加载——
  * 那是 {@code TextureStateShard} 的行为，会去读一个不存在的文件。
- * 这里用 {@link BoundTextureState} 直接绑纹理 id。
+ * 这里由 {@link SdfPassDrawer} 在 {@code RenderPass} 上直接绑 sampler。
  *
  * <h2>为什么正文与阴影是两个 RenderType</h2>
  *
@@ -52,22 +55,7 @@ public final class SdfRenderType {
      * 真正的编译产物由 {@code ShaderManager.getProgram} 按它取回。
      * 因此这里持有声明，程序在 setup 时现取，避免缓存到过期的程序。
      */
-    private static ShaderProgram program;
-
-    /**
-     * 缓存键：图集页 + 是否正文层。
-     *
-     * @param body   true 为正文，false 为阴影
-     * @param glow   这批是否带外发光
-     * @param stroke 这批是否带描边
-     *
-     * <p>两位必须**分开**：发光与描边可以同时开启，用户的强调特效
-     * 不该因为开了描边就消失。早先合并成一位时，开发光就会把描边位
-     * 置成 false，着色器据此把发光也一并关掉——功能静默失效，
-     * 既不报错也不容易察觉。
-     */
-    private record Key(SdfAtlas.Page page, boolean body, boolean glow, boolean stroke) {
-    }
+    private static volatile boolean ready;
 
     /**
      * 当前描边宽度与颜色。
@@ -111,7 +99,13 @@ public final class SdfRenderType {
         return strokeWidth > 0f && strokeAlpha > 0f;
     }
 
-    private static final Map<Key, RenderType> CACHE = new HashMap<>();
+    /**
+     * 管线缓存，键是正文/阴影 × 发光 × 描边的组合名。
+     *
+     * <p>管线不含纹理，资源重载后仍然有效，因此这张表不随
+     * {@link #invalidate()} 清空。
+     */
+    private static final Map<String, RenderPipeline> PIPELINES = new HashMap<>();
 
     /**
      * 笔画加粗的取值范围。
@@ -189,46 +183,24 @@ public final class SdfRenderType {
     private SdfRenderType() {
     }
 
-    public static void install(ShaderProgram declared) {
-        program = declared;
-        CACHE.clear();
-    }
-
-    public static ShaderProgram current() {
-        return program;
-    }
-
     /**
-     * 按当前声明取回已编译的程序。
+     * 标记 SDF 路径可用。
      *
-     * <p>声明为空、着色器尚未编译完成、或资源重载期间，都可能取不到；
-     * 这些都返回 null，由调用方跳过 uniform 设置。
+     * <p>1.21.5 里着色器由 {@link RenderPipeline} 描述，首次使用时
+     * 由原版编译，模组侧没有「注册」这一步；调用方在确认资源就绪后
+     * 调这里一次即可。
      */
-    private static CompiledShaderProgram resolve() {
-        ShaderProgram declared = program;
-        if (declared == null) {
-            return null;
-        }
-        Minecraft client = Minecraft.getInstance();
-        if (client == null) {
-            return null;
-        }
-        return client.getShaderManager().getProgram(declared);
+    public static void install() {
+        ready = true;
     }
 
-    /**
-     * 丢弃所有缓存的 RenderType。
-     *
-     * <p>每个 RenderType 都绑定一张具体图集纹理的 id。图集一旦关闭，
-     * 这些 id 会被 OpenGL 回收再由别处复用，旧 RenderType 就会绑到
-     * 完全无关的纹理——表现为整行字透明或花屏。
-     */
+    /** 图集重建后无需丢弃任何缓存：纹理从 {@code slot.page()} 现取。 */
     public static void invalidate() {
-        CACHE.clear();
+        // 管线不含纹理，图集换页不影响它们。
     }
 
     public static boolean usable() {
-        return program != null;
+        return ready;
     }
 
     /**
@@ -256,11 +228,23 @@ public final class SdfRenderType {
         return SHADOW_OFFSET;
     }
 
-    /** 取正文层的 RenderType。 */
-    public static RenderType body(SdfAtlas.Page page) {
-        return CACHE.computeIfAbsent(
-                new Key(page, true, glowing(), strokeEnabled()),
-                k -> create(k.page(), true, k.glow(), k.stroke()));
+    /**
+     * 绘制正文层。
+     *
+     * <p>1.21.5 起不再产出 {@code RenderType}：uniform 只能在
+     * {@code RenderPass} 上写，而 {@code MultiBufferSource} 不给模组
+     * 那个对象。因此改成「取管线 + 自己开 pass」，入口见
+     * {@link SdfPassDrawer}。
+     */
+    public static boolean drawBody(SdfAtlas.Slot slot, Matrix4f pose, float[] box,
+                                   float x, float y, GlyphSpan[] spans, float originX,
+                                   int light) {
+        boolean glowOn = glowing();
+        boolean strokeOn = strokeEnabled();
+        return SdfPassDrawer.draw(
+                pipelineFor(true, glowOn, strokeOn), slot.page().texture(), pose,
+                slot, box, x, y, spans, originX, light,
+                pass -> applyUniforms(pass, true, glowOn, strokeOn));
     }
 
     /**
@@ -270,75 +254,83 @@ public final class SdfRenderType {
      * 再给它描边会变成两圈套在一起，边界彻底糊掉。
      * 因此这里的 Key 恒为 {@code glow=false}，与描边状态无关。
      */
-    public static RenderType shadow(SdfAtlas.Page page) {
+    public static boolean drawShadow(SdfAtlas.Slot slot, Matrix4f pose, float[] box,
+                                    float x, float y, GlyphSpan[] spans, float originX,
+                                    int light) {
         // 阴影层的发光与描边两位恒为 false，与当前状态无关。
-        return CACHE.computeIfAbsent(new Key(page, false, false, false),
-                k -> create(k.page(), false, false, false));
+        return SdfPassDrawer.draw(
+                pipelineFor(false, false, false), slot.page().texture(), pose,
+                slot, box, x, y, spans, originX, light,
+                pass -> applyUniforms(pass, false, false, false));
     }
 
-    private static RenderType create(SdfAtlas.Page page, boolean body,
-                                     boolean glowEnabled, boolean strokeEnabled) {
-        // 1.21.2 的 ShaderStateShard 直接收声明对象，不再收 Supplier。
-        // create 只在 install 清空缓存后被调用，此时 program 已是最新值。
-        ShaderProgram declared = program;
-        // 顶点格式含 LIGHTMAP 属性，就必须配 setLightmapState：
-        // 状态不全的 RenderType 在 prepare 阶段拿不到完整绑定，
-        // 顶点会被整批丢弃——表现就是「字完全不显示」。
-        //
-        // ShaderStateShard 的 setup 里设 uniform，正好是刷批的时刻，
-        // 此时该层所有顶点都已就绪，uniform 对该层整体生效。
-        RenderType.CompositeState state = RenderType.CompositeState.builder()
-                .setShaderState(new RenderStateShard.ShaderStateShard(declared) {
-                    @Override
-                    public void setupRenderState() {
-                        super.setupRenderState();
-                        // 程序由 ShaderManager 按声明取回；声明存在但程序尚未
-                        // 编译完成时返回 null，此时跳过 uniform 设置即可，
-                        // 顶点仍会照常提交，只是回到默认 uniform。
-                        CompiledShaderProgram instance = resolve();
-                        if (instance == null) {
-                            return;
-                        }
-                        // safeGetUniform 在 uniform 缺失时返回空实现，
-                        // 不会抛异常，因此旧着色器也能继续工作。
-                        instance.safeGetUniform("Sharpness").set(1.0f);
-                        instance.safeGetUniform("Weight").set(body ? weight : 0f);
-                        instance.safeGetUniform("Softness")
-                                .set(body ? BODY_SOFTNESS
-                                        : (softShadow ? SHADOW_SOFTNESS : BODY_SOFTNESS));
-                        // 光晕只给正文层：阴影层本就是一圈糊掉的影子，
-                        // 再叠发光会变成两团混在一起，边界全失。
-                        boolean glowOn = body && glowEnabled;
-                        instance.safeGetUniform("GlowRadius").set(glowOn ? glowRadius : 0f);
-                        instance.safeGetUniform("GlowAlpha").set(glowOn ? glowAlpha : 0f);
-                        // 留白距离在设计空间，着色器里的 pixelsOut 也是同一空间
-                        // （坐标系来自纹理 UV 求导），因此直接传设计空间值。
-                        instance.safeGetUniform("GlowLimit").set(glowLimit);
-                        // 描边只给正文层，理由同发光：阴影层不描边。
-                        boolean strokeOn = body && strokeEnabled;
-                        instance.safeGetUniform("StrokeWidth")
-                                .set(strokeOn ? strokeWidth : 0f);
-                        instance.safeGetUniform("StrokeColor").set(
-                                strokeOn ? strokeRed : 0f,
-                                strokeOn ? strokeGreen : 0f,
-                                strokeOn ? strokeBlue : 0f,
-                                strokeOn ? strokeAlpha : 0f);
-                    }
-                })
-                .setTextureState(new BoundTextureState(page))
-                .setTransparencyState(RenderStateShard.TRANSLUCENT_TRANSPARENCY)
-                .setLightmapState(RenderStateShard.LIGHTMAP)
-                .setWriteMaskState(new RenderStateShard.WriteMaskStateShard(true, false))
-                .createCompositeState(false);
-        return RenderType.create(
-                "linklyric_sdf_text_" + (body ? "body" : "shadow")
-                        + (glowEnabled ? "_glow" : "")
-                        + (strokeEnabled ? "_stroke" : ""),
-                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
-                VertexFormat.Mode.QUADS,
-                256,
-                false,
-                true,
-                state);
+    /**
+     * 按当前状态取对应的 {@link RenderPipeline}。
+     *
+     * <p>正文与阴影必须分开：字重、柔化、发光、描边都是管线级的 uniform，
+     * 两支顶点若共用一个管线，只会有一份 uniform 生效，
+     * 结果是阴影把正文一起糊掉，或正文把阴影一起变锐利。
+     */
+    private static RenderPipeline pipelineFor(boolean body, boolean glowEnabled,
+                                              boolean strokeEnabled) {
+        String suffix = (body ? "body" : "shadow")
+                + (glowEnabled ? "_glow" : "")
+                + (strokeEnabled ? "_stroke" : "");
+        return PIPELINES.computeIfAbsent(suffix, key -> RenderPipeline.builder()
+                .withLocation(ResourceLocation.fromNamespaceAndPath(
+                        "linklyric", "pipeline/sdf_text_" + key))
+                // 着色器路径沿用 assets/linklyric/shaders/core/linklyric_sdf_text。
+                .withVertexShader(ResourceLocation.fromNamespaceAndPath(
+                        "linklyric", "core/linklyric_sdf_text"))
+                .withFragmentShader(ResourceLocation.fromNamespaceAndPath(
+                        "linklyric", "core/linklyric_sdf_text"))
+                .withSampler("Sampler0")
+                .withUniform("ModelViewMat", UniformType.MATRIX4X4)
+                .withUniform("ProjMat", UniformType.MATRIX4X4)
+                .withUniform("ColorModulator", UniformType.VEC4)
+                .withUniform("Sharpness", UniformType.FLOAT)
+                .withUniform("Weight", UniformType.FLOAT)
+                .withUniform("Softness", UniformType.FLOAT)
+                .withUniform("GlowRadius", UniformType.FLOAT)
+                .withUniform("GlowAlpha", UniformType.FLOAT)
+                .withUniform("GlowLimit", UniformType.FLOAT)
+                .withUniform("StrokeWidth", UniformType.FLOAT)
+                .withUniform("StrokeColor", UniformType.VEC4)
+                .withVertexFormat(DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                        VertexFormat.Mode.QUADS)
+                .withDepthTestFunction(DepthTestFunction.NO_DEPTH_TEST)
+                .withCull(false)
+                .build());
+    }
+
+    /**
+     * 在绘制前写入这一层的 uniform。
+     *
+     * <p>矩阵用当前 GUI 阶段的值：GUI 顶点已经在 CPU 侧乘过 pose，
+     * 这里给单位矩阵即可，与原版 {@code RenderType.text} 的约定一致。
+     */
+    private static void applyUniforms(RenderPass pass, boolean body,
+                                      boolean glowEnabled, boolean strokeEnabled) {
+        pass.setUniform("ModelViewMat", new Matrix4f());
+        pass.setUniform("ProjMat", RenderSystem.getProjectionMatrix());
+        pass.setUniform("ColorModulator", 1f, 1f, 1f, 1f);
+        pass.setUniform("Sharpness", 1f);
+        pass.setUniform("Weight", body ? weight : 0f);
+        pass.setUniform("Softness", body ? BODY_SOFTNESS
+                : (softShadow ? SHADOW_SOFTNESS : BODY_SOFTNESS));
+        // 光晕只给正文层：阴影层本就是一圈糊掉的影子，
+        // 再叠发光会变成两团混在一起，边界全失。
+        boolean glowOn = body && glowEnabled;
+        pass.setUniform("GlowRadius", glowOn ? glowRadius : 0f);
+        pass.setUniform("GlowAlpha", glowOn ? glowAlpha : 0f);
+        pass.setUniform("GlowLimit", glowLimit);
+        // 描边只给正文层，理由同发光：阴影层不描边。
+        boolean strokeOn = body && strokeEnabled;
+        pass.setUniform("StrokeWidth", strokeOn ? strokeWidth : 0f);
+        pass.setUniform("StrokeColor",
+                strokeOn ? strokeRed : 0f,
+                strokeOn ? strokeGreen : 0f,
+                strokeOn ? strokeBlue : 0f,
+                strokeOn ? strokeAlpha : 0f);
     }
 }

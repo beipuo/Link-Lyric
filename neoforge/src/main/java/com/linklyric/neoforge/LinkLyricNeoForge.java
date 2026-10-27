@@ -6,7 +6,7 @@ import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
 import com.linklyric.neoforge.render.GradientPainter;
 import com.linklyric.neoforge.render.sdf.SdfRenderType;
-import com.linklyric.neoforge.render.sdf.SdfShaderRegistration;
+import com.linklyric.neoforge.render.sdf.SdfRenderType;
 import com.mojang.math.Axis;
 import net.minecraft.network.chat.Component;
 import net.minecraft.client.DeltaTracker;
@@ -64,8 +64,9 @@ public final class LinkLyricNeoForge {
         dragController = new LyricDragController(renderer, layout);
         LOGGER.info("[Link Lyric] 数据源已启动，目标 127.0.0.1:{}", BRIDGE_PORT);
 
-        // 着色器必须在编译前登记，走 mod 总线
-        modEventBus.addListener(SdfShaderRegistration::onRegisterShaders);
+        // 1.21.5 起着色器由 RenderPipeline 描述、首次绘制时由原版编译，
+        // NeoForge 也移除了 RegisterShadersEvent，不再需要注册步骤。
+        SdfRenderType.install();
 
         // 渲染是游戏总线事件，不是 mod 总线
         NeoForge.EVENT_BUS.addListener(this::onRenderGui);
