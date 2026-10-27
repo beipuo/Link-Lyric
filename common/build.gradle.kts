@@ -467,7 +467,9 @@ val verifyPainterParity = tasks.register("verifyPainterParity") {
 // 白名单只登记确有理由的：接口为兼容保留的参数、平台回调的固定签名。
 // ---------------------------------------------------------------------------
 val intentionallyUnusedParams = mapOf(
-    "LinkLyricFabric.java" to setOf("deltaTracker"),
+    // manager 供 BakedGlyph 字形通道使用；1.21.2 起着色器改为声明式，
+    // 不再需要用它手动编译，接口签名仍必须保留。
+    "LinkLyricFabric.java" to setOf("deltaTracker", "manager"),
     "LinkLyricNeoForge.java" to setOf("event"),
     "*" to setOf("ignoredBold"),
 )

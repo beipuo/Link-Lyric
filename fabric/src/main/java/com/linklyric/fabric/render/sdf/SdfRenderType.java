@@ -2,13 +2,14 @@ package com.linklyric.fabric.render.sdf;
 
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.blaze3d.vertex.VertexFormat;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.renderer.CompiledShaderProgram;
 import net.minecraft.client.renderer.RenderStateShard;
 import net.minecraft.client.renderer.RenderType;
-import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.ShaderProgram;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.function.Supplier;
 
 /**
  * SDF 文字专用的 {@link RenderType}。
@@ -45,8 +46,13 @@ import java.util.function.Supplier;
  */
 public final class SdfRenderType {
 
-    /** 着色器实例。首次使用时装载，失败后保持 null 由调用方降级。 */
-    private static ShaderInstance shader;
+    /**
+     * 着色器声明。1.21.2 起着色器改为「声明 + 配置」：
+     * {@link ShaderProgram} 只是 configId 与顶点格式的载体，
+     * 真正的编译产物由 {@code ShaderManager.getProgram} 按它取回。
+     * 因此这里持有声明，程序在 setup 时现取，避免缓存到过期的程序。
+     */
+    private static ShaderProgram program;
 
     /**
      * 缓存键：图集页 + 是否正文层。
@@ -183,13 +189,31 @@ public final class SdfRenderType {
     private SdfRenderType() {
     }
 
-    public static void install(ShaderInstance instance) {
-        shader = instance;
+    public static void install(ShaderProgram declared) {
+        program = declared;
         CACHE.clear();
     }
 
-    public static ShaderInstance current() {
-        return shader;
+    public static ShaderProgram current() {
+        return program;
+    }
+
+    /**
+     * 按当前声明取回已编译的程序。
+     *
+     * <p>声明为空、着色器尚未编译完成、或资源重载期间，都可能取不到；
+     * 这些都返回 null，由调用方跳过 uniform 设置。
+     */
+    private static CompiledShaderProgram resolve() {
+        ShaderProgram declared = program;
+        if (declared == null) {
+            return null;
+        }
+        Minecraft client = Minecraft.getInstance();
+        if (client == null) {
+            return null;
+        }
+        return client.getShaderManager().getProgram(declared);
     }
 
     /**
@@ -204,7 +228,7 @@ public final class SdfRenderType {
     }
 
     public static boolean usable() {
-        return shader != null;
+        return program != null;
     }
 
     /**
@@ -254,7 +278,9 @@ public final class SdfRenderType {
 
     private static RenderType create(SdfAtlas.Page page, boolean body,
                                      boolean glowEnabled, boolean strokeEnabled) {
-        Supplier<ShaderInstance> supplier = () -> shader;
+        // 1.21.2 的 ShaderStateShard 直接收声明对象，不再收 Supplier。
+        // create 只在 install 清空缓存后被调用，此时 program 已是最新值。
+        ShaderProgram declared = program;
         // 顶点格式含 LIGHTMAP 属性，就必须配 setLightmapState：
         // 状态不全的 RenderType 在 prepare 阶段拿不到完整绑定，
         // 顶点会被整批丢弃——表现就是「字完全不显示」。
@@ -262,11 +288,14 @@ public final class SdfRenderType {
         // ShaderStateShard 的 setup 里设 uniform，正好是刷批的时刻，
         // 此时该层所有顶点都已就绪，uniform 对该层整体生效。
         RenderType.CompositeState state = RenderType.CompositeState.builder()
-                .setShaderState(new RenderStateShard.ShaderStateShard(supplier) {
+                .setShaderState(new RenderStateShard.ShaderStateShard(declared) {
                     @Override
                     public void setupRenderState() {
                         super.setupRenderState();
-                        ShaderInstance instance = shader;
+                        // 程序由 ShaderManager 按声明取回；声明存在但程序尚未
+                        // 编译完成时返回 null，此时跳过 uniform 设置即可，
+                        // 顶点仍会照常提交，只是回到默认 uniform。
+                        CompiledShaderProgram instance = resolve();
                         if (instance == null) {
                             return;
                         }

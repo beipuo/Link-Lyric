@@ -71,6 +71,8 @@ tasks.processResources {
         "mod_author" to providers.gradleProperty("mod_author").get(),
         "minecraft_version" to providers.gradleProperty("minecraft_version").get(),
         "java_release" to providers.gradleProperty("java_release").get(),
+        "loader_version" to providers.gradleProperty("loader_version").get(),
+        "loader_version" to providers.gradleProperty("loader_version").get(),
     )
     inputs.properties(props)
     filesMatching("fabric.mod.json") {

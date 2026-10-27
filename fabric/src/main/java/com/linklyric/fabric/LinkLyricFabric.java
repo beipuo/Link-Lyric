@@ -22,7 +22,8 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
-import net.minecraft.client.renderer.ShaderInstance;
+import net.minecraft.client.renderer.ShaderDefines;
+import net.minecraft.client.renderer.ShaderProgram;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.packs.PackType;
 import net.minecraft.server.packs.resources.ResourceManager;
@@ -87,7 +88,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
 
                     @Override
                     public void onResourceManagerReload(ResourceManager manager) {
-                        loadSdfShader(manager);
+                        loadSdfShader();
                     }
                 });
 
@@ -107,23 +108,23 @@ public final class LinkLyricFabric implements ClientModInitializer {
      *
      * <p>重载时先释放旧实例再接新的，否则会漏掉一个着色器程序。
      */
-    private static void loadSdfShader(ResourceManager manager) {
+    private static void loadSdfShader() {
         // 顺序有讲究：先释放图集（它绑着旧纹理 id），再贴新着色器。
         // 反过来的话，install 清空了 RenderType 缓存，但旧图集还在，
         // 下一次绘制会重新建 RenderType 指向仍存活的旧页，
         // 之后 reset 才关掉它——留下悬空的纹理引用。
         SdfGlyphProvider.reset();
-        ShaderInstance old = SdfRenderType.current();
-        try {
-            ShaderInstance shader = new ShaderInstance(manager, "linklyric_sdf_text",
-                    DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP);
-            SdfRenderType.install(shader);
-            if (old != null) {
-                old.close();
-            }
-        } catch (IOException | RuntimeException e) {
-            SdfRenderType.install(null);
-            LOGGER.warn("[Link Lyric] SDF 着色器装载失败，退回原版字形", e);
+        // 1.21.2 起着色器改为声明式：这里只登记 configId 与顶点格式，
+        // 真正的编译由 ShaderManager 在首次 getProgram 时完成并缓存。
+        // 因此不再需要手动 close 旧实例，也没有装载失败需要捕获。
+        SdfRenderType.install(new ShaderProgram(
+                ResourceLocation.fromNamespaceAndPath(MOD_ID, "linklyric_sdf_text"),
+                DefaultVertexFormat.POSITION_COLOR_TEX_LIGHTMAP,
+                ShaderDefines.EMPTY));
+        // 提前触发一次编译，把失败暴露在重载日志里，而不是等到首帧绘制。
+        if (Minecraft.getInstance() != null) {
+            Minecraft.getInstance().getShaderManager()
+                    .getProgram(SdfRenderType.current());
         }
     }
 
@@ -132,10 +133,6 @@ public final class LinkLyricFabric implements ClientModInitializer {
         if (client == null || client.font == null) {
             return;
         }
-        // 【spike】离屏探针的唯一接入点。关闭态下 current() 是一个空实现，
-        // 开销为一次虚调用；探针自身出错会自我熔断，不会波及下面的歌词渲染。
-        com.linklyric.fabric.spike.OffscreenGlowProbe.current()
-                .render(graphics, deltaTracker.getGameTimeDeltaPartialTick(false));
         // 待打开的界面必须在 hideGui 判断**之前**处理。
         //
         // 曾经放在后面，于是玩家按着 F1 时发 /linklyric config：

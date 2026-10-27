@@ -445,8 +445,8 @@ public final class SdfGlyphProvider {
                     if (sx < 0 || sx >= imgW) {
                         continue;
                     }
-                    // getPixelRGBA 返回 ABGR；alpha 在高 8 位，与 RGB 顺序无关。
-                    coverage[y * w + x] = (byte) ((image.getPixelRGBA(sx, sy) >>> 24) & 0xFF);
+                    // getPixel 返回 ABGR；alpha 在高 8 位，与 RGB 顺序无关。
+                    coverage[y * w + x] = (byte) ((image.getPixel(sx, sy) >>> 24) & 0xFF);
                 }
             }
             return new Pixels(coverage, w, h);
