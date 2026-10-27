@@ -1,13 +1,4 @@
 # 发布到 CurseForge —— Link Lyric 专用
-#
-# 与 ExtendedAE_Plus 的单 jar 不同，本仓库一次构建产出两个平台 jar：
-#   fabric/build/libs/<archives_base_name>-<mc>-fabric-<ver>.jar
-#   neoforge/build/libs/<archives_base_name>-<mc>-neoforge-<ver>.jar
-# 两者作为同一次 CurseForge 版本的两个文件上传（单项目形态）。
-#
-# 若你在 CurseForge 上是「Fabric 一个项目、NeoForge 另一个项目」，
-# 请删掉 publish 步骤里的第二个文件与 project-id 覆盖写法，拆成两个 job。
-# 详见文件末尾注释。
 
 name: Publish to CurseForge
 
@@ -28,25 +19,33 @@ on:
 permissions:
   contents: read
 
-# 同一 ref 串行，避免连推两次撞出重复版本号
 concurrency:
   group: publish-curseforge-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: Build and Publish
+  build:
+    name: Build
     # 手动触发无条件执行；push 要求是受保护分支（tag 不算）。
-    # 未开启分支保护的话，可换成：github.ref == 'refs/heads/main'
+    # 未开启分支保护的话，可换成：github.ref == 'refs/heads/1.21.1'
     if: github.event_name == 'workflow_dispatch' || github.ref_protected == true
     runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+      release_type: ${{ steps.check.outputs.release_type }}
+      release_name: ${{ steps.metadata.outputs.release_name }}
+      mod_version: ${{ steps.metadata.outputs.mod_version }}
+      mc_version: ${{ steps.metadata.outputs.mc_version }}
+      fabric_jar: ${{ steps.metadata.outputs.fabric_jar }}
+      neoforge_jar: ${{ steps.metadata.outputs.neoforge_jar }}
+      changelog: ${{ steps.changelog.outputs.content }}
 
     steps:
       - name: Check trigger
         id: check
         shell: bash
         env:
-          # 用 env 中转，杜绝提交信息被插值进脚本造成命令注入
+          # 用 env 中转：提交信息直接插值进脚本会被展开执行
           COMMIT_MSG: ${{ github.event.head_commit.message }}
           INPUT_TYPE: ${{ inputs.version_type }}
         run: |
@@ -101,12 +100,10 @@ jobs:
           mod_version="$(read_prop mod_version)"
           mod_name="$(read_prop mod_name)"
 
-          # 精确命中 build.gradle.kts 的 archivesName 规则：
-          # base.archivesName = "<archives_base_name>-<mc>-<platform>"
-          # 前缀同时避开 -sources.jar
+          # 精确命中 build.gradle.kts 的 archivesName 规则，
+          # 完整前缀同时避开 -sources.jar
           fabric_jar="fabric/build/libs/${archives_base_name}-${mc_version}-fabric-${mod_version}.jar"
           neoforge_jar="neoforge/build/libs/${archives_base_name}-${mc_version}-neoforge-${mod_version}.jar"
-
           release_name="${mod_name} ${mod_version} [Fabric + NeoForge ${mc_version}]"
 
           {
@@ -127,7 +124,6 @@ jobs:
           head_commit="${{ github.sha }}"
           base_commit="${{ github.event.before }}"
 
-          # 提交信息含「日志:<修订号>」时取该修订的 CHANGELOG 变更
           changelog_revision=""
           if [[ "${COMMIT_MSG}" =~ 日志:([^[:space:]]+) ]]; then
             changelog_revision="${BASH_REMATCH[1]}"
@@ -184,10 +180,10 @@ jobs:
         shell: bash
         env:
           FABRIC_JAR: ${{ steps.metadata.outputs.fabric_jar }}
-          NEOFORGE_NEOFORGE_JAR: ${{ steps.metadata.outputs.neoforge_jar }}
+          NEOFORGE_JAR: ${{ steps.metadata.outputs.neoforge_jar }}
         run: |
           failed=0
-          for f in "${FABRIC_JAR}" "${NEOFORGE_NEOFORGE_JAR}"; do
+          for f in "${FABRIC_JAR}" "${NEOFORGE_JAR}"; do
             if [[ ! -f "${f}" ]]; then
               echo "::error::未找到构建产物: ${f}" >&2
               failed=1
@@ -198,22 +194,68 @@ jobs:
             exit 1
           fi
 
-      - name: Upload to CurseForge
+      - name: Package artifacts
         if: steps.check.outputs.should_publish == 'true'
-        # environment 挂在 step 上而非 job 上：
-        # 挂 job 级会导致每次 push（即便不发布）都弹一次审批。
-        # 不用审批就整段删掉，并把 token 留在仓库级 Secrets。
-        environment:
-          name: publish
+        shell: bash
+        env:
+          FABRIC_JAR: ${{ steps.metadata.outputs.fabric_jar }}
+          NEOFORGE_JAR: ${{ steps.metadata.outputs.neoforge_jar }}
+        # 打包保留相对路径，便于发布 job 还原到同一位置
+        run: tar -czf release-artifact.tar.gz "${FABRIC_JAR}" "${NEOFORGE_JAR}"
+
+      - name: Upload build artifact
+        if: steps.check.outputs.should_publish == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-build
+          path: release-artifact.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    name: Publish to CurseForge
+    needs: build
+    if: needs.build.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    # environment 只能写在 job 级。构建阶段不触发审批，
+    # 只有走到这里才需要人工确认。
+    environment:
+      name: publish
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-build
+
+      - name: Unpack build artifact
+        run: tar -xzf release-artifact.tar.gz
+
+      - name: Validate artifact exists
+        shell: bash
+        env:
+          FABRIC_JAR: ${{ needs.build.outputs.fabric_jar }}
+          NEOFORGE_JAR: ${{ needs.build.outputs.neoforge_jar }}
+        run: |
+          failed=0
+          for f in "${FABRIC_JAR}" "${NEOFORGE_JAR}"; do
+            if [[ ! -f "${f}" ]]; then
+              echo "::error::解包后未找到产物: ${f}" >&2
+              failed=1
+            fi
+          done
+          [[ "${failed}" == "1" ]] && exit 1 || true
+
+      - name: Upload to CurseForge
         uses: Kira-NT/mc-publish@v3.3.1
         with:
-          name: ${{ steps.metadata.outputs.release_name }}
-          version: ${{ steps.metadata.outputs.mod_version }}
-          version-type: ${{ steps.check.outputs.release_type }}
-          changelog: ${{ steps.changelog.outputs.content }}
+          name: ${{ needs.build.outputs.release_name }}
+          version: ${{ needs.build.outputs.mod_version }}
+          version-type: ${{ needs.build.outputs.release_type }}
+          changelog: ${{ needs.build.outputs.changelog }}
           files: |
-            ${{ steps.metadata.outputs.fabric_jar }}
-            ${{ steps.metadata.outputs.neoforge_jar }}
+            ${{ needs.build.outputs.fabric_jar }}
+            ${{ needs.build.outputs.neoforge_jar }}
           curseforge-id: ${{ vars.CURSEFORGE_PROJECT_ID }}
           curseforge-token: ${{ secrets.CURSEFORGE_TOKEN }}
           loaders: |
@@ -221,29 +263,4 @@ jobs:
             neoforge
           environment: client | server
           game-versions: |
-            ${{ steps.metadata.outputs.mc_version }}
-
-# ===========================================================================
-# 若 Fabric 与 NeoForge 在 CurseForge 是两个独立项目
-# ---------------------------------------------------------------------------
-# 把上面的 Upload to CurseForge 单步拆成两步，各自带 files 与 project id：
-#
-#   - name: Upload Fabric to CurseForge
-#     uses: Kira-NT/mc-publish@v3.3.1
-#     with:
-#       files: <fabric jar>
-#       curseforge-id: <vars.CURSEFORGE_PROJECT_ID_FABRIC>
-#       loaders: fabric
-#       ...其余同上
-#
-#   - name: Upload NeoForge to CurseForge
-#     uses: Kira-NT/mc-publish@v3.3.1
-#     with:
-#       files: <neoforge jar>
-#       curseforge-id: <vars.CURSEFORGE_PROJECT_ID_NEOFORGE>
-#       loaders: neoforge
-#       ...其余同上
-#
-# 拆开时 version 名要区分，例如加 " [Fabric]" / " [NeoForge]" 后缀，
-# 否则两个项目上的版本名完全相同，排查时难以分辨。
-# ===========================================================================
+            ${{ needs.build.outputs.mc_version }}
