@@ -22,6 +22,7 @@
   "linklyric.config.source.disabled": "Source: Disabled",
   "linklyric.config.adjustPosition": "Adjust Position...",
   "linklyric.config.reset": "Reset",
+  "linklyric.config.reload_local_lyrics": "Reload local lyrics",
   "linklyric.config.done": "Done",
   "linklyric.config.cancel": "Cancel",
   "linklyric.color.title": "Font Color",

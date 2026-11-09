@@ -1,6 +1,7 @@
 package com.linklyric.neoforge;
 
 import com.linklyric.common.bridge.BridgePlaybackSource;
+import com.linklyric.common.music.SystemMusicFallback;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
@@ -57,7 +58,8 @@ public final class LinkLyricNeoForge {
         source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT,
                 FMLPaths.CONFIGDIR.get().resolve("linklyric-lyrics"));
         source.start();
-        renderer = new FloatingLyricRenderer(source);
+        var systemMusic = new SystemMusicFallback(source, FMLPaths.CONFIGDIR.get());
+        renderer = new FloatingLyricRenderer(systemMusic);
         // 界面文案由游戏的语言文件提供，渲染器只持有键名。
         renderer.setTextResolver(key -> Component.translatable(key).getString());
 
@@ -73,7 +75,10 @@ public final class LinkLyricNeoForge {
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
         current = this;
 
-        Runtime.getRuntime().addShutdownHook(new Thread(source::stop, "link-lyric-shutdown"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            systemMusic.close();
+            source.stop();
+        }, "link-lyric-shutdown"));
     }
 
     private void onRegisterClientCommands(RegisterClientCommandsEvent event) {

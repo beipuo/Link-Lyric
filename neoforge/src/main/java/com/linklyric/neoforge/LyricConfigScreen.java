@@ -371,6 +371,9 @@ final class LyricConfigScreen extends OptionsSubScreen {
 
         section(LangKeys.GROUP_ACTION);
 
+        single(Button.builder(Component.translatable(LangKeys.RELOAD_LOCAL_LYRICS),
+                button -> renderer.refreshLocalLyrics()).build());
+
         single(new Button.Builder(
                 Component.translatable(LangKeys.ADJUST_POSITION),
                 b -> minecraft.setScreen(

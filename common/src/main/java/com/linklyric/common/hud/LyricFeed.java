@@ -31,6 +31,10 @@ public interface LyricFeed {
         return new Frame(isAlive(), pollSnapshot(), lyric(), lyricSignature());
     }
 
+    /** Requests a background reload of the current track's local lyrics. */
+    default void refreshLocalLyrics() {
+    }
+
     /**
      * 该数据源是否被用户启用。
      *

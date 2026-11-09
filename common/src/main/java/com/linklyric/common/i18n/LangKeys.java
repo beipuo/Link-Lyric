@@ -27,6 +27,7 @@ public final class LangKeys {
     public static final String SOURCE_DISABLED = "linklyric.config.source.disabled";
     public static final String ADJUST_POSITION = "linklyric.config.adjustPosition";
     public static final String RESET_DEFAULT = "linklyric.config.reset";
+    public static final String RELOAD_LOCAL_LYRICS = "linklyric.config.reload_local_lyrics";
     public static final String DONE = "linklyric.config.done";
     public static final String CANCEL = "linklyric.config.cancel";
     public static final String SAVE = "linklyric.config.save";
