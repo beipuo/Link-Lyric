@@ -14,6 +14,7 @@ import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * <a href="https://github.com/beipuo/Link-MC">Link-MC（beipuo）</a> 插件的回环 HTTP 数据源。
@@ -54,6 +55,7 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private final String displayName;
     private final LocalLyricFiles localFiles;
     private final PlayerSnapshot emptySnapshot;
+    private final AtomicBoolean refreshLocal = new AtomicBoolean();
     private volatile Frame published;
 
     // HTTP cache stays separate from the selected local or remote timeline.
@@ -151,6 +153,11 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         return enabled ? frame : new Frame(false, frame.snapshot(), frame.timeline(), frame.signature());
     }
 
+    @Override
+    public void refreshLocalLyrics() {
+        if (localFiles != null) refreshLocal.set(true);
+    }
+
     /** 启动后台轮询。重复调用无副作用。 */
     public synchronized void start() {
         if (worker != null) return;
@@ -217,7 +224,8 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         LyricTimeline remote = parsed.timeline() == null ? previousRemote : parsed.timeline();
         LyricTimeline selected = snapshot.hasTrack() ? remote : LyricTimeline.empty();
         if (selected.isEmpty() && localFiles != null && snapshot.hasTrack() && snapshot.canDrivePreciseProgress()) {
-            boolean reuseLocal = previousRemote.isEmpty() && previous.snapshot().canDrivePreciseProgress()
+            boolean reuseLocal = !refreshLocal.getAndSet(false)
+                    && previousRemote.isEmpty() && previous.snapshot().canDrivePreciseProgress()
                     && snapshot.track().equals(previous.snapshot().track());
             selected = reuseLocal ? previous.timeline() : localFiles.load(snapshot.track());
         }

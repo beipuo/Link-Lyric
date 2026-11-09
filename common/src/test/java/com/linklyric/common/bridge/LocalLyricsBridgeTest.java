@@ -79,6 +79,23 @@ class LocalLyricsBridgeTest {
             assertEquals("Player", await(source, 6).timeline().line(0).text());
             response.set(payload(7, "First", 0, true, ""));
             assertEquals("TTML", await(source, 7).timeline().line(0).text());
+
+            response.set(payload(8, "Missing", 2200, false, ""));
+            assertTrue(await(source, 8).timeline().isEmpty());
+
+            var added = directory.resolve("Artist - Missing.lrc");
+            Files.writeString(added, "[00:02]Added while paused");
+            source.refreshLocalLyrics();
+            response.set(payload(9, "Missing", 2200, false, ""));
+            var reloaded = await(source, 9);
+            assertEquals("Added while paused", reloaded.timeline().lineAt(2200).text());
+            assertFalse(reloaded.snapshot().playing());
+            assertEquals(2200, reloaded.snapshot().positionMs());
+
+            Files.delete(added);
+            source.refreshLocalLyrics();
+            response.set(payload(10, "Missing", 2200, false, ""));
+            assertTrue(await(source, 10).timeline().isEmpty());
         } finally {
             source.stop();
             server.stop(0);

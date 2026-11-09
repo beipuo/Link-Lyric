@@ -191,6 +191,10 @@ public final class FloatingLyricRenderer {
         return source.isEnabled();
     }
 
+    public void refreshLocalLyrics() {
+        source.refreshLocalLyrics();
+    }
+
     /** 启用或禁用数据源；只影响出画，不影响连接。 */
     public void setSourceEnabled(boolean value) {
         source.setEnabled(value);
