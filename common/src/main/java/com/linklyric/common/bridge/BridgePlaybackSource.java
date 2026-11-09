@@ -1,6 +1,7 @@
 package com.linklyric.common.bridge;
 
 import com.linklyric.core.capability.CapabilitySet;
+import com.linklyric.core.lyric.LocalLyricFiles;
 import com.linklyric.core.lyric.LyricTimeline;
 import com.linklyric.core.protocol.Protocol;
 import com.linklyric.core.sync.PlayerSnapshot;
@@ -12,10 +13,10 @@ import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.atomic.AtomicReference;
+import java.nio.file.Path;
 
 /**
- * Link MC 插件的回环 HTTP 数据源。
+ * <a href="https://github.com/beipuo/Link-MC">Link-MC（beipuo）</a> 插件的回环 HTTP 数据源。
  *
  * <p>与渲染线程的关系：{@link #pollSnapshot()} 被每帧调用，因此**绝不能**发起网络请求。
  * 实际请求由内部后台线程按固定间隔执行，结果写入原子引用；
@@ -51,24 +52,22 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private final String baseUrl;
     private final String sourceId;
     private final String displayName;
+    private final LocalLyricFiles localFiles;
+    private final PlayerSnapshot emptySnapshot;
+    private volatile Frame published;
 
-    private final AtomicReference<PlayerSnapshot> latest = new AtomicReference<>();
-    private final AtomicReference<LyricTimeline> latestLyric = new AtomicReference<>(LyricTimeline.empty());
-    private final AtomicReference<CapabilitySet> capabilities = new AtomicReference<>(CapabilitySet.empty());
-
-    private volatile boolean alive;
+    // HTTP cache stays separate from the selected local or remote timeline.
+    private LyricTimeline remoteLyric = LyricTimeline.empty();
+    private int remoteSignature;
     /** 用户开关；与连接状态分离。 */
     private volatile boolean enabled = true;
-    private volatile int consecutiveFailures;
-    private volatile int lyricSignature;
+    private int consecutiveFailures;
     /**
      * 上次收到的歌词指纹（服务端 ETag），用于条件请求。
      *
      * <p>null 表示还没有可用的指纹，此时不发 {@code If-None-Match}。
-     * 刻意与 {@link #lyricSignature} 分开：前者是服务端算的、
-     * 用来省流量的字符串，后者是本端算的、用来决定要不要重解析的整数。
      */
-    private volatile String lyricEtag;
+    private String lyricEtag;
     private Thread worker;
 
     public BridgePlaybackSource(String host, int port) {
@@ -76,9 +75,21 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     }
 
     public BridgePlaybackSource(String host, int port, String sourceId, String displayName) {
+        this(host, port, sourceId, displayName, null);
+    }
+
+    public BridgePlaybackSource(String host, int port, Path lyricDirectory) {
+        this(host, port, SOURCE_ID, "Salt Player", lyricDirectory);
+    }
+
+    private BridgePlaybackSource(String host, int port, String sourceId, String displayName, Path lyricDirectory) {
         this.baseUrl = "http://" + host + ":" + port;
         this.sourceId = sourceId;
         this.displayName = displayName;
+        this.localFiles = lyricDirectory == null ? null : new LocalLyricFiles(lyricDirectory);
+        this.emptySnapshot = new PlayerSnapshot(sourceId, TrackIdentity.of("", "", 0L), 0, false,
+                0, 0, CapabilitySet.empty());
+        this.published = new Frame(false, emptySnapshot, LyricTimeline.empty(), 0);
     }
 
     @Override
@@ -93,36 +104,29 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
 
     /** 本次会话的能力声明；由握手快照解析得出，渲染层按此决定显示哪些元素。 */
     public CapabilitySet capabilities() {
-        return capabilities.get();
+        return published.snapshot().capabilities();
     }
 
     @Override
     public PlayerSnapshot pollSnapshot() {
-        PlayerSnapshot snapshot = latest.get();
-        if (snapshot != null) {
-            return snapshot;
-        }
-        // 尚无任何成功响应：返回空快照，UI 整体隐藏
-        return new PlayerSnapshot(
-                sourceId, TrackIdentity.of("", "", 0L), 0L, false, 0L, System.nanoTime(),
-                capabilities.get());
+        return published.snapshot();
     }
 
     /** 最近一次成功解析的歌词时间轴。歌词与快照分开取，避免每帧复制整份歌词。 */
     public LyricTimeline lyric() {
-        return latestLyric.get();
+        return published.timeline();
     }
 
     /** 歌词时间轴的指纹，变化时调用方才需要重建渲染缓存。 */
     public long lyricSignature() {
-        return lyricSignature;
+        return published.signature();
     }
 
     @Override
     public boolean isAlive() {
         // 用户禁用时对外表现为「不可用」，渲染器据此停止出画；
         // 但后台线程仍在轮询，重新启用立刻有数据。
-        return alive && enabled;
+        return published.alive() && enabled;
     }
 
     /**
@@ -141,6 +145,12 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         this.enabled = value;
     }
 
+    @Override
+    public Frame frame() {
+        Frame frame = published;
+        return enabled ? frame : new Frame(false, frame.snapshot(), frame.timeline(), frame.signature());
+    }
+
     /** 启动后台轮询。重复调用无副作用。 */
     public synchronized void start() {
         if (worker != null) return;
@@ -154,12 +164,7 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
         Thread thread = worker;
         worker = null;
         if (thread != null) thread.interrupt();
-        alive = false;
-        latest.set(null);
-        latestLyric.set(LyricTimeline.empty());
-        capabilities.set(CapabilitySet.empty());
-        lyricSignature = 0;
-        lyricEtag = null;
+        clearSnapshot();
         consecutiveFailures = 0;
     }
 
@@ -183,38 +188,62 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private void pollOnce() {
         String knownEtag;
         int previousSignature;
-        boolean cached;
+        Frame previous;
+        LyricTimeline previousRemote;
         synchronized (this) {
             if (!currentWorker()) return;
             knownEtag = lyricEtag;
-            previousSignature = lyricSignature;
-            cached = latest.get() != null;
+            previousSignature = remoteSignature;
+            previous = published;
+            previousRemote = remoteLyric;
         }
         Fetch fetch = get(Protocol.WS_PATH, knownEtag);
         SnapshotParser.Parsed parsed = null;
         if (fetch != null) {
             try {
                 parsed = SnapshotParser.parseResponse(fetch.body(), sourceId, System.nanoTime(),
-                        previousSignature, cached);
+                        previousSignature, previous.alive());
             } catch (RuntimeException ignored) { }
+        }
+        if (parsed == null || (parsed.omitted() && (knownEtag == null
+                || (fetch.etag() != null && !knownEtag.equals(fetch.etag()))))) {
+            synchronized (this) {
+                if (currentWorker()) onFailure();
+            }
+            return;
+        }
+
+        PlayerSnapshot snapshot = parsed.snapshot();
+        LyricTimeline remote = parsed.timeline() == null ? previousRemote : parsed.timeline();
+        LyricTimeline selected = snapshot.hasTrack() ? remote : LyricTimeline.empty();
+        if (selected.isEmpty() && localFiles != null && snapshot.hasTrack() && snapshot.canDrivePreciseProgress()) {
+            boolean reuseLocal = previousRemote.isEmpty() && previous.snapshot().canDrivePreciseProgress()
+                    && snapshot.track().equals(previous.snapshot().track());
+            selected = reuseLocal ? previous.timeline() : localFiles.load(snapshot.track());
         }
         synchronized (this) {
             if (!currentWorker()) return;
-            if (parsed == null || (parsed.omitted() && (knownEtag == null
-                    || (fetch.etag() != null && !knownEtag.equals(fetch.etag()))))) {
-                onFailure();
-                return;
-            }
             if (!parsed.omitted()) {
-                if (parsed.timeline() != null) latestLyric.set(parsed.timeline());
-                lyricSignature = parsed.signature();
+                remoteLyric = remote;
+                remoteSignature = parsed.signature();
                 lyricEtag = fetch.etag();
             }
-            capabilities.set(parsed.snapshot().capabilities());
-            latest.set(parsed.snapshot());
+            publish(true, snapshot, selected);
             consecutiveFailures = 0;
-            alive = true;
         }
+    }
+
+    private void publish(boolean alive, PlayerSnapshot snapshot, LyricTimeline timeline) {
+        Frame previous = published;
+        long revision = previous.timeline() == timeline ? previous.signature() : previous.signature() + 1;
+        published = new Frame(alive, snapshot, timeline, revision);
+    }
+
+    private void clearSnapshot() {
+        remoteLyric = LyricTimeline.empty();
+        remoteSignature = 0;
+        lyricEtag = null;
+        publish(false, emptySnapshot, LyricTimeline.empty());
     }
 
     /**
@@ -277,13 +306,8 @@ public final class BridgePlaybackSource implements com.linklyric.common.hud.Lyri
     private void onFailure() {
         consecutiveFailures++;
         if (consecutiveFailures >= FAILURE_THRESHOLD) {
-            alive = false;
             // 判定断连才清空，避免插件重载造成闪烁
-            latest.set(null);
-            latestLyric.set(LyricTimeline.empty());
-            lyricSignature = 0;
-            lyricEtag = null;
-            capabilities.set(CapabilitySet.empty());
+            clearSnapshot();
         }
     }
 

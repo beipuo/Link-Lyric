@@ -9,7 +9,7 @@
 ```
 common/src/main/java/com/linklyric/core/
 ├── capability/   Capability, CapabilitySet     能力声明与集合运算
-├── lyric/        LyricTimeline, LyricLine, LyricWord, LyricTimingFix, LrcParser
+├── lyric/        LyricTimeline, LyricLine, LyricWord, LyricTimingFix, LrcParser, TtmlParser, LocalLyricFiles
 ├── sync/         PlaybackClock, PlayerSnapshot, TrackIdentity
 ├── style/        LyricStyle                    多样式几何预设（尚未接入渲染）
 └── protocol/     Protocol                      跨进程契约常量
@@ -34,7 +34,13 @@ Salt Player 的「队列 ✗ / 按索引播放 ✗」是实测定论，不是待
 
 能力声明已贯通到快照（`SnapshotParser` 解析 → `PlayerSnapshot.capabilities()`）。渲染层目前只读取 `PLAYBACK_POSITION`——没有它无法逐字推进，只能整行显示。`QUEUE` 等其余能力尚无消费方，因为依赖它们的界面还不存在。
 
-## 本地 LRC 时间轴
+## 本地歌词
+
+在游戏实例的 `config/linklyric-lyrics/` 下放入 UTF-8 文件。例如歌手「歌手」、曲名「曲名」对应 `歌手 - 曲名.ttml` 或 `歌手 - 曲名.lrc`。歌手为空时用曲名。文件名以 Unicode NFC 匹配，控制字符和 Windows 文件名禁用字符替换为下划线。
+
+播放器有进度但没有歌词时，依次尝试有效 TTML 和 LRC。LRC 译文可另放同名 `.translation.lrc`。文件随曲目加载，编辑后切走再切回即可重读。缺少匹配项时隐藏歌词。
+
+### LRC 时间轴
 
 宿主可读取 UTF-8 的 LRC 原文和可选的独立译文，再使用播放源报告的曲长构造时间轴。
 
@@ -44,4 +50,8 @@ var timeline = LrcParser.parse(lrcText, translatedLrcText, track.durationMs());
 
 `LrcParser` 位于 `com.linklyric.core.lyric`。它支持行时间、重复时间标签和尖括号逐字时间。正偏移量使歌词提前，译文按应用各自偏移后的起点匹配。空白行时间标签可结束上一行，逐字行可用末尾空标签指定结束。曲长未知时传 0，最后一行缺少结束时间时默认显示四秒。没有可用的带时间歌词时返回空时间轴。
 
-播放器适配器负责选文件、跟踪曲目和提供播放位置。将时间轴和对应的播放快照交给现有 `LyricFeed`，换曲时重新解析或清空。
+自定义适配器可以将时间轴和对应的播放快照交给 `LyricFeed`，换曲时重新解析或清空。
+
+### TTML 时间轴
+
+`TtmlParser.parse(ttmlText, track.durationMs())` 支持 [TTML 媒体时间](https://www.w3.org/TR/ttml2/#timing-value-timeExpression) 的并行容器、时钟和时长，以及带 `itunes:timing` 的 Apple Music／AMLL 绝对时间。可读取行、逐字时间、声部和行内译文。解析失败时返回空时间轴，文件查找继续尝试 LRC。
