@@ -11,6 +11,7 @@ import com.linklyric.common.style.LyricStyleConfig;
 import com.linklyric.common.i18n.TextResolver;
 import com.linklyric.common.style.LyricEasing;
 import com.linklyric.core.sync.PlayerSnapshot;
+import com.linklyric.core.sync.TrackIdentity;
 
 import java.util.List;
 
@@ -157,7 +158,7 @@ public final class FloatingLyricRenderer {
 
 
     /** 位置外推器：把每秒一次的上报插值成帧级连续位置。 */
-    private final PositionTracker positions = new PositionTracker();
+    private PositionTracker positions = new PositionTracker();
 
     /** 逐字动画特效链；默认浮动上浮 + 强调辉光。 */
     private final LyricEffectEngine effects = LyricEffectEngine.defaults();
@@ -719,9 +720,10 @@ public final class FloatingLyricRenderer {
 
 
     /** 行切换动画状态：淡出进度、上移位移、旧句快照。 */
-    private final LineTransition transition = new LineTransition();
+    private LineTransition transition = new LineTransition();
 
     private LyricTimeline lastTimeline = LyricTimeline.empty();
+    private TrackIdentity lastTrack;
 
     public FloatingLyricRenderer(LyricFeed source) {
         this.source = source;
@@ -750,7 +752,8 @@ public final class FloatingLyricRenderer {
         // 预览会整块空白，所有颜色、字号、描边的调整都看不到效果。
         // 预览要看的正是样式，与数据源此刻有没有歌词无关：
         // 时间轴没内容时下面的分支自然会返回，不需要在这里提前挡掉。
-        if (!source.isAlive() && !previewForced) {
+        LyricFeed.Frame frame = source.frame();
+        if (!frame.alive() && !previewForced) {
             return false;
         }
         // 关闭状态下完全不出画。
@@ -761,7 +764,8 @@ public final class FloatingLyricRenderer {
             return false;
         }
 
-        LyricTimeline timeline = timelineForFrame();
+        PlayerSnapshot snapshot = frame.snapshot();
+        LyricTimeline timeline = timelineForFrame(frame, snapshot.track());
         if (timeline.isEmpty()) {
             return false;
         }
@@ -772,8 +776,6 @@ public final class FloatingLyricRenderer {
         // 表现为每次换行后高亮要僵住一帧才开始移动。
         long frameDelta = frameDeltaNanos();
 
-        // 每帧只取一次快照，避免两次调用之间数据源更新导致位置与播放态不一致
-        PlayerSnapshot snapshot = source.pollSnapshot();
         syncClock(snapshot.positionMs(), snapshot.playing());
         // 时间偏移只作用于「查时间轴」这一步，不动外推时钟。
         //
@@ -1444,30 +1446,17 @@ public final class FloatingLyricRenderer {
         positions.calibrate(positionMs, playing, System.nanoTime());
     }
 
-    /**
-     * 每帧取时间轴。
-     *
-     * <p>数据源短暂清空时保留上一份，避免插件重载造成闪断；
-     * 是否整体隐藏由入口处的 {@code isAlive()} 判定。
-     */
-    private LyricTimeline timelineForFrame() {
-        long signature = source.lyricSignature();
-        if (signature != lastSignature) {
-            LyricTimeline fresh = source.lyric();
-            if (!fresh.isEmpty()) {
-                // 只有时间轴内容真的不同才重置换行状态。
-                // 若不加判断，任何一次刷新都会让下一帧跳过平滑推进、
-                // 直接把已唱宽度赋成目标值，染色就会变成整字跳变。
-                boolean changed = fresh.size() != lastTimeline.size()
-                        || (lastTimeline.size() > 0 && fresh.line(0) != null
-                        && lastTimeline.line(0) != null
-                        && !fresh.line(0).text().equals(lastTimeline.line(0).text()));
-                lastTimeline = fresh;
-                if (changed) {
-                    lastLineIndex = -1;
-                }
+    private LyricTimeline timelineForFrame(LyricFeed.Frame frame, TrackIdentity track) {
+        boolean changedTrack = !track.equals(lastTrack);
+        if (changedTrack || frame.signature() != lastSignature || frame.timeline() != lastTimeline) {
+            lastTimeline = frame.timeline();
+            lastSignature = frame.signature();
+            lastLineIndex = -1;
+            if (changedTrack) {
+                lastTrack = track;
+                positions = new PositionTracker();
+                transition = new LineTransition();
             }
-            lastSignature = signature;
         }
         return lastTimeline;
     }

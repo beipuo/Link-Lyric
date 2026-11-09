@@ -107,7 +107,7 @@ HTTP 响应必须是 JSON 对象，且包含以下字段（字段类型不做隐
 - `track`：对象，必需 `title`、`artist` 字符串与 `durationMs` 整数；`album` 可省略，默认空字符串。
 - `positionMs`、`seq`：整数；`playing`：布尔值。
 - `capabilities` 可省略，默认空集合；提供时须为字符串数组，未知能力名忽略。
-- `lyric` 可整体省略；未标记 `lyricOmitted: true` 时，缺失表示空歌词，不会自动查询外部歌词源。
+- `lyric` 可整体省略；未标记 `lyricOmitted: true` 时，缺失表示播放器没有歌词。有播放进度时，客户端可以按曲目查找[本地歌词](KERNEL.md#本地歌词)。
 - 提供 `lyric` 时须为对象，`lines` 为必需数组；每行必需 `text` 字符串、`startMs` / `endMs` 整数，`translation` / `speaker` 可省略，默认空字符串。
 - `words` 可省略；提供时须为数组，每项必需 `text` 字符串及 `startMs` / `endMs` 整数。无逐字数据时走行级处理。
 - `lyric.wordLevel`、顶层 `lyricOmitted` 可省略；提供时须为布尔值。`lyricOmitted: true` 不得与 `lyric` 字段同时出现，缓存条件见下节。

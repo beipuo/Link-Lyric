@@ -58,7 +58,8 @@ public final class LinkLyricFabric implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT);
+        source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT,
+                FabricLoader.getInstance().getConfigDir().resolve("linklyric-lyrics"));
         source.start();
         renderer = new FloatingLyricRenderer(source);
         // 界面文案由游戏的语言文件提供，渲染器只持有键名。

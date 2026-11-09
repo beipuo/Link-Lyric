@@ -24,6 +24,13 @@ public interface LyricFeed {
     /** 时间轴指纹，变化时渲染层需要重建缓存。 */
     long lyricSignature();
 
+    record Frame(boolean alive, PlayerSnapshot snapshot, LyricTimeline timeline, long signature) {}
+
+    /** Returns the playback state and lyrics to use together for this frame. */
+    default Frame frame() {
+        return new Frame(isAlive(), pollSnapshot(), lyric(), lyricSignature());
+    }
+
     /**
      * 该数据源是否被用户启用。
      *
