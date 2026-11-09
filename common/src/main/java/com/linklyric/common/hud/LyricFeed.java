@@ -11,6 +11,12 @@ import com.linklyric.core.sync.PlayerSnapshot;
  * 也为后续接入其它数据源留出空间。
  */
 public interface LyricFeed {
+    /** Keep playback and lyrics from the same publication when the source supports it. */
+    record Frame(boolean alive, PlayerSnapshot snapshot, LyricTimeline timeline, long signature) {}
+
+    default Frame frame() {
+        return new Frame(isAlive(), pollSnapshot(), lyric(), lyricSignature());
+    }
 
     /** 数据源当前是否可用。false 时渲染层不应绘制任何内容。 */
     boolean isAlive();

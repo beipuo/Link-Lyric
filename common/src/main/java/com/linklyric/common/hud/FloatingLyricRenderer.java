@@ -750,7 +750,8 @@ public final class FloatingLyricRenderer {
         // 预览会整块空白，所有颜色、字号、描边的调整都看不到效果。
         // 预览要看的正是样式，与数据源此刻有没有歌词无关：
         // 时间轴没内容时下面的分支自然会返回，不需要在这里提前挡掉。
-        if (!source.isAlive() && !previewForced) {
+        LyricFeed.Frame frame = source.frame();
+        if (!frame.alive() && !previewForced) {
             return false;
         }
         // 关闭状态下完全不出画。
@@ -761,7 +762,7 @@ public final class FloatingLyricRenderer {
             return false;
         }
 
-        LyricTimeline timeline = timelineForFrame();
+        LyricTimeline timeline = timelineForFrame(frame);
         if (timeline.isEmpty()) {
             return false;
         }
@@ -773,7 +774,7 @@ public final class FloatingLyricRenderer {
         long frameDelta = frameDeltaNanos();
 
         // 每帧只取一次快照，避免两次调用之间数据源更新导致位置与播放态不一致
-        PlayerSnapshot snapshot = source.pollSnapshot();
+        PlayerSnapshot snapshot = frame.snapshot();
         syncClock(snapshot.positionMs(), snapshot.playing());
         // 时间偏移只作用于「查时间轴」这一步，不动外推时钟。
         //
@@ -1450,10 +1451,10 @@ public final class FloatingLyricRenderer {
      * <p>数据源短暂清空时保留上一份，避免插件重载造成闪断；
      * 是否整体隐藏由入口处的 {@code isAlive()} 判定。
      */
-    private LyricTimeline timelineForFrame() {
-        long signature = source.lyricSignature();
+    private LyricTimeline timelineForFrame(LyricFeed.Frame frame) {
+        long signature = frame.signature();
         if (signature != lastSignature) {
-            LyricTimeline fresh = source.lyric();
+            LyricTimeline fresh = frame.timeline();
             if (!fresh.isEmpty()) {
                 // 只有时间轴内容真的不同才重置换行状态。
                 // 若不加判断，任何一次刷新都会让下一帧跳过平滑推进、

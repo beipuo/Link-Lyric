@@ -1,5 +1,7 @@
 # Link Lyric
 
+[Windows 系统媒体与本地 LRC](docs/windows-system-media.md)
+
 一款在游戏内显示音乐歌词的模组。
 
 English: [README_EN.md](README_EN.md)

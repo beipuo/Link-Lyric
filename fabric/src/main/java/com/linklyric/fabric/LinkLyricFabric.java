@@ -1,6 +1,7 @@
 package com.linklyric.fabric;
 
 import com.linklyric.common.bridge.BridgePlaybackSource;
+import com.linklyric.common.music.SystemMusicFallback;
 import com.linklyric.common.hud.FloatingLyricRenderer;
 import com.linklyric.common.style.GlyphColors;
 import com.linklyric.common.style.GlyphSpan;
@@ -60,7 +61,8 @@ public final class LinkLyricFabric implements ClientModInitializer {
     public void onInitializeClient() {
         source = new BridgePlaybackSource("127.0.0.1", BRIDGE_PORT);
         source.start();
-        renderer = new FloatingLyricRenderer(source);
+        var systemMusic = new SystemMusicFallback(source, FabricLoader.getInstance().getConfigDir());
+        renderer = new FloatingLyricRenderer(systemMusic);
         // 界面文案由游戏的语言文件提供，渲染器只持有键名。
         renderer.setTextResolver(key -> Component.translatable(key).getString());
 
@@ -93,6 +95,7 @@ public final class LinkLyricFabric implements ClientModInitializer {
 
         // 关闭游戏时停掉轮询线程，避免守护线程持有连接
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            systemMusic.close();
             if (source != null) {
                 source.stop();
             }
